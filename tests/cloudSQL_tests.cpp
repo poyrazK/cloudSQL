@@ -14,6 +14,7 @@
 #include "parser/expression.hpp"
 #include "common/config.hpp"
 #include "catalog/catalog.hpp"
+#include "network/server.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::common;
@@ -345,6 +346,21 @@ TEST(CatalogTest_CreateIndex) {
     EXPECT_EQ(indexes.size(), static_cast<size_t>(1));
 }
 
+// ============= Server Tests =============
+
+TEST(ServerTest_CreateServer) {
+    auto server = cloudsql::network::Server::create(5432);
+    EXPECT_TRUE(server != nullptr);
+    EXPECT_EQ(server->get_port(), static_cast<uint16_t>(5432));
+    EXPECT_FALSE(server->is_running());
+    EXPECT_EQ(server->get_status(), cloudsql::network::ServerStatus::Stopped);
+}
+
+TEST(ServerTest_StatusString) {
+    auto server = cloudsql::network::Server::create(5433);
+    EXPECT_STREQ(server->get_status_string().c_str(), "Stopped");
+}
+
 int main() {
     std::cout << "cloudSQL C++ Test Suite" << std::endl;
     std::cout << "========================" << std::endl << std::endl;
@@ -389,6 +405,11 @@ int main() {
     RUN_TEST(CatalogTest_GetTableByName);
     RUN_TEST(CatalogTest_DropTable);
     RUN_TEST(CatalogTest_CreateIndex);
+    std::cout << std::endl;
+    
+    std::cout << "Server Tests:" << std::endl;
+    RUN_TEST(ServerTest_CreateServer);
+    RUN_TEST(ServerTest_StatusString);
     std::cout << std::endl;
     
     std::cout << "========================" << std::endl;
