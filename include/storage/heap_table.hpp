@@ -43,7 +43,7 @@ public:
     public:
         explicit Iterator(HeapTable& table) : table_(table) {}
         
-        bool next(executor::Tuple& out_tuple) { (void)out_tuple; return false; }
+        bool next(executor::Tuple& out_tuple);
         bool is_done() const { return eof_; }
     };
     
@@ -65,47 +65,22 @@ public:
     
     const std::string& table_name() const { return table_name_; }
     
-    TupleId insert(const executor::Tuple& tuple) { (void)tuple; return TupleId(); }
-    bool remove(const TupleId& tuple_id) { (void)tuple_id; return true; }
-    bool update(const TupleId& tuple_id, const executor::Tuple& tuple) { (void)tuple_id; (void)tuple; return true; }
-    bool get(const TupleId& tuple_id, executor::Tuple& out_tuple) const { (void)tuple_id; (void)out_tuple; return false; }
+    TupleId insert(const executor::Tuple& tuple);
+    bool remove(const TupleId& tuple_id);
+    bool update(const TupleId& tuple_id, const executor::Tuple& tuple);
+    bool get(const TupleId& tuple_id, executor::Tuple& out_tuple) const;
     
-    uint64_t tuple_count() const { return 0; }
-    uint64_t file_size() const { return 0; }
+    uint64_t tuple_count() const;
+    uint64_t file_size() const;
     
     Iterator scan() { return Iterator(*this); }
     
-    bool exists() const { return false; }
-    bool create() { return true; }
-    bool drop() { return true; }
+    bool exists() const;
+    bool create();
+    bool drop();
     
-    int free_space(uint32_t page_num) const { (void)page_num; return 0; }
-    uint32_t vacuum() { return 0; }
-};
-
-/**
- * @brief Catalog for managing tables
- */
-class Catalog {
-private:
-    std::string db_name_;
-    
-public:
-    explicit Catalog(std::string db_name) : db_name_(std::move(db_name)) {}
-    ~Catalog() = default;
-    
-    std::unique_ptr<HeapTable> get_table(const std::string& table_name) {
-        return std::make_unique<HeapTable>(table_name);
-    }
-    
-    bool create_table(const std::string& table_name, const executor::Schema& schema) {
-        (void)table_name; (void)schema; return true;
-    }
-    
-    bool drop_table(const std::string& table_name) { (void)table_name; return true; }
-    
-    std::vector<std::string> list_tables() const { return {}; }
-    bool table_exists(const std::string& table_name) const { (void)table_name; return false; }
+    int free_space(uint32_t page_num) const;
+    uint32_t vacuum();
 };
 
 }  // namespace storage

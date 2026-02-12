@@ -43,7 +43,7 @@ public:
     public:
         explicit Iterator(BTreeIndex& index) : index_(index) {}
         
-        bool next(Entry& out_entry) { (void)out_entry; return false; }
+        bool next(Entry& out_entry);
         bool is_done() const { return eof_; }
     };
     
@@ -82,30 +82,28 @@ public:
     const std::string& table_name() const { return table_name_; }
     common::ValueType key_type() const { return key_type_; }
     
-    bool create() { return true; }
-    bool open() { return true; }
-    void close() {}
-    bool drop() { return true; }
+    bool create();
+    bool open();
+    void close();
+    bool drop();
     
-    bool insert(const common::Value& key, HeapTable::TupleId tuple_id) { (void)key; (void)tuple_id; return true; }
-    bool remove(const common::Value& key, HeapTable::TupleId tuple_id) { (void)key; (void)tuple_id; return true; }
+    bool insert(const common::Value& key, HeapTable::TupleId tuple_id);
+    bool remove(const common::Value& key, HeapTable::TupleId tuple_id);
     
-    std::vector<HeapTable::TupleId> search(const common::Value& key) const { (void)key; return {}; }
+    std::vector<HeapTable::TupleId> search(const common::Value& key) const;
     
     std::vector<HeapTable::TupleId> range_search(
         const std::unique_ptr<common::Value>& min_key,
         const std::unique_ptr<common::Value>& max_key
-    ) const { (void)min_key; (void)max_key; return {}; }
+    ) const;
     
     Iterator scan() { return Iterator(*this); }
     Iterator range_scan(const Range& range) { (void)range; return Iterator(*this); }
     
-    void get_stats(uint64_t& num_entries, int& depth, uint32_t& num_pages) const {
-        num_entries = 0; depth = 0; num_pages = 0;
-    }
+    void get_stats(uint64_t& num_entries, int& depth, uint32_t& num_pages) const;
     
-    bool verify() const { return true; }
-    bool exists() const { return false; }
+    bool verify() const;
+    bool exists() const;
 };
 
 }  // namespace storage
