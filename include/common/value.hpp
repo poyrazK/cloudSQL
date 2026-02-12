@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <stdexcept>
 #include <functional>
+#include <variant>
+#include <optional>
 
 namespace cloudsql {
 namespace common {
@@ -39,15 +41,12 @@ enum ValueType {
 };
 
 /**
- * @brief Type-safe Value class with RAII
+ * @brief Type-safe Value class with std::variant
  */
 class Value {
 private:
     ValueType type_;
-    bool bool_value_;
-    int64_t int64_value_;
-    double float64_value_;
-    std::string* string_value_;
+    std::variant<std::monostate, bool, int64_t, double, std::string> data_;
 
 public:
     Value();
@@ -62,13 +61,13 @@ public:
     explicit Value(const std::string& v);
     explicit Value(const char* v);
     
-    ~Value();
-    Value(const Value& other);
-    Value(Value&& other) noexcept;
-    Value& operator=(const Value& other);
-    Value& operator=(Value&& other) noexcept;
+    ~Value() = default;
+    Value(const Value& other) = default;
+    Value(Value&& other) noexcept = default;
+    Value& operator=(const Value& other) = default;
+    Value& operator=(Value&& other) noexcept = default;
 
-    // Comparison operators
+    /* Comparison operators */
     bool operator==(const Value& other) const;
     bool operator!=(const Value& other) const { return !(*this == other); }
     bool operator<(const Value& other) const;
@@ -100,7 +99,10 @@ public:
     std::string to_string() const;
     std::string to_debug_string() const;
 
-    void swap(Value& other) noexcept;
+    void swap(Value& other) noexcept {
+        std::swap(type_, other.type_);
+        std::swap(data_, other.data_);
+    }
 
     struct Hash {
         std::size_t operator()(const Value& v) const noexcept;
@@ -109,105 +111,48 @@ public:
 
 // Constructors
 inline Value::Value() 
-    : type_(TYPE_NULL), bool_value_(false), int64_value_(0), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(TYPE_NULL), data_(std::monostate{}) {}
 
 inline Value::Value(ValueType type) 
-    : type_(type), bool_value_(false), int64_value_(0), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(type), data_(std::monostate{}) {
+    if (type != TYPE_NULL) {
+        /* Initialize with default values based on type */
+        switch (type) {
+            case TYPE_BOOL: data_ = false; break;
+            case TYPE_INT8: case TYPE_INT16: case TYPE_INT32: case TYPE_INT64: data_ = int64_t(0); break;
+            case TYPE_FLOAT32: case TYPE_FLOAT64: data_ = 0.0; break;
+            case TYPE_TEXT: case TYPE_VARCHAR: case TYPE_CHAR: data_ = std::string(""); break;
+            default: break;
+        }
+    }
+}
 
 inline Value::Value(bool v) 
-    : type_(TYPE_BOOL), bool_value_(v), int64_value_(0), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(TYPE_BOOL), data_(v) {}
 
 inline Value::Value(int8_t v) 
-    : type_(TYPE_INT8), bool_value_(false), int64_value_(static_cast<int64_t>(v)), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(TYPE_INT8), data_(static_cast<int64_t>(v)) {}
 
 inline Value::Value(int16_t v) 
-    : type_(TYPE_INT16), bool_value_(false), int64_value_(static_cast<int64_t>(v)), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(TYPE_INT16), data_(static_cast<int64_t>(v)) {}
 
 inline Value::Value(int32_t v) 
-    : type_(TYPE_INT32), bool_value_(false), int64_value_(static_cast<int64_t>(v)), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(TYPE_INT32), data_(static_cast<int64_t>(v)) {}
 
 inline Value::Value(int64_t v) 
-    : type_(TYPE_INT64), bool_value_(false), int64_value_(v), 
-      float64_value_(0.0), string_value_(nullptr) {}
+    : type_(TYPE_INT64), data_(v) {}
 
 inline Value::Value(float v) 
-    : type_(TYPE_FLOAT32), bool_value_(false), int64_value_(0), 
-      float64_value_(static_cast<double>(v)), string_value_(nullptr) {}
+    : type_(TYPE_FLOAT32), data_(static_cast<double>(v)) {}
 
 inline Value::Value(double v) 
-    : type_(TYPE_FLOAT64), bool_value_(false), int64_value_(0), 
-      float64_value_(v), string_value_(nullptr) {}
+    : type_(TYPE_FLOAT64), data_(v) {}
 
 inline Value::Value(const std::string& v) 
-    : type_(TYPE_TEXT), bool_value_(false), int64_value_(0), 
-      float64_value_(0.0), string_value_(new std::string(v)) {}
+    : type_(TYPE_TEXT), data_(v) {}
 
 inline Value::Value(const char* v) 
-    : type_(TYPE_TEXT), bool_value_(false), int64_value_(0), 
-      float64_value_(0.0), string_value_(new std::string(v)) {}
-
-// Destructor
-inline Value::~Value() {
-    delete string_value_;
-}
-
-// Copy constructor
-inline Value::Value(const Value& other)
-    : type_(other.type_), bool_value_(other.bool_value_), 
-      int64_value_(other.int64_value_), float64_value_(other.float64_value_),
-      string_value_(nullptr) {
-    if (other.string_value_) {
-        string_value_ = new std::string(*other.string_value_);
-    }
-}
-
-// Move constructor
-inline Value::Value(Value&& other) noexcept
-    : type_(other.type_), bool_value_(other.bool_value_), 
-      int64_value_(other.int64_value_), float64_value_(other.float64_value_),
-      string_value_(other.string_value_) {
-    other.string_value_ = nullptr;
-    other.type_ = TYPE_NULL;
-}
-
-// Copy assignment
-inline Value& Value::operator=(const Value& other) {
-    if (this != &other) {
-        Value temp(other);
-        swap(temp);
-    }
-    return *this;
-}
-
-// Move assignment
-inline Value& Value::operator=(Value&& other) noexcept {
-    if (this != &other) {
-        delete string_value_;
-        type_ = other.type_;
-        bool_value_ = other.bool_value_;
-        int64_value_ = other.int64_value_;
-        float64_value_ = other.float64_value_;
-        string_value_ = other.string_value_;
-        other.string_value_ = nullptr;
-        other.type_ = TYPE_NULL;
-    }
-    return *this;
-}
-
-// Swap
-inline void Value::swap(Value& other) noexcept {
-    std::swap(type_, other.type_);
-    std::swap(bool_value_, other.bool_value_);
-    std::swap(int64_value_, other.int64_value_);
-    std::swap(float64_value_, other.float64_value_);
-    std::swap(string_value_, other.string_value_);
-}
+    : type_(TYPE_TEXT), data_(std::string(v)) {}
 
 // Factory methods
 inline Value Value::make_null() { return Value(); }
@@ -226,92 +171,71 @@ inline bool Value::is_numeric() const {
 // Accessors
 inline bool Value::as_bool() const { 
     if (type_ != TYPE_BOOL) throw std::runtime_error("Value is not bool");
-    return bool_value_; 
+    return std::get<bool>(data_); 
 }
 
 inline int8_t Value::as_int8() const { 
     if (type_ != TYPE_INT8) throw std::runtime_error("Value is not int8");
-    return static_cast<int8_t>(int64_value_); 
+    return static_cast<int8_t>(std::get<int64_t>(data_)); 
 }
 
 inline int16_t Value::as_int16() const { 
     if (type_ != TYPE_INT16) throw std::runtime_error("Value is not int16");
-    return static_cast<int16_t>(int64_value_); 
+    return static_cast<int16_t>(std::get<int64_t>(data_)); 
 }
 
 inline int32_t Value::as_int32() const { 
     if (type_ != TYPE_INT32) throw std::runtime_error("Value is not int32");
-    return static_cast<int32_t>(int64_value_); 
+    return static_cast<int32_t>(std::get<int64_t>(data_)); 
 }
 
 inline int64_t Value::as_int64() const { 
     if (type_ != TYPE_INT64) throw std::runtime_error("Value is not int64");
-    return int64_value_; 
+    return std::get<int64_t>(data_); 
 }
 
 inline float Value::as_float32() const { 
     if (type_ != TYPE_FLOAT32) throw std::runtime_error("Value is not float32");
-    return static_cast<float>(float64_value_); 
+    return static_cast<float>(std::get<double>(data_)); 
 }
 
 inline double Value::as_float64() const { 
     if (type_ != TYPE_FLOAT64) throw std::runtime_error("Value is not float64");
-    return float64_value_; 
+    return std::get<double>(data_); 
 }
 
 inline const std::string& Value::as_text() const { 
-    if (type_ != TYPE_TEXT) throw std::runtime_error("Value is not text");
-    if (!string_value_) throw std::runtime_error("Value string is null");
-    return *string_value_; 
+    if (type_ != TYPE_TEXT && type_ != TYPE_VARCHAR && type_ != TYPE_CHAR) 
+        throw std::runtime_error("Value is not text-based");
+    return std::get<std::string>(data_); 
 }
 
 // Conversions
 inline int64_t Value::to_int64() const {
-    switch (type_) {
-        case TYPE_BOOL: return bool_value_ ? 1 : 0;
-        case TYPE_INT8: case TYPE_INT16: case TYPE_INT32: case TYPE_INT64:
-            return int64_value_;
-        case TYPE_FLOAT32: case TYPE_FLOAT64:
-            return static_cast<int64_t>(float64_value_);
-        default: return 0;
-    }
+    if (std::holds_alternative<int64_t>(data_)) return std::get<int64_t>(data_);
+    if (std::holds_alternative<double>(data_)) return static_cast<int64_t>(std::get<double>(data_));
+    if (std::holds_alternative<bool>(data_)) return std::get<bool>(data_) ? 1 : 0;
+    return 0;
 }
 
 inline double Value::to_float64() const {
-    switch (type_) {
-        case TYPE_BOOL: return bool_value_ ? 1.0 : 0.0;
-        case TYPE_INT8: case TYPE_INT16: case TYPE_INT32: case TYPE_INT64:
-            return static_cast<double>(int64_value_);
-        case TYPE_FLOAT32: case TYPE_FLOAT64:
-            return float64_value_;
-        default: return 0.0;
-    }
+    if (std::holds_alternative<double>(data_)) return std::get<double>(data_);
+    if (std::holds_alternative<int64_t>(data_)) return static_cast<double>(std::get<int64_t>(data_));
+    if (std::holds_alternative<bool>(data_)) return std::get<bool>(data_) ? 1.0 : 0.0;
+    return 0.0;
 }
 
 inline std::string Value::to_string() const {
-    char buf[64];
-    
-    switch (type_) {
-        case TYPE_NULL: return "NULL";
-        case TYPE_BOOL: return bool_value_ ? "TRUE" : "FALSE";
-        case TYPE_INT8: 
-        case TYPE_INT16: 
-        case TYPE_INT32: 
-            snprintf(buf, sizeof(buf), "%ld", (long)int64_value_);
-            return buf;
-        case TYPE_INT64: 
-            snprintf(buf, sizeof(buf), "%lld", (long long)int64_value_);
-            return buf;
-        case TYPE_FLOAT32:
-            snprintf(buf, sizeof(buf), "%.6g", (double)float64_value_);
-            return buf;
-        case TYPE_FLOAT64:
-            snprintf(buf, sizeof(buf), "%.10g", float64_value_);
-            return buf;
-        case TYPE_TEXT:
-            return string_value_ ? *string_value_ : "";
-        default: return "<unknown>";
+    if (std::holds_alternative<std::monostate>(data_)) return "NULL";
+    if (std::holds_alternative<bool>(data_)) return std::get<bool>(data_) ? "TRUE" : "FALSE";
+    if (std::holds_alternative<int64_t>(data_)) return std::to_string(std::get<int64_t>(data_));
+    if (std::holds_alternative<double>(data_)) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.10g", std::get<double>(data_));
+        return buf;
     }
+    if (std::holds_alternative<std::string>(data_)) return std::get<std::string>(data_);
+    return "<unknown>";
 }
 
 inline bool Value::operator==(const Value& other) const {
@@ -321,28 +245,15 @@ inline bool Value::operator==(const Value& other) const {
         }
         return false;
     }
-    
-    switch (type_) {
-        case TYPE_NULL: return true;
-        case TYPE_BOOL: return bool_value_ == other.bool_value_;
-        case TYPE_INT8: case TYPE_INT16: case TYPE_INT32: case TYPE_INT64:
-            return int64_value_ == other.int64_value_;
-        case TYPE_FLOAT32: case TYPE_FLOAT64:
-            return float64_value_ == other.float64_value_;
-        case TYPE_TEXT: 
-            return string_value_ && other.string_value_ && *string_value_ == *other.string_value_;
-        default: return false;
-    }
+    return data_ == other.data_;
 }
 
 inline bool Value::operator<(const Value& other) const {
     if (is_numeric() && other.is_numeric()) {
         return to_float64() < other.to_float64();
     }
-    if (type_ == TYPE_TEXT && other.type_ == TYPE_TEXT) {
-        std::string s1 = string_value_ ? *string_value_ : "";
-        std::string s2 = other.string_value_ ? *other.string_value_ : "";
-        return s1 < s2;
+    if (std::holds_alternative<std::string>(data_) && std::holds_alternative<std::string>(other.data_)) {
+        return std::get<std::string>(data_) < std::get<std::string>(other.data_);
     }
     return false;
 }
@@ -352,26 +263,14 @@ inline std::string Value::to_debug_string() const {
 }
 
 inline std::size_t Value::Hash::operator()(const Value& v) const noexcept {
-    std::size_t hash = std::hash<int>{}(v.type_);
-    
-    switch (v.type_) {
-        case TYPE_BOOL:
-            hash ^= std::hash<bool>{}(v.bool_value_) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            break;
-        case TYPE_INT8: case TYPE_INT16: case TYPE_INT32: case TYPE_INT64:
-            hash ^= std::hash<int64_t>{}(v.int64_value_) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            break;
-        case TYPE_FLOAT32: case TYPE_FLOAT64:
-            hash ^= std::hash<double>{}(v.float64_value_) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            break;
-        case TYPE_TEXT:
-            if (v.string_value_) {
-                hash ^= std::hash<std::string>{}(*v.string_value_) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            }
-            break;
-        default: break;
-    }
-    return hash;
+    std::size_t h = std::hash<int>{}(v.type_);
+    std::visit([&h](auto&& arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (!std::is_same_v<T, std::monostate>) {
+            h ^= std::hash<T>{}(arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        }
+    }, v.data_);
+    return h;
 }
 
 }  // namespace common
