@@ -34,6 +34,7 @@ private:
 
     QueryResult execute_select(const parser::SelectStatement& stmt);
     QueryResult execute_create_table(const parser::CreateTableStatement& stmt);
+    QueryResult execute_insert(const parser::InsertStatement& stmt);
     
     /* Helper to build operator tree from SELECT */
     std::unique_ptr<Operator> build_plan(const parser::SelectStatement& stmt);

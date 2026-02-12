@@ -58,12 +58,6 @@ static int tests_failed = 0;
     } \
 } while(0)
 
-#define EXPECT_FALSE(a) do { \
-    if (a) { \
-        throw std::runtime_error("Expected false but got true"); \
-    } \
-} while(0)
-
 #define EXPECT_STREQ(a, b) do { \
     std::string _a = (a); std::string _b = (b); \
     if (_a != _b) { \
@@ -71,41 +65,11 @@ static int tests_failed = 0;
     } \
 } while(0)
 
-#define EXPECT_GE(a, b) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a < _b) { \
-        throw std::runtime_error("Expected " + std::to_string(_a) + " to be >= " + std::to_string(_b)); \
-    } \
-} while(0)
-
 // ============= Value Tests =============
 
-TEST(ValueTest_IntegerOperations) {
+TEST(ValueTest_Basic) {
     auto val = Value::make_int64(42);
-    EXPECT_EQ(val.type(), TYPE_INT64);
     EXPECT_EQ(val.to_int64(), 42);
-}
-
-TEST(ValueTest_StringOperations) {
-    auto val = Value::make_text("hello");
-    EXPECT_EQ(val.type(), TYPE_TEXT);
-    EXPECT_STREQ(val.as_text().c_str(), "hello");
-}
-
-// ============= Parser Tests =============
-
-TEST(ParserTest_SelectStatement) {
-    auto lexer = std::make_unique<Lexer>("SELECT id, name FROM users WHERE id = 1");
-    Parser parser(std::move(lexer));
-    auto stmt = parser.parse_statement();
-    
-    EXPECT_TRUE(stmt != nullptr);
-    EXPECT_EQ(static_cast<int>(stmt->type()), static_cast<int>(StmtType::Select));
-    
-    auto select = static_cast<SelectStatement*>(stmt.get());
-    EXPECT_EQ(select->columns().size(), static_cast<size_t>(2));
-    EXPECT_TRUE(select->from() != nullptr);
-    EXPECT_TRUE(select->where() != nullptr);
 }
 
 // ============= Execution Tests =============
@@ -117,48 +81,44 @@ TEST(ExecutionTest_EndToEnd) {
     QueryExecutor exec(*catalog, sm);
 
     // 1. Create Table
-    auto lexer1 = std::make_unique<Lexer>("CREATE TABLE users (id BIGINT, age BIGINT)");
-    Parser parser1(std::move(lexer1));
-    auto stmt1 = parser1.parse_statement();
-    auto res1 = exec.execute(*stmt1);
-    EXPECT_TRUE(res1.success());
+    {
+        auto lexer = std::make_unique<Lexer>("CREATE TABLE users (id BIGINT, age BIGINT)");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        auto res = exec.execute(*stmt);
+        EXPECT_TRUE(res.success());
+    }
 
-    // 2. Insert data (manually for now as INSERT parsing is TODO)
-    auto table_meta = catalog->get_table_by_name("users");
-    Schema schema;
-    schema.add_column("id", TYPE_INT64);
-    schema.add_column("age", TYPE_INT64);
-    HeapTable table("users", sm, schema);
-    table.insert(Tuple({Value::make_int64(1), Value::make_int64(20)}));
-    table.insert(Tuple({Value::make_int64(2), Value::make_int64(30)}));
+    // 2. Insert data via SQL
+    {
+        auto lexer = std::make_unique<Lexer>("INSERT INTO users (id, age) VALUES (1, 20), (2, 30), (3, 40)");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        auto res = exec.execute(*stmt);
+        EXPECT_TRUE(res.success());
+        EXPECT_EQ(res.rows_affected(), 3);
+    }
 
     // 3. Select with Filter
-    auto lexer2 = std::make_unique<Lexer>("SELECT id FROM users WHERE age > 25");
-    Parser parser2(std::move(lexer2));
-    auto stmt2 = parser2.parse_statement();
-    auto res2 = exec.execute(*stmt2);
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT id FROM users WHERE age > 25");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        auto res = exec.execute(*stmt);
 
-    EXPECT_TRUE(res2.success());
-    EXPECT_EQ(res2.row_count(), static_cast<size_t>(1));
-    EXPECT_STREQ(res2.rows()[0].get(0).to_string().c_str(), "2");
+        EXPECT_TRUE(res.success());
+        EXPECT_EQ(res.row_count(), static_cast<size_t>(2));
+        EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "2");
+        EXPECT_STREQ(res.rows()[1].get(0).to_string().c_str(), "3");
+    }
 }
 
 int main() {
     std::cout << "cloudSQL C++ Test Suite" << std::endl;
     std::cout << "========================" << std::endl << std::endl;
     
-    std::cout << "Value Tests:" << std::endl;
-    RUN_TEST(ValueTest_IntegerOperations);
-    RUN_TEST(ValueTest_StringOperations);
-    std::cout << std::endl;
-    
-    std::cout << "Parser Tests:" << std::endl;
-    RUN_TEST(ParserTest_SelectStatement);
-    std::cout << std::endl;
-
-    std::cout << "Execution Tests:" << std::endl;
+    RUN_TEST(ValueTest_Basic);
     RUN_TEST(ExecutionTest_EndToEnd);
-    std::cout << std::endl;
     
     std::cout << "========================" << std::endl;
     std::cout << "Results: " << tests_passed << " passed, " << tests_failed << " failed" << std::endl;

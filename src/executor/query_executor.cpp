@@ -24,6 +24,9 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
             case parser::StmtType::CreateTable:
                 result = execute_create_table(static_cast<const parser::CreateTableStatement&>(stmt));
                 break;
+            case parser::StmtType::Insert:
+                result = execute_insert(static_cast<const parser::InsertStatement&>(stmt));
+                break;
             default:
                 result.set_error("Unsupported statement type");
                 break;
@@ -101,6 +104,44 @@ QueryResult QueryExecutor::execute_create_table(const parser::CreateTableStateme
     }
 
     result.set_rows_affected(1);
+    return result;
+}
+
+QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt) {
+    QueryResult result;
+    
+    if (!stmt.table()) {
+        result.set_error("Target table not specified");
+        return result;
+    }
+
+    std::string table_name = stmt.table()->to_string();
+    auto table_meta = catalog_.get_table_by_name(table_name);
+    if (!table_meta) {
+        result.set_error("Table not found: " + table_name);
+        return result;
+    }
+
+    /* Construct Schema */
+    Schema schema;
+    for (const auto& col : (*table_meta)->columns) {
+        schema.add_column(col.name, col.type);
+    }
+
+    storage::HeapTable table(table_name, storage_manager_, schema);
+    
+    uint64_t rows_inserted = 0;
+    for (const auto& row_exprs : stmt.values()) {
+        std::vector<common::Value> values;
+        for (const auto& expr : row_exprs) {
+            values.push_back(expr->evaluate());
+        }
+        
+        table.insert(Tuple(std::move(values)));
+        rows_inserted++;
+    }
+
+    result.set_rows_affected(rows_inserted);
     return result;
 }
 

@@ -179,7 +179,42 @@ std::unique_ptr<Statement> Parser::parse_create_table() {
  * @brief Parse INSERT statement
  */
 std::unique_ptr<Statement> Parser::parse_insert() {
-    return nullptr;
+    auto stmt = std::make_unique<InsertStatement>();
+    consume(TokenType::Insert);
+    consume(TokenType::Into);
+    
+    /* Table name */
+    stmt->set_table(parse_primary());
+    
+    /* Optional columns: (id, name) */
+    if (consume(TokenType::LParen)) {
+        bool first = true;
+        while (first || consume(TokenType::Comma)) {
+            first = false;
+            stmt->add_column(parse_primary());
+        }
+        consume(TokenType::RParen);
+    }
+    
+    consume(TokenType::Values);
+    
+    /* Rows: (1, 'Alice'), (2, 'Bob') */
+    bool first_row = true;
+    while (first_row || consume(TokenType::Comma)) {
+        first_row = false;
+        consume(TokenType::LParen);
+        
+        std::vector<std::unique_ptr<Expression>> row;
+        bool first_val = true;
+        while (first_val || consume(TokenType::Comma)) {
+            first_val = false;
+            row.push_back(parse_expression());
+        }
+        stmt->add_row(std::move(row));
+        consume(TokenType::RParen);
+    }
+    
+    return stmt;
 }
 
 /**
