@@ -10,9 +10,11 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <unordered_map>
 #include "executor/types.hpp"
 #include "parser/expression.hpp"
 #include "storage/heap_table.hpp"
+#include "storage/btree_index.hpp"
 
 namespace cloudsql {
 namespace executor {
@@ -105,6 +107,32 @@ public:
 };
 
 /**
+ * @brief Index scan operator (point lookup)
+ */
+class IndexScanOperator : public Operator {
+private:
+    std::string table_name_;
+    std::string index_name_;
+    std::unique_ptr<storage::HeapTable> table_;
+    std::unique_ptr<storage::BTreeIndex> index_;
+    common::Value search_key_;
+    std::vector<storage::HeapTable::TupleId> matching_ids_;
+    size_t current_match_index_ = 0;
+    Schema schema_;
+
+public:
+    IndexScanOperator(std::unique_ptr<storage::HeapTable> table, 
+                      std::unique_ptr<storage::BTreeIndex> index,
+                      common::Value search_key);
+
+    bool init() override;
+    bool open() override;
+    bool next(Tuple& out_tuple) override;
+    void close() override;
+    Schema& output_schema() override;
+};
+
+/**
  * @brief Filter operator (WHERE clause)
  */
 class FilterOperator : public Operator {
@@ -154,8 +182,17 @@ private:
     std::unique_ptr<parser::Expression> left_key_;
     std::unique_ptr<parser::Expression> right_key_;
     Schema schema_;
-    std::vector<Tuple> results_;
-    size_t current_index_ = 0;
+    
+    /* In-memory hash table for the right side */
+    std::unordered_multimap<std::string, Tuple> hash_table_;
+    
+    /* Probe phase state */
+    std::optional<Tuple> left_tuple_;
+    struct MatchIterator {
+        std::unordered_multimap<std::string, Tuple>::iterator current;
+        std::unordered_multimap<std::string, Tuple>::iterator end;
+    };
+    std::optional<MatchIterator> match_iter_;
     
 public:
     HashJoinOperator(std::unique_ptr<Operator> left, std::unique_ptr<Operator> right,

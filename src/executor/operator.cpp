@@ -51,6 +51,52 @@ void SeqScanOperator::close() {
 
 Schema& SeqScanOperator::output_schema() { return schema_; }
 
+/* --- IndexScanOperator --- */
+
+IndexScanOperator::IndexScanOperator(std::unique_ptr<storage::HeapTable> table, 
+                                     std::unique_ptr<storage::BTreeIndex> index,
+                                     common::Value search_key)
+    : Operator(OperatorType::IndexScan)
+    , table_name_(table->table_name())
+    , index_name_(index->index_name())
+    , table_(std::move(table))
+    , index_(std::move(index))
+    , search_key_(std::move(search_key))
+    , schema_(table_->schema()) {}
+
+bool IndexScanOperator::init() {
+    state_ = ExecState::Init;
+    return true;
+}
+
+bool IndexScanOperator::open() {
+    state_ = ExecState::Open;
+    matching_ids_ = index_->search(search_key_);
+    current_match_index_ = 0;
+    return true;
+}
+
+bool IndexScanOperator::next(Tuple& out_tuple) {
+    if (current_match_index_ >= matching_ids_.size()) {
+        state_ = ExecState::Done;
+        return false;
+    }
+
+    const auto& tid = matching_ids_[current_match_index_++];
+    if (table_->get(tid, out_tuple)) {
+        return true;
+    }
+
+    return next(out_tuple);
+}
+
+void IndexScanOperator::close() {
+    matching_ids_.clear();
+    state_ = ExecState::Done;
+}
+
+Schema& IndexScanOperator::output_schema() { return schema_; }
+
 /* --- FilterOperator --- */
 
 FilterOperator::FilterOperator(std::unique_ptr<Operator> child, std::unique_ptr<parser::Expression> condition)
@@ -71,9 +117,7 @@ bool FilterOperator::open() {
 bool FilterOperator::next(Tuple& out_tuple) {
     Tuple tuple;
     while (child_->next(tuple)) {
-        /* Evaluate condition against the current tuple */
-        /* TODO: Bind tuple to expression context for proper evaluation */
-        common::Value result = condition_->evaluate();
+        common::Value result = condition_->evaluate(&tuple, &schema_);
         if (result.as_bool()) {
             out_tuple = std::move(tuple);
             return true;
@@ -96,6 +140,7 @@ void FilterOperator::add_child(std::unique_ptr<Operator> child) { child_ = std::
 
 ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child, std::vector<std::unique_ptr<parser::Expression>> columns)
     : Operator(OperatorType::Project), child_(std::move(child)), columns_(std::move(columns)) {
+    if (child_) schema_ = child_->output_schema();
 }
 
 bool ProjectOperator::init() {
@@ -117,8 +162,7 @@ bool ProjectOperator::next(Tuple& out_tuple) {
     
     std::vector<common::Value> output_values;
     for (const auto& col : columns_) {
-        /* Evaluate projection expression */
-        output_values.push_back(col->evaluate());
+        output_values.push_back(col->evaluate(&input, &schema_));
     }
     out_tuple = Tuple(std::move(output_values));
     return true;
@@ -139,35 +183,88 @@ HashJoinOperator::HashJoinOperator(std::unique_ptr<Operator> left, std::unique_p
                      std::unique_ptr<parser::Expression> left_key, 
                      std::unique_ptr<parser::Expression> right_key)
     : Operator(OperatorType::HashJoin), left_(std::move(left)), right_(std::move(right)),
-      left_key_(std::move(left_key)), right_key_(std::move(right_key)) {}
+      left_key_(std::move(left_key)), right_key_(std::move(right_key)) {
+    
+    /* Build resulting schema */
+    if (left_ && right_) {
+        for (const auto& col : left_->output_schema().columns()) schema_.add_column(col);
+        for (const auto& col : right_->output_schema().columns()) schema_.add_column(col);
+    }
+}
 
 bool HashJoinOperator::init() {
     return left_->init() && right_->init();
 }
 
 bool HashJoinOperator::open() {
+    if (!left_->open() || !right_->open()) return false;
+    
     /* Build phase: scan right side into hash table */
+    hash_table_.clear();
     Tuple right_tuple;
+    auto right_schema = right_->output_schema();
     while (right_->next(right_tuple)) {
-        // Build hash table entries
+        common::Value key = right_key_->evaluate(&right_tuple, &right_schema);
+        hash_table_.emplace(key.to_string(), std::move(right_tuple));
     }
+    
+    left_tuple_ = std::nullopt;
+    match_iter_ = std::nullopt;
     state_ = ExecState::Open;
     return true;
 }
 
 bool HashJoinOperator::next(Tuple& out_tuple) {
-    if (current_index_ >= results_.size()) {
-        state_ = ExecState::Done;
-        return false;
+    auto left_schema = left_->output_schema();
+
+    while (true) {
+        if (match_iter_) {
+            /* We are currently iterating through matches for a left tuple */
+            if (match_iter_->current != match_iter_->end) {
+                const auto& right_tuple = match_iter_->current->second;
+                
+                /* Concatenate left and right tuples */
+                std::vector<common::Value> joined_values = left_tuple_->values();
+                joined_values.insert(joined_values.end(), right_tuple.values().begin(), right_tuple.values().end());
+                
+                out_tuple = Tuple(std::move(joined_values));
+                match_iter_->current++;
+                return true;
+            } else {
+                /* No more matches for this left tuple */
+                match_iter_ = std::nullopt;
+                left_tuple_ = std::nullopt;
+            }
+        }
+
+        /* Pull next tuple from left side */
+        Tuple next_left;
+        if (!left_->next(next_left)) {
+            state_ = ExecState::Done;
+            return false;
+        }
+
+        left_tuple_ = std::move(next_left);
+        common::Value key = left_key_->evaluate(&*left_tuple_, &left_schema);
+        
+        /* Look up in hash table */
+        auto range = hash_table_.equal_range(key.to_string());
+        if (range.first != range.second) {
+            match_iter_ = {range.first, range.second};
+            /* Continue loop to return the first match */
+        } else {
+            /* No match for this left tuple, pull next */
+            left_tuple_ = std::nullopt;
+        }
     }
-    /* Probe phase: return joined results */
-    out_tuple = results_[current_index_++];
-    return true;
 }
 
 void HashJoinOperator::close() {
     left_->close();
     right_->close();
+    hash_table_.clear();
+    match_iter_ = std::nullopt;
+    left_tuple_ = std::nullopt;
     state_ = ExecState::Done;
 }
 
@@ -193,7 +290,6 @@ bool LimitOperator::init() {
 bool LimitOperator::open() {
     if (!child_->open()) return false;
     
-    /* Skip offset rows */
     Tuple tuple;
     while (current_count_ < offset_ && child_->next(tuple)) {
         current_count_++;
