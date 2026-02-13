@@ -7,9 +7,49 @@
  */
 
 #include "network/server.hpp"
+#include <arpa/inet.h>
+#include <vector>
 
 namespace cloudsql {
 namespace network {
+
+/**
+ * @brief Helper for parsing PostgreSQL binary protocol
+ */
+class ProtocolReader {
+public:
+    static uint32_t read_int32(const char* buffer) {
+        uint32_t val;
+        std::memcpy(&val, buffer, 4);
+        return ntohl(val);
+    }
+
+    static std::string read_string(const char* buffer, size_t& offset, size_t limit) {
+        std::string s;
+        while (offset < limit && buffer[offset] != '\0') {
+            s += buffer[offset++];
+        }
+        if (offset < limit) offset++; /* Skip null terminator */
+        return s;
+    }
+};
+
+/**
+ * @brief Helper for building PostgreSQL binary responses
+ */
+class ProtocolWriter {
+public:
+    static void append_int32(std::vector<char>& buf, uint32_t val) {
+        uint32_t nval = htonl(val);
+        const char* p = reinterpret_cast<const char*>(&nval);
+        buf.insert(buf.end(), p, p + 4);
+    }
+
+    static void append_string(std::vector<char>& buf, const std::string& s) {
+        buf.insert(buf.end(), s.begin(), s.end());
+        buf.push_back('\0');
+    }
+};
 
 /**
  * @brief Create a new server instance
@@ -80,18 +120,12 @@ bool Server::stop() {
     return true;
 }
 
-/**
- * @brief Wait for server to stop
- */
 void Server::wait() {
     if (accept_thread_.joinable()) {
         accept_thread_.join();
     }
 }
 
-/**
- * @brief Get status string
- */
 std::string Server::get_status_string() const {
     switch (status_) {
         case ServerStatus::Stopped: return "Stopped";
@@ -129,27 +163,91 @@ void Server::accept_connections() {
 }
 
 /**
- * @brief Handle a client connection
+ * @brief Handle a client connection using PostgreSQL protocol
  */
 void Server::handle_connection(int client_fd) {
-    char buffer[4096];
-    std::string query;
+    char buffer[8192];
+    
+    /* 1. Read Length (Initial Startup/SSL) */
+    ssize_t n = recv(client_fd, buffer, 4, 0);
+    if (n < 4) { close(client_fd); return; }
+    
+    uint32_t len = ProtocolReader::read_int32(buffer);
+    if (len > 8192) { close(client_fd); return; }
 
+    /* 2. Read Rest of Startup/SSL Packet */
+    n = recv(client_fd, buffer + 4, len - 4, 0);
+    if (n < (ssize_t)(len - 4)) { close(client_fd); return; }
+
+    uint32_t protocol = ProtocolReader::read_int32(buffer + 4);
+    
+    /* Check for SSL Request (80877103) */
+    if (protocol == 80877103) {
+        /* We don't support SSL, send 'N' */
+        char ssl_deny = 'N';
+        send(client_fd, &ssl_deny, 1, 0);
+        
+        /* Read actual StartupMessage */
+        n = recv(client_fd, buffer, 4, 0);
+        if (n < 4) { close(client_fd); return; }
+        len = ProtocolReader::read_int32(buffer);
+        n = recv(client_fd, buffer + 4, len - 4, 0);
+        if (n < (ssize_t)(len - 4)) { close(client_fd); return; }
+        protocol = ProtocolReader::read_int32(buffer + 4);
+    }
+
+    /* Verify Protocol Version (3.0 is 196608) */
+    if (protocol != 196608) {
+        close(client_fd);
+        return;
+    }
+
+    /* 3. Send AuthenticationOK ('R') */
+    std::vector<char> auth_ok = {'R'};
+    ProtocolWriter::append_int32(auth_ok, 8); // Length
+    ProtocolWriter::append_int32(auth_ok, 0); // Success
+    send(client_fd, auth_ok.data(), auth_ok.size(), 0);
+
+    /* 4. Send ReadyForQuery ('Z') */
+    std::vector<char> ready = {'Z'};
+    ProtocolWriter::append_int32(ready, 5);
+    ready.push_back('I'); // Idle
+    send(client_fd, ready.data(), ready.size(), 0);
+
+    /* 5. Main Message Loop */
     while (running_.load()) {
-        ssize_t bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_read <= 0) {
+        char type;
+        n = recv(client_fd, &type, 1, 0);
+        if (n <= 0) break;
+
+        n = recv(client_fd, buffer, 4, 0);
+        if (n < 4) break;
+        len = ProtocolReader::read_int32(buffer);
+        
+        std::vector<char> body(len - 4);
+        if (len > 4) {
+            n = recv(client_fd, body.data(), len - 4, 0);
+            if (n < (ssize_t)(len - 4)) break;
+        }
+
+        if (type == 'Q') { /* Simple Query */
+            std::string sql(body.data());
+            stats_.queries_executed.fetch_add(1);
+            
+            /* TODO: Invoke QueryExecutor and send RowDescription/DataRow/CommandComplete */
+            
+            /* For now, send empty response or Error */
+            std::vector<char> complete = {'C'};
+            std::string msg = "SELECT 0";
+            ProtocolWriter::append_int32(complete, 4 + msg.size() + 1);
+            ProtocolWriter::append_string(complete, msg);
+            send(client_fd, complete.data(), complete.size(), 0);
+        } else if (type == 'X') { /* Terminate */
             break;
         }
 
-        buffer[bytes_read] = '\0';
-        stats_.bytes_received.fetch_add(bytes_read);
-        query += buffer;
-
-        /* Basic query delimiter check */
-        if (query.find(';') != std::string::npos) {
-            stats_.queries_executed.fetch_add(1);
-            query.clear();
-        }
+        /* Ready for Query */
+        send(client_fd, ready.data(), ready.size(), 0);
     }
 
     close(client_fd);
