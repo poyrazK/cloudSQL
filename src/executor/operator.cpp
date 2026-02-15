@@ -21,8 +21,14 @@ namespace executor {
 SeqScanOperator::SeqScanOperator(std::unique_ptr<storage::HeapTable> table, Transaction* txn, LockManager* lock_manager)
     : Operator(OperatorType::SeqScan, txn, lock_manager)
     , table_name_(table->table_name())
-    , table_(std::move(table))
-    , schema_(table_->schema()) {}
+    , table_(std::move(table)) {
+    
+    /* Qualify columns in scan schema */
+    auto base_schema = table_->schema();
+    for (const auto& col : base_schema.columns()) {
+        schema_.add_column(table_name_ + "." + col.name(), col.type(), col.nullable());
+    }
+}
 
 bool SeqScanOperator::init() {
     state_ = ExecState::Init;
@@ -90,8 +96,14 @@ IndexScanOperator::IndexScanOperator(std::unique_ptr<storage::HeapTable> table,
     , index_name_(index->index_name())
     , table_(std::move(table))
     , index_(std::move(index))
-    , search_key_(std::move(search_key))
-    , schema_(table_->schema()) {}
+    , search_key_(std::move(search_key)) {
+    
+    /* Qualify columns in scan schema */
+    auto base_schema = table_->schema();
+    for (const auto& col : base_schema.columns()) {
+        schema_.add_column(table_name_ + "." + col.name(), col.type(), col.nullable());
+    }
+}
 
 bool IndexScanOperator::init() {
     state_ = ExecState::Init;
