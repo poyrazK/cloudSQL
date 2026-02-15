@@ -44,6 +44,9 @@ std::unique_ptr<Statement> Parser::parse_statement() {
         case TokenType::Delete:
             stmt = parse_delete();
             break;
+        case TokenType::Drop:
+            stmt = parse_drop();
+            break;
         case TokenType::Begin:
             next_token();
             stmt = std::make_unique<TransactionBeginStatement>();
@@ -99,6 +102,30 @@ std::unique_ptr<Statement> Parser::parse_select() {
             return nullptr;
         }
         stmt->add_from(std::move(from_expr));
+
+        /* Optional JOINs */
+        while (true) {
+            SelectStatement::JoinType join_type;
+            if (consume(TokenType::Join)) {
+                join_type = SelectStatement::JoinType::Inner;
+            } else if (consume(TokenType::Left)) {
+                if (!consume(TokenType::Join)) return nullptr;
+                join_type = SelectStatement::JoinType::Left;
+            } else {
+                break;
+            }
+
+            auto join_table = parse_expression();
+            if (!join_table) return nullptr;
+
+            std::unique_ptr<Expression> join_cond = nullptr;
+            if (consume(TokenType::On)) {
+                join_cond = parse_expression();
+                if (!join_cond) return nullptr;
+            }
+
+            stmt->add_join(join_type, std::move(join_table), std::move(join_cond));
+        }
     } else {
         std::cerr << "Parser Error: Missing FROM clause. Current token: " << peek_token().to_string() << std::endl;
         return nullptr;
@@ -425,6 +452,34 @@ std::unique_ptr<Expression> Parser::parse_compare() {
         return std::make_unique<BinaryExpr>(std::move(left), tok.type(), std::move(right));
     }
     
+    /* Handle IS NULL / IS NOT NULL */
+    if (consume(TokenType::Is)) {
+        bool not_flag = consume(TokenType::Not);
+        if (!consume(TokenType::Null)) return nullptr;
+        return std::make_unique<IsNullExpr>(std::move(left), not_flag);
+    }
+
+    /* Handle IN / NOT IN */
+    bool not_flag = consume(TokenType::Not);
+    if (consume(TokenType::In)) {
+        if (!consume(TokenType::LParen)) return nullptr;
+        std::vector<std::unique_ptr<Expression>> values;
+        bool first = true;
+        while (peek_token().type() != TokenType::RParen) {
+            if (!first && !consume(TokenType::Comma)) break;
+            first = false;
+            auto val = parse_expression();
+            if (!val) return nullptr;
+            values.push_back(std::move(val));
+        }
+        if (!consume(TokenType::RParen)) return nullptr;
+        return std::make_unique<InExpr>(std::move(left), std::move(values), not_flag);
+    } else if (not_flag) {
+        /* NOT was consumed but not followed by IN - this shouldn't happen here normally as parse_not handles it,
+           but if we are here it might be a syntax error or a future expansion. */
+        return nullptr;
+    }
+
     return left;
 }
 
@@ -479,6 +534,12 @@ std::unique_ptr<Expression> Parser::parse_primary() {
     } 
     else if (tok.type() == TokenType::Identifier || tok.is_keyword()) {
         Token id = next_token();
+
+        /* Handle NULL keyword as constant */
+        if (id.type() == TokenType::Null) {
+            return std::make_unique<ConstantExpr>(common::Value::make_null());
+        }
+
         /* Check if it's a function call */
         if (peek_token().type() == TokenType::LParen) {
             consume(TokenType::LParen);
@@ -500,34 +561,66 @@ std::unique_ptr<Expression> Parser::parse_primary() {
                 if (!first && !consume(TokenType::Comma)) break;
                 first = false;
                 auto arg = parse_expression();
-                if (!arg) {
-                    std::cerr << "DEBUG: Failed to parse function arg for " << func_name << std::endl;
-                    return nullptr;
-                }
+                if (!arg) return nullptr;
                 func->add_arg(std::move(arg));
             }
-            if (!consume(TokenType::RParen)) {
-                std::cerr << "DEBUG: Missing RParen for function " << func_name << std::endl;
-                return nullptr;
-            }
+            if (!consume(TokenType::RParen)) return nullptr;
             return func;
         }
+        
+        /* Check for table.column syntax */
+        if (peek_token().type() == TokenType::Dot) {
+            consume(TokenType::Dot);
+            Token col_id = next_token();
+            if (col_id.type() != TokenType::Identifier && !col_id.is_keyword()) {
+                std::cerr << "Parser Error: Expected column name after '.' but got " << col_id.to_string() << std::endl;
+                return nullptr;
+            }
+            return std::make_unique<ColumnExpr>(id.lexeme(), col_id.lexeme());
+        }
+        
         return std::make_unique<ColumnExpr>(id.lexeme());
     } 
     else if (consume(TokenType::LParen)) {
         auto expr = parse_expression();
-        if (!expr) {
-            std::cerr << "DEBUG: Failed to parse expression inside LParen" << std::endl;
-            return nullptr;
-        }
-        if (!consume(TokenType::RParen)) {
-            std::cerr << "DEBUG: Missing RParen after expression" << std::endl;
-            return nullptr;
-        }
+        if (!expr) return nullptr;
+        if (!consume(TokenType::RParen)) return nullptr;
         return expr;
     }
     
-    std::cerr << "DEBUG: Unrecognized primary token: " << tok.to_string() << std::endl;
+    return nullptr;
+}
+
+/**
+ * @brief Parse DROP statement
+ */
+std::unique_ptr<Statement> Parser::parse_drop() {
+    if (!consume(TokenType::Drop)) return nullptr;
+    
+    bool if_exists = false;
+    if (peek_token().type() == TokenType::Table) {
+        consume(TokenType::Table);
+        if (consume(TokenType::If)) {
+            if (!consume(TokenType::Exists)) return nullptr;
+            if_exists = true;
+        }
+        
+        Token name = next_token();
+        if (name.type() != TokenType::Identifier) return nullptr;
+        return std::make_unique<DropTableStatement>(name.lexeme(), if_exists);
+    } 
+    else if (peek_token().type() == TokenType::Index) {
+        consume(TokenType::Index);
+        if (consume(TokenType::If)) {
+            if (!consume(TokenType::Exists)) return nullptr;
+            if_exists = true;
+        }
+        
+        Token name = next_token();
+        if (name.type() != TokenType::Identifier) return nullptr;
+        return std::make_unique<DropIndexStatement>(name.lexeme(), if_exists);
+    }
+    
     return nullptr;
 }
 
