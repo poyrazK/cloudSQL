@@ -93,11 +93,25 @@ public:
     size_t column_count() const { return columns_.size(); }
     const ColumnMeta& get_column(size_t index) const { return columns_.at(index); }
     size_t find_column(const std::string& name) const {
+        /* 1. Try exact match */
         for (size_t i = 0; i < columns_.size(); i++) {
             if (columns_[i].name() == name) {
                 return i;
             }
         }
+        
+        /* 2. Try suffix match (for unqualified names in joined schemas) */
+        if (name.find('.') == std::string::npos) {
+            std::string suffix = "." + name;
+            for (size_t i = 0; i < columns_.size(); i++) {
+                const std::string& col_name = columns_[i].name();
+                if (col_name.size() > suffix.size() && 
+                    col_name.compare(col_name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                    return i;
+                }
+            }
+        }
+        
         return static_cast<size_t>(-1);
     }
     
