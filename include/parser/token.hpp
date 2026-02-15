@@ -30,7 +30,7 @@ enum class TokenType {
     Count, Sum, Avg, Min, Max,
     Begin, Commit, Rollback,
     Truncate, Alter, Add, Column, Type,
-    Constraint, Unique, Check, Default, Exists,
+    Constraint, Unique, Check, Default, Exists, If,
     Varchar,
     
     /* Identifiers and literals */

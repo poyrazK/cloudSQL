@@ -76,6 +76,7 @@ std::map<std::string, TokenType> Lexer::init_keywords() {
         {"CHECK", TokenType::Check},
         {"DEFAULT", TokenType::Default},
         {"EXISTS", TokenType::Exists},
+        {"IF", TokenType::If},
         {"VARCHAR", TokenType::Varchar}
     };
 }
