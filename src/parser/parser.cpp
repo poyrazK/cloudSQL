@@ -8,6 +8,7 @@
 
 #include "parser/parser.hpp"
 #include <iostream>
+#include <algorithm>
 
 namespace cloudsql {
 namespace parser {

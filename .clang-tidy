@@ -18,7 +18,6 @@ Checks: 'clang-diagnostic-*,
          -hicpp-vararg'
 WarningsAsErrors: ''
 HeaderFilterRegex: 'include/.*'
-AnalyzeTemporaryDtors: false
 FormatStyle: none
 CheckOptions:
   - key:             modernize-use-auto.MinTypeNameLength
