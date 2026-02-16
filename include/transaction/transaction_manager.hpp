@@ -13,6 +13,7 @@
 #include "transaction/lock_manager.hpp"
 #include "catalog/catalog.hpp"
 #include "storage/storage_manager.hpp"
+#include "recovery/log_manager.hpp"
 
 namespace cloudsql {
 namespace transaction {
@@ -24,6 +25,7 @@ private:
     LockManager& lock_manager_;
     Catalog& catalog_;
     storage::StorageManager& storage_manager_;
+    recovery::LogManager* log_manager_;
     std::mutex manager_latch_;
 
     void undo_transaction(Transaction* txn);
@@ -31,8 +33,10 @@ private:
 public:
     explicit TransactionManager(LockManager& lock_manager, 
                                 Catalog& catalog,
-                                storage::StorageManager& storage_manager) 
-        : lock_manager_(lock_manager), catalog_(catalog), storage_manager_(storage_manager) {}
+                                storage::StorageManager& storage_manager,
+                                recovery::LogManager* log_manager = nullptr) 
+        : lock_manager_(lock_manager), catalog_(catalog), 
+          storage_manager_(storage_manager), log_manager_(log_manager) {}
 
     Transaction* begin(IsolationLevel level = IsolationLevel::REPEATABLE_READ);
     void commit(Transaction* txn);

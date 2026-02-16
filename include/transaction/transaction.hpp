@@ -65,6 +65,7 @@ private:
     TransactionState state_;
     IsolationLevel isolation_level_;
     TransactionSnapshot snapshot_;
+    int32_t prev_lsn_ = -1; // Last LSN for this transaction
     
     // Locks held by this transaction (for auto-release on commit/abort)
     std::mutex lock_set_mutex_;
@@ -85,6 +86,9 @@ public:
 
     const TransactionSnapshot& get_snapshot() const { return snapshot_; }
     void set_snapshot(TransactionSnapshot snapshot) { snapshot_ = std::move(snapshot); }
+
+    int32_t get_prev_lsn() const { return prev_lsn_; }
+    void set_prev_lsn(int32_t lsn) { prev_lsn_ = lsn; }
 
     void add_shared_lock(const std::string& rid) {
         std::lock_guard<std::mutex> lock(lock_set_mutex_);
