@@ -4,20 +4,22 @@
  */
 
 #include "executor/query_executor.hpp"
-#include <chrono>
+
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 
 namespace cloudsql {
 namespace executor {
 
-QueryExecutor::QueryExecutor(Catalog& catalog, 
-                             storage::StorageManager& storage_manager,
+QueryExecutor::QueryExecutor(Catalog& catalog, storage::StorageManager& storage_manager,
                              transaction::LockManager& lock_manager,
                              transaction::TransactionManager& transaction_manager,
                              recovery::LogManager* log_manager)
-    : catalog_(catalog), storage_manager_(storage_manager), 
-      lock_manager_(lock_manager), transaction_manager_(transaction_manager),
+    : catalog_(catalog),
+      storage_manager_(storage_manager),
+      lock_manager_(lock_manager),
+      transaction_manager_(transaction_manager),
       log_manager_(log_manager) {}
 
 QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
@@ -36,9 +38,10 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     /* Auto-commit mode if no current transaction */
     bool is_auto_commit = (current_txn_ == nullptr);
     transaction::Transaction* txn = current_txn_;
-    
-    if (is_auto_commit && (stmt.type() == parser::StmtType::Select || stmt.type() == parser::StmtType::Insert || 
-                           stmt.type() == parser::StmtType::Update || stmt.type() == parser::StmtType::Delete)) {
+
+    if (is_auto_commit &&
+        (stmt.type() == parser::StmtType::Select || stmt.type() == parser::StmtType::Insert ||
+         stmt.type() == parser::StmtType::Update || stmt.type() == parser::StmtType::Delete)) {
         txn = transaction_manager_.begin();
     }
 
@@ -76,7 +79,7 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
     result.set_execution_time(duration.count());
-    
+
     return result;
 }
 
@@ -112,9 +115,10 @@ QueryResult QueryExecutor::execute_rollback() {
     return res;
 }
 
-QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn) {
+QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
+                                          transaction::Transaction* txn) {
     QueryResult result;
-    
+
     /* Build execution plan */
     auto root = build_plan(stmt, txn);
     if (!root) {
@@ -143,17 +147,21 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt, t
 
 QueryResult QueryExecutor::execute_create_table(const parser::CreateTableStatement& stmt) {
     QueryResult result;
-    
+
     /* Convert parser columns to catalog columns */
     std::vector<ColumnInfo> catalog_cols;
     uint16_t pos = 0;
     for (const auto& col : stmt.columns()) {
         common::ValueType type = common::TYPE_TEXT;
-        if (col.type_ == "INT" || col.type_ == "INTEGER") type = common::TYPE_INT32;
-        else if (col.type_ == "BIGINT") type = common::TYPE_INT64;
-        else if (col.type_ == "FLOAT" || col.type_ == "DOUBLE") type = common::TYPE_FLOAT64;
-        else if (col.type_ == "BOOLEAN" || col.type_ == "BOOL") type = common::TYPE_BOOL;
-        
+        if (col.type_ == "INT" || col.type_ == "INTEGER")
+            type = common::TYPE_INT32;
+        else if (col.type_ == "BIGINT")
+            type = common::TYPE_INT64;
+        else if (col.type_ == "FLOAT" || col.type_ == "DOUBLE")
+            type = common::TYPE_FLOAT64;
+        else if (col.type_ == "BOOLEAN" || col.type_ == "BOOL")
+            type = common::TYPE_BOOL;
+
         catalog_cols.emplace_back(col.name_, type, pos++);
     }
 
@@ -177,9 +185,10 @@ QueryResult QueryExecutor::execute_create_table(const parser::CreateTableStateme
     return result;
 }
 
-QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt, transaction::Transaction* txn) {
+QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
+                                          transaction::Transaction* txn) {
     QueryResult result;
-    
+
     if (!stmt.table()) {
         result.set_error("Target table not specified");
         return result;
@@ -199,7 +208,7 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt, t
     }
 
     storage::HeapTable table(table_name, storage_manager_, schema);
-    
+
     uint64_t rows_inserted = 0;
     uint64_t xmin = txn ? txn->get_id() : 0;
 
@@ -208,23 +217,23 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt, t
         for (const auto& expr : row_exprs) {
             values.push_back(expr->evaluate());
         }
-        
+
         Tuple tuple(std::move(values));
         auto tid = table.insert(tuple, xmin);
-        
+
         /* Log INSERT */
         if (log_manager_ && txn) {
-            recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), 
-                                    recovery::LogRecordType::INSERT, 
-                                    table_name, tid, tuple);
+            recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
+                                    recovery::LogRecordType::INSERT, table_name, tid, tuple);
             auto lsn = log_manager_->append_log_record(log);
             txn->set_prev_lsn(lsn);
         }
-        
+
         /* Record undo log and Acquire Exclusive Lock if in transaction */
         if (txn) {
             txn->add_undo_log(transaction::UndoLog::Type::INSERT, table_name, tid);
-            if (!lock_manager_.acquire_exclusive(txn, std::to_string(tid.page_num) + ":" + std::to_string(tid.slot_num))) {
+            if (!lock_manager_.acquire_exclusive(
+                    txn, std::to_string(tid.page_num) + ":" + std::to_string(tid.slot_num))) {
                 throw std::runtime_error("Failed to acquire exclusive lock");
             }
         }
@@ -236,7 +245,8 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt, t
     return result;
 }
 
-QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt, transaction::Transaction* txn) {
+QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt,
+                                          transaction::Transaction* txn) {
     QueryResult result;
     std::string table_name = stmt.table()->to_string();
     auto table_meta = catalog_.get_table_by_name(table_name);
@@ -280,9 +290,9 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt, t
         if (table.remove(rid, xmax)) {
             /* Log DELETE */
             if (log_manager_ && txn) {
-                recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), 
-                                        recovery::LogRecordType::MARK_DELETE, 
-                                        table_name, rid, old_tuple);
+                recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
+                                        recovery::LogRecordType::MARK_DELETE, table_name, rid,
+                                        old_tuple);
                 auto lsn = log_manager_->append_log_record(log);
                 txn->set_prev_lsn(lsn);
             }
@@ -298,7 +308,8 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt, t
     return result;
 }
 
-QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt, transaction::Transaction* txn) {
+QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
+                                          transaction::Transaction* txn) {
     QueryResult result;
     std::string table_name = stmt.table()->to_string();
     auto table_meta = catalog_.get_table_by_name(table_name);
@@ -356,20 +367,20 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt, t
         if (table.remove(op.rid, txn_id)) {
             /* Log DELETE part of update */
             if (log_manager_ && txn) {
-                recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), 
-                                        recovery::LogRecordType::MARK_DELETE, 
-                                        table_name, op.rid, old_tuple);
+                recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
+                                        recovery::LogRecordType::MARK_DELETE, table_name, op.rid,
+                                        old_tuple);
                 auto lsn = log_manager_->append_log_record(log);
                 txn->set_prev_lsn(lsn);
             }
 
             auto new_tid = table.insert(op.new_tuple, txn_id);
-            
+
             /* Log INSERT part of update */
             if (log_manager_ && txn) {
-                recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), 
-                                        recovery::LogRecordType::INSERT, 
-                                        table_name, new_tid, op.new_tuple);
+                recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
+                                        recovery::LogRecordType::INSERT, table_name, new_tid,
+                                        op.new_tuple);
                 auto lsn = log_manager_->append_log_record(log);
                 txn->set_prev_lsn(lsn);
             }
@@ -386,10 +397,11 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt, t
     return result;
 }
 
-std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatement& stmt, transaction::Transaction* txn) {
+std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatement& stmt,
+                                                    transaction::Transaction* txn) {
     /* 1. Base: SeqScan of the initial table */
     if (!stmt.from()) return nullptr;
-    
+
     std::string base_table_name = stmt.from()->to_string();
     auto base_table_meta = catalog_.get_table_by_name(base_table_name);
     if (!base_table_meta) return nullptr;
@@ -400,9 +412,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     }
 
     std::unique_ptr<Operator> current_root = std::make_unique<SeqScanOperator>(
-        std::make_unique<storage::HeapTable>(base_table_name, storage_manager_, base_schema),
-        txn, &lock_manager_
-    );
+        std::make_unique<storage::HeapTable>(base_table_name, storage_manager_, base_schema), txn,
+        &lock_manager_);
 
     /* 2. Add JOINs */
     for (const auto& join : stmt.joins()) {
@@ -417,14 +428,13 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
         auto join_scan = std::make_unique<SeqScanOperator>(
             std::make_unique<storage::HeapTable>(join_table_name, storage_manager_, join_schema),
-            txn, &lock_manager_
-        );
+            txn, &lock_manager_);
 
         /* For now, we use HashJoin if a condition exists, otherwise NestedLoop would be needed.
-         * Note: HashJoin requires equality condition. We'll assume equality for now or default to NLJ.
-         * Currently cloudSQL only has HashJoin implemented in operator.cpp.
+         * Note: HashJoin requires equality condition. We'll assume equality for now or default to
+         * NLJ. Currently cloudSQL only has HashJoin implemented in operator.cpp.
          */
-        
+
         bool use_hash_join = false;
         std::unique_ptr<parser::Expression> left_key = nullptr;
         std::unique_ptr<parser::Expression> right_key = nullptr;
@@ -435,21 +445,25 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 /* Check which side of Eq belongs to which table */
                 auto left_side_schema = current_root->output_schema();
                 auto right_side_schema = join_scan->output_schema();
-                
+
                 std::string left_col_name = bin_expr->left().to_string();
                 std::string right_col_name = bin_expr->right().to_string();
-                
-                bool left_in_left = (left_side_schema.find_column(left_col_name) != static_cast<size_t>(-1));
-                bool right_in_right = (right_side_schema.find_column(right_col_name) != static_cast<size_t>(-1));
-                
+
+                bool left_in_left =
+                    (left_side_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                bool right_in_right =
+                    (right_side_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+
                 if (left_in_left && right_in_right) {
                     use_hash_join = true;
                     left_key = bin_expr->left().clone();
                     right_key = bin_expr->right().clone();
                 } else {
-                    bool left_in_right = (right_side_schema.find_column(left_col_name) != static_cast<size_t>(-1));
-                    bool right_in_left = (left_side_schema.find_column(right_col_name) != static_cast<size_t>(-1));
-                    
+                    bool left_in_right =
+                        (right_side_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                    bool right_in_left =
+                        (left_side_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+
                     if (left_in_right && right_in_left) {
                         use_hash_join = true;
                         left_key = bin_expr->right().clone();
@@ -460,24 +474,19 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         }
 
         if (use_hash_join) {
-            current_root = std::make_unique<HashJoinOperator>(
-                std::move(current_root),
-                std::move(join_scan),
-                std::move(left_key),
-                std::move(right_key)
-            );
+            current_root =
+                std::make_unique<HashJoinOperator>(std::move(current_root), std::move(join_scan),
+                                                   std::move(left_key), std::move(right_key));
         } else {
             /* TODO: Implement NestedLoopJoin for non-equality or missing conditions */
-            return nullptr; 
+            return nullptr;
         }
     }
 
     /* 3. Filter (WHERE) */
     if (stmt.where()) {
-        current_root = std::make_unique<FilterOperator>(
-            std::move(current_root),
-            stmt.where()->clone()
-        );
+        current_root =
+            std::make_unique<FilterOperator>(std::move(current_root), stmt.where()->clone());
     }
 
     /* 3. Aggregate (GROUP BY or implicit aggregates) */
@@ -488,26 +497,31 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             auto func = static_cast<const parser::FunctionExpr*>(col.get());
             std::string name = func->name();
             std::transform(name.begin(), name.end(), name.begin(), ::toupper);
-            
-            if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" || name == "AVG") {
+
+            if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" ||
+                name == "AVG") {
                 has_aggregates = true;
                 AggregateType type = AggregateType::Count;
-                if (name == "SUM") type = AggregateType::Sum;
-                else if (name == "MIN") type = AggregateType::Min;
-                else if (name == "MAX") type = AggregateType::Max;
-                else if (name == "AVG") type = AggregateType::Avg;
+                if (name == "SUM")
+                    type = AggregateType::Sum;
+                else if (name == "MIN")
+                    type = AggregateType::Min;
+                else if (name == "MAX")
+                    type = AggregateType::Max;
+                else if (name == "AVG")
+                    type = AggregateType::Avg;
 
                 AggregateInfo info;
                 info.type = type;
                 info.expr = (!func->args().empty()) ? func->args()[0]->clone() : nullptr;
                 info.is_distinct = func->distinct();
-                
+
                 /* Normalize aggregate name for schema lookup */
                 std::string agg_name = name + "(";
                 if (info.is_distinct) agg_name += "DISTINCT ";
                 agg_name += (info.expr ? info.expr->to_string() : "*") + ")";
                 info.name = agg_name;
-                
+
                 aggs.push_back(std::move(info));
             }
         }
@@ -518,11 +532,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         for (const auto& gb : stmt.group_by()) {
             group_by.push_back(gb->clone());
         }
-        current_root = std::make_unique<AggregateOperator>(
-            std::move(current_root),
-            std::move(group_by),
-            std::move(aggs)
-        );
+        current_root = std::make_unique<AggregateOperator>(std::move(current_root),
+                                                           std::move(group_by), std::move(aggs));
     }
 
     /* 4. Sort (ORDER BY) */
@@ -533,11 +544,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             sort_keys.push_back(ob->clone());
             ascending.push_back(true); /* Default to ASC */
         }
-        current_root = std::make_unique<SortOperator>(
-            std::move(current_root),
-            std::move(sort_keys),
-            std::move(ascending)
-        );
+        current_root = std::make_unique<SortOperator>(std::move(current_root), std::move(sort_keys),
+                                                      std::move(ascending));
     }
 
     /* 5. Project (SELECT columns) */
@@ -546,19 +554,14 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         for (const auto& col : stmt.columns()) {
             projection.push_back(col->clone());
         }
-        current_root = std::make_unique<ProjectOperator>(
-            std::move(current_root),
-            std::move(projection)
-        );
+        current_root =
+            std::make_unique<ProjectOperator>(std::move(current_root), std::move(projection));
     }
 
     /* 6. Limit */
     if (stmt.has_limit() || stmt.has_offset()) {
-        current_root = std::make_unique<LimitOperator>(
-            std::move(current_root),
-            stmt.limit(),
-            stmt.offset()
-        );
+        current_root =
+            std::make_unique<LimitOperator>(std::move(current_root), stmt.limit(), stmt.offset());
     }
 
     return current_root;
@@ -567,7 +570,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 QueryResult QueryExecutor::execute_drop_table(const parser::DropTableStatement& stmt) {
     QueryResult result;
     auto table_meta = catalog_.get_table_by_name(stmt.table_name());
-    
+
     if (!table_meta) {
         if (stmt.if_exists()) {
             result.set_rows_affected(0);
@@ -578,7 +581,7 @@ QueryResult QueryExecutor::execute_drop_table(const parser::DropTableStatement& 
     }
 
     oid_t table_id = (*table_meta)->table_id;
-    
+
     /* 1. Drop associated indexes from physical storage */
     auto indexes = catalog_.get_table_indexes(table_id);
     for (const auto& idx_info : indexes) {
@@ -602,7 +605,7 @@ QueryResult QueryExecutor::execute_drop_table(const parser::DropTableStatement& 
 
 QueryResult QueryExecutor::execute_drop_index(const parser::DropIndexStatement& stmt) {
     QueryResult result;
-    
+
     /* Find index by name since catalog doesn't have direct get_index_by_name */
     oid_t index_id = 0;
     for (auto table : catalog_.get_all_tables()) {
@@ -614,7 +617,7 @@ QueryResult QueryExecutor::execute_drop_index(const parser::DropIndexStatement& 
         }
         if (index_id != 0) break;
     }
-    
+
     if (index_id == 0) {
         if (stmt.if_exists()) {
             result.set_rows_affected(0);
@@ -638,5 +641,5 @@ QueryResult QueryExecutor::execute_drop_index(const parser::DropIndexStatement& 
     return result;
 }
 
-} // namespace executor
-} // namespace cloudsql
+}  // namespace executor
+}  // namespace cloudsql

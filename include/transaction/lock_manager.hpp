@@ -6,23 +6,21 @@
 #ifndef CLOUDSQL_TRANSACTION_LOCK_MANAGER_HPP
 #define CLOUDSQL_TRANSACTION_LOCK_MANAGER_HPP
 
-#include <mutex>
 #include <condition_variable>
-#include <unordered_map>
 #include <list>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
+
 #include "transaction/transaction.hpp"
 
 namespace cloudsql {
 namespace transaction {
 
-enum class LockMode {
-    SHARED,
-    EXCLUSIVE
-};
+enum class LockMode { SHARED, EXCLUSIVE };
 
 class LockManager {
-private:
+   private:
     struct LockRequest {
         txn_id_t txn_id;
         LockMode mode;
@@ -32,13 +30,13 @@ private:
     struct LockQueue {
         std::list<LockRequest> request_queue;
         std::condition_variable cv;
-        bool upgrading = false; // Prevents starvation during upgrade (not fully impl yet)
+        bool upgrading = false;  // Prevents starvation during upgrade (not fully impl yet)
     };
 
     std::mutex latch_;
-    std::unordered_map<std::string, LockQueue> lock_table_; // RID -> LockQueue
+    std::unordered_map<std::string, LockQueue> lock_table_;  // RID -> LockQueue
 
-public:
+   public:
     LockManager() = default;
     ~LockManager() = default;
 
@@ -58,7 +56,7 @@ public:
     bool unlock(Transaction* txn, const std::string& rid);
 };
 
-} // namespace transaction
-} // namespace cloudsql
+}  // namespace transaction
+}  // namespace cloudsql
 
-#endif // CLOUDSQL_TRANSACTION_LOCK_MANAGER_HPP
+#endif  // CLOUDSQL_TRANSACTION_LOCK_MANAGER_HPP

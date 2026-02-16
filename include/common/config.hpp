@@ -9,21 +9,19 @@
 #include <cstdint>
 #include <string>
 
-namespace cloudsql { namespace config {
+namespace cloudsql {
+namespace config {
 
 /**
  * @brief Run modes for the database engine
  */
-enum class RunMode {
-    Embedded = 0,
-    Distributed = 1
-};
+enum class RunMode { Embedded = 0, Distributed = 1 };
 
 /**
  * @brief Server configuration structure (C++ wrapper)
  */
 class Config {
-public:
+   public:
     static constexpr uint16_t DEFAULT_PORT = 5432;
     static constexpr const char* DEFAULT_DATA_DIR = "./data";
     static constexpr int DEFAULT_MAX_CONNECTIONS = 100;
@@ -71,14 +69,14 @@ public:
      */
     void print() const;
 
-private:
+   private:
     /**
      * @brief Trim whitespace from string
      */
     static std::string trim(const std::string& str);
 };
 
-} // namespace config
-} // namespace cloudsql
+}  // namespace config
+}  // namespace cloudsql
 
-#endif // SQL_ENGINE_COMMON_CONFIG_HPP
+#endif  // SQL_ENGINE_COMMON_CONFIG_HPP

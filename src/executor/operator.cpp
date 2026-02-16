@@ -7,22 +7,23 @@
  */
 
 #include "executor/operator.hpp"
+
 #include <algorithm>
-#include <map>
-#include <set>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <set>
 
 namespace cloudsql {
 namespace executor {
 
 /* --- SeqScanOperator --- */
 
-SeqScanOperator::SeqScanOperator(std::unique_ptr<storage::HeapTable> table, Transaction* txn, LockManager* lock_manager)
-    : Operator(OperatorType::SeqScan, txn, lock_manager)
-    , table_name_(table->table_name())
-    , table_(std::move(table)) {
-    
+SeqScanOperator::SeqScanOperator(std::unique_ptr<storage::HeapTable> table, Transaction* txn,
+                                 LockManager* lock_manager)
+    : Operator(OperatorType::SeqScan, txn, lock_manager),
+      table_name_(table->table_name()),
+      table_(std::move(table)) {
     /* Qualify columns in scan schema */
     auto base_schema = table_->schema();
     for (const auto& col : base_schema.columns()) {
@@ -46,7 +47,7 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
         state_ = ExecState::Done;
         return false;
     }
-    
+
     storage::HeapTable::TupleMeta meta;
     while (iterator_->next_meta(meta)) {
         /* MVCC Visibility Check */
@@ -54,14 +55,15 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
         if (txn_) {
             const auto& snapshot = txn_->get_snapshot();
             uint64_t my_id = txn_->get_id();
-            
+
             // 1. Check xmin (creation)
-            bool xmin_visible = (meta.xmin == my_id) || (meta.xmin == 0) || snapshot.is_visible(meta.xmin);
-            
+            bool xmin_visible =
+                (meta.xmin == my_id) || (meta.xmin == 0) || snapshot.is_visible(meta.xmin);
+
             // 2. Check xmax (deletion)
-            bool xmax_visible = (meta.xmax == 0) || 
-                                (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
-            
+            bool xmax_visible =
+                (meta.xmax == 0) || (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
+
             visible = xmin_visible && xmax_visible;
         } else {
             /* No transaction context: only show active tuples */
@@ -73,7 +75,7 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
             return true;
         }
     }
-    
+
     state_ = ExecState::Done;
     return false;
 }
@@ -83,21 +85,22 @@ void SeqScanOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& SeqScanOperator::output_schema() { return schema_; }
+Schema& SeqScanOperator::output_schema() {
+    return schema_;
+}
 
 /* --- IndexScanOperator --- */
 
-IndexScanOperator::IndexScanOperator(std::unique_ptr<storage::HeapTable> table, 
+IndexScanOperator::IndexScanOperator(std::unique_ptr<storage::HeapTable> table,
                                      std::unique_ptr<storage::BTreeIndex> index,
-                                     common::Value search_key,
-                                     Transaction* txn, LockManager* lock_manager)
-    : Operator(OperatorType::IndexScan, txn, lock_manager)
-    , table_name_(table->table_name())
-    , index_name_(index->index_name())
-    , table_(std::move(table))
-    , index_(std::move(index))
-    , search_key_(std::move(search_key)) {
-    
+                                     common::Value search_key, Transaction* txn,
+                                     LockManager* lock_manager)
+    : Operator(OperatorType::IndexScan, txn, lock_manager),
+      table_name_(table->table_name()),
+      index_name_(index->index_name()),
+      table_(std::move(table)),
+      index_(std::move(index)),
+      search_key_(std::move(search_key)) {
     /* Qualify columns in scan schema */
     auto base_schema = table_->schema();
     for (const auto& col : base_schema.columns()) {
@@ -120,7 +123,7 @@ bool IndexScanOperator::open() {
 bool IndexScanOperator::next(Tuple& out_tuple) {
     while (current_match_index_ < matching_ids_.size()) {
         const auto& tid = matching_ids_[current_match_index_++];
-        
+
         storage::HeapTable::TupleMeta meta;
         if (table_->get_meta(tid, meta)) {
             /* MVCC Visibility Check */
@@ -128,14 +131,15 @@ bool IndexScanOperator::next(Tuple& out_tuple) {
             if (txn_) {
                 const auto& snapshot = txn_->get_snapshot();
                 uint64_t my_id = txn_->get_id();
-                
+
                 // 1. Check xmin (creation)
-                bool xmin_visible = (meta.xmin == my_id) || (meta.xmin == 0) || snapshot.is_visible(meta.xmin);
-                
+                bool xmin_visible =
+                    (meta.xmin == my_id) || (meta.xmin == 0) || snapshot.is_visible(meta.xmin);
+
                 // 2. Check xmax (deletion)
-                bool xmax_visible = (meta.xmax == 0) || 
-                                    (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
-                
+                bool xmax_visible =
+                    (meta.xmax == 0) || (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
+
                 visible = xmin_visible && xmax_visible;
             } else {
                 visible = (meta.xmax == 0);
@@ -157,12 +161,17 @@ void IndexScanOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& IndexScanOperator::output_schema() { return schema_; }
+Schema& IndexScanOperator::output_schema() {
+    return schema_;
+}
 
 /* --- FilterOperator --- */
 
-FilterOperator::FilterOperator(std::unique_ptr<Operator> child, std::unique_ptr<parser::Expression> condition)
-    : Operator(OperatorType::Filter, child->get_txn(), child->get_lock_manager()), child_(std::move(child)), condition_(std::move(condition)) {
+FilterOperator::FilterOperator(std::unique_ptr<Operator> child,
+                               std::unique_ptr<parser::Expression> condition)
+    : Operator(OperatorType::Filter, child->get_txn(), child->get_lock_manager()),
+      child_(std::move(child)),
+      condition_(std::move(condition)) {
     if (child_) schema_ = child_->output_schema();
 }
 
@@ -195,14 +204,21 @@ void FilterOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& FilterOperator::output_schema() { return schema_; }
+Schema& FilterOperator::output_schema() {
+    return schema_;
+}
 
-void FilterOperator::add_child(std::unique_ptr<Operator> child) { child_ = std::move(child); }
+void FilterOperator::add_child(std::unique_ptr<Operator> child) {
+    child_ = std::move(child);
+}
 
 /* --- ProjectOperator --- */
 
-ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child, std::vector<std::unique_ptr<parser::Expression>> columns)
-    : Operator(OperatorType::Project, child->get_txn(), child->get_lock_manager()), child_(std::move(child)), columns_(std::move(columns)) {
+ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child,
+                                 std::vector<std::unique_ptr<parser::Expression>> columns)
+    : Operator(OperatorType::Project, child->get_txn(), child->get_lock_manager()),
+      child_(std::move(child)),
+      columns_(std::move(columns)) {
     if (child_) {
         /* Result schema: use the name of the expression (e.g. column name) */
         for (size_t i = 0; i < columns_.size(); ++i) {
@@ -227,7 +243,7 @@ bool ProjectOperator::next(Tuple& out_tuple) {
         state_ = ExecState::Done;
         return false;
     }
-    
+
     std::vector<common::Value> output_values;
     auto input_schema = child_->output_schema();
     for (const auto& col : columns_) {
@@ -244,24 +260,33 @@ void ProjectOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& ProjectOperator::output_schema() { return schema_; }
+Schema& ProjectOperator::output_schema() {
+    return schema_;
+}
 
-void ProjectOperator::add_child(std::unique_ptr<Operator> child) { child_ = std::move(child); }
+void ProjectOperator::add_child(std::unique_ptr<Operator> child) {
+    child_ = std::move(child);
+}
 
 /* --- SortOperator --- */
 
-SortOperator::SortOperator(std::unique_ptr<Operator> child, 
+SortOperator::SortOperator(std::unique_ptr<Operator> child,
                            std::vector<std::unique_ptr<parser::Expression>> sort_keys,
                            std::vector<bool> ascending)
-    : Operator(OperatorType::Sort, child->get_txn(), child->get_lock_manager()), child_(std::move(child)), sort_keys_(std::move(sort_keys)), ascending_(std::move(ascending)) {
+    : Operator(OperatorType::Sort, child->get_txn(), child->get_lock_manager()),
+      child_(std::move(child)),
+      sort_keys_(std::move(sort_keys)),
+      ascending_(std::move(ascending)) {
     if (child_) schema_ = child_->output_schema();
 }
 
-bool SortOperator::init() { return child_->init(); }
+bool SortOperator::init() {
+    return child_->init();
+}
 
 bool SortOperator::open() {
     if (!child_->open()) return false;
-    
+
     sorted_tuples_.clear();
     Tuple tuple;
     while (child_->next(tuple)) {
@@ -269,16 +294,17 @@ bool SortOperator::open() {
     }
 
     /* Perform sort using child schema for evaluation */
-    std::stable_sort(sorted_tuples_.begin(), sorted_tuples_.end(), [this](const Tuple& a, const Tuple& b) {
-        for (size_t i = 0; i < sort_keys_.size(); ++i) {
-            common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_);
-            common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_);
-            bool asc = static_cast<bool>(ascending_[i]);
-            if (val_a < val_b) return asc;
-            if (val_b < val_a) return !asc;
-        }
-        return false;
-    });
+    std::stable_sort(sorted_tuples_.begin(), sorted_tuples_.end(),
+                     [this](const Tuple& a, const Tuple& b) {
+                         for (size_t i = 0; i < sort_keys_.size(); ++i) {
+                             common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_);
+                             common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_);
+                             bool asc = static_cast<bool>(ascending_[i]);
+                             if (val_a < val_b) return asc;
+                             if (val_b < val_a) return !asc;
+                         }
+                         return false;
+                     });
 
     current_index_ = 0;
     state_ = ExecState::Open;
@@ -300,16 +326,19 @@ void SortOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& SortOperator::output_schema() { return schema_; }
+Schema& SortOperator::output_schema() {
+    return schema_;
+}
 
 /* --- AggregateOperator --- */
 
 AggregateOperator::AggregateOperator(std::unique_ptr<Operator> child,
                                      std::vector<std::unique_ptr<parser::Expression>> group_by,
                                      std::vector<AggregateInfo> aggregates)
-    : Operator(OperatorType::Aggregate, child->get_txn(), child->get_lock_manager()), child_(std::move(child)), 
-      group_by_(std::move(group_by)), aggregates_(std::move(aggregates)) {
-    
+    : Operator(OperatorType::Aggregate, child->get_txn(), child->get_lock_manager()),
+      child_(std::move(child)),
+      group_by_(std::move(group_by)),
+      aggregates_(std::move(aggregates)) {
     if (child_) {
         /* Use actual expression string for column name to allow lookup */
         for (const auto& gb : group_by_) {
@@ -323,7 +352,9 @@ AggregateOperator::AggregateOperator(std::unique_ptr<Operator> child,
     }
 }
 
-bool AggregateOperator::init() { return child_->init(); }
+bool AggregateOperator::init() {
+    return child_->init();
+}
 
 bool AggregateOperator::open() {
     if (!child_->open()) return false;
@@ -348,7 +379,7 @@ bool AggregateOperator::open() {
 
     std::map<std::string, GroupState> groups_map;
     bool is_global = group_by_.empty();
-    
+
     /* Pre-initialize if global aggregation */
     if (is_global) {
         groups_map["GLOBAL"] = GroupState(aggregates_.size());
@@ -359,7 +390,7 @@ bool AggregateOperator::open() {
     while (child_->next(tuple)) {
         std::string key = "GLOBAL";
         std::vector<common::Value> gb_vals;
-        
+
         if (!is_global) {
             key = "";
             for (const auto& gb : group_by_) {
@@ -383,7 +414,7 @@ bool AggregateOperator::open() {
             } else {
                 val = common::Value::make_int64(1);
             }
-            
+
             if (val.is_null()) continue;
 
             /* Handle DISTINCT */
@@ -400,7 +431,7 @@ bool AggregateOperator::open() {
 
             state.counts[i]++;
             if (val.is_numeric()) state.sums[i] += val.to_float64();
-            
+
             if (state.mins[i].is_null() || val < state.mins[i]) state.mins[i] = val;
             if (state.maxes[i].is_null() || state.maxes[i] < val) state.maxes[i] = val;
         }
@@ -412,13 +443,23 @@ bool AggregateOperator::open() {
         std::vector<common::Value> row = std::move(state.group_values);
         for (size_t i = 0; i < aggregates_.size(); ++i) {
             switch (aggregates_[i].type) {
-                case AggregateType::Count: row.push_back(common::Value::make_int64(state.counts[i])); break;
-                case AggregateType::Sum:   row.push_back(common::Value::make_float64(state.sums[i])); break;
-                case AggregateType::Min:   row.push_back(std::move(state.mins[i])); break;
-                case AggregateType::Max:   row.push_back(std::move(state.maxes[i])); break;
+                case AggregateType::Count:
+                    row.push_back(common::Value::make_int64(state.counts[i]));
+                    break;
+                case AggregateType::Sum:
+                    row.push_back(common::Value::make_float64(state.sums[i]));
+                    break;
+                case AggregateType::Min:
+                    row.push_back(std::move(state.mins[i]));
+                    break;
+                case AggregateType::Max:
+                    row.push_back(std::move(state.maxes[i]));
+                    break;
                 case AggregateType::Avg:
-                    if (state.counts[i] > 0) row.push_back(common::Value::make_float64(state.sums[i] / state.counts[i]));
-                    else row.push_back(common::Value::make_null());
+                    if (state.counts[i] > 0)
+                        row.push_back(common::Value::make_float64(state.sums[i] / state.counts[i]));
+                    else
+                        row.push_back(common::Value::make_null());
                     break;
             }
         }
@@ -445,16 +486,20 @@ void AggregateOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& AggregateOperator::output_schema() { return schema_; }
+Schema& AggregateOperator::output_schema() {
+    return schema_;
+}
 
 /* --- HashJoinOperator --- */
 
 HashJoinOperator::HashJoinOperator(std::unique_ptr<Operator> left, std::unique_ptr<Operator> right,
-                     std::unique_ptr<parser::Expression> left_key, 
-                     std::unique_ptr<parser::Expression> right_key)
-    : Operator(OperatorType::HashJoin, left->get_txn(), left->get_lock_manager()), left_(std::move(left)), right_(std::move(right)),
-      left_key_(std::move(left_key)), right_key_(std::move(right_key)) {
-    
+                                   std::unique_ptr<parser::Expression> left_key,
+                                   std::unique_ptr<parser::Expression> right_key)
+    : Operator(OperatorType::HashJoin, left->get_txn(), left->get_lock_manager()),
+      left_(std::move(left)),
+      right_(std::move(right)),
+      left_key_(std::move(left_key)),
+      right_key_(std::move(right_key)) {
     /* Build resulting schema */
     if (left_ && right_) {
         for (const auto& col : left_->output_schema().columns()) schema_.add_column(col);
@@ -468,7 +513,7 @@ bool HashJoinOperator::init() {
 
 bool HashJoinOperator::open() {
     if (!left_->open() || !right_->open()) return false;
-    
+
     /* Build phase: scan right side into hash table */
     hash_table_.clear();
     Tuple right_tuple;
@@ -477,7 +522,7 @@ bool HashJoinOperator::open() {
         common::Value key = right_key_->evaluate(&right_tuple, &right_schema);
         hash_table_.emplace(key.to_string(), std::move(right_tuple));
     }
-    
+
     left_tuple_ = std::nullopt;
     match_iter_ = std::nullopt;
     state_ = ExecState::Open;
@@ -492,11 +537,12 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             /* We are currently iterating through matches for a left tuple */
             if (match_iter_->current != match_iter_->end) {
                 const auto& right_tuple = match_iter_->current->second;
-                
+
                 /* Concatenate left and right tuples */
                 std::vector<common::Value> joined_values = left_tuple_->values();
-                joined_values.insert(joined_values.end(), right_tuple.values().begin(), right_tuple.values().end());
-                
+                joined_values.insert(joined_values.end(), right_tuple.values().begin(),
+                                     right_tuple.values().end());
+
                 out_tuple = Tuple(std::move(joined_values));
                 match_iter_->current++;
                 return true;
@@ -516,7 +562,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
 
         left_tuple_ = std::move(next_left);
         common::Value key = left_key_->evaluate(&*left_tuple_, &left_schema);
-        
+
         /* Look up in hash table */
         auto range = hash_table_.equal_range(key.to_string());
         if (range.first != range.second) {
@@ -538,7 +584,9 @@ void HashJoinOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& HashJoinOperator::output_schema() { return schema_; }
+Schema& HashJoinOperator::output_schema() {
+    return schema_;
+}
 
 void HashJoinOperator::add_child(std::unique_ptr<Operator> child) {
     if (!left_) {
@@ -551,7 +599,10 @@ void HashJoinOperator::add_child(std::unique_ptr<Operator> child) {
 /* --- LimitOperator --- */
 
 LimitOperator::LimitOperator(std::unique_ptr<Operator> child, uint64_t limit, uint64_t offset)
-    : Operator(OperatorType::Limit, child->get_txn(), child->get_lock_manager()), child_(std::move(child)), limit_(limit), offset_(offset) {}
+    : Operator(OperatorType::Limit, child->get_txn(), child->get_lock_manager()),
+      child_(std::move(child)),
+      limit_(limit),
+      offset_(offset) {}
 
 bool LimitOperator::init() {
     return child_->init();
@@ -559,7 +610,7 @@ bool LimitOperator::init() {
 
 bool LimitOperator::open() {
     if (!child_->open()) return false;
-    
+
     /* Skip offset rows */
     Tuple tuple;
     while (current_count_ < offset_ && child_->next(tuple)) {
@@ -575,12 +626,12 @@ bool LimitOperator::next(Tuple& out_tuple) {
         state_ = ExecState::Done;
         return false;
     }
-    
+
     if (!child_->next(out_tuple)) {
         state_ = ExecState::Done;
         return false;
     }
-    
+
     current_count_++;
     return true;
 }
@@ -590,9 +641,13 @@ void LimitOperator::close() {
     state_ = ExecState::Done;
 }
 
-Schema& LimitOperator::output_schema() { return child_->output_schema(); }
+Schema& LimitOperator::output_schema() {
+    return child_->output_schema();
+}
 
-void LimitOperator::add_child(std::unique_ptr<Operator> child) { child_ = std::move(child); }
+void LimitOperator::add_child(std::unique_ptr<Operator> child) {
+    child_ = std::move(child);
+}
 
 }  // namespace executor
 }  // namespace cloudsql

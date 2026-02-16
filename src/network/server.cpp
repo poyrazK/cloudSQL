@@ -7,10 +7,13 @@
  */
 
 #include "network/server.hpp"
+
+#include <arpa/inet.h>
+
+#include <vector>
+
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
-#include <arpa/inet.h>
-#include <vector>
 
 namespace cloudsql {
 namespace network {
@@ -19,7 +22,7 @@ namespace network {
  * @brief Helper for parsing PostgreSQL binary protocol
  */
 class ProtocolReader {
-public:
+   public:
     static uint32_t read_int32(const char* buffer) {
         uint32_t val;
         std::memcpy(&val, buffer, 4);
@@ -40,7 +43,7 @@ public:
  * @brief Helper for building PostgreSQL binary responses
  */
 class ProtocolWriter {
-public:
+   public:
     static void append_int16(std::vector<char>& buf, uint16_t val) {
         uint16_t nval = htons(val);
         const char* p = reinterpret_cast<const char*>(&nval);
@@ -65,10 +68,16 @@ public:
 };
 
 Server::Server(uint16_t port, Catalog& catalog, storage::StorageManager& storage_manager)
-    : port_(port), listen_fd_(-1), status_(ServerStatus::Stopped)
-    , catalog_(catalog), storage_manager_(storage_manager), lock_manager_(), transaction_manager_(lock_manager_, catalog, storage_manager) {}
+    : port_(port),
+      listen_fd_(-1),
+      status_(ServerStatus::Stopped),
+      catalog_(catalog),
+      storage_manager_(storage_manager),
+      lock_manager_(),
+      transaction_manager_(lock_manager_, catalog, storage_manager) {}
 
-std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog, storage::StorageManager& storage_manager) {
+std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog,
+                                       storage::StorageManager& storage_manager) {
     return std::make_unique<Server>(port, catalog, storage_manager);
 }
 
@@ -144,12 +153,18 @@ void Server::wait() {
 
 std::string Server::get_status_string() const {
     switch (status_) {
-        case ServerStatus::Stopped: return "Stopped";
-        case ServerStatus::Starting: return "Starting";
-        case ServerStatus::Running: return "Running";
-        case ServerStatus::Stopping: return "Stopping";
-        case ServerStatus::Error: return "Error";
-        default: return "Unknown";
+        case ServerStatus::Stopped:
+            return "Stopped";
+        case ServerStatus::Starting:
+            return "Starting";
+        case ServerStatus::Running:
+            return "Running";
+        case ServerStatus::Stopping:
+            return "Stopping";
+        case ServerStatus::Error:
+            return "Error";
+        default:
+            return "Unknown";
     }
 }
 
@@ -180,35 +195,54 @@ void Server::accept_connections() {
  */
 void Server::handle_connection(int client_fd) {
     char buffer[8192];
-    executor::QueryExecutor client_executor(catalog_, storage_manager_, lock_manager_, transaction_manager_);
-    
+    executor::QueryExecutor client_executor(catalog_, storage_manager_, lock_manager_,
+                                            transaction_manager_);
+
     /* 1. Read Length (Initial Startup/SSL) */
     ssize_t n = recv(client_fd, buffer, 4, 0);
-    if (n < 4) { close(client_fd); return; }
-    
+    if (n < 4) {
+        close(client_fd);
+        return;
+    }
+
     uint32_t len = ProtocolReader::read_int32(buffer);
-    if (len > 8192) { close(client_fd); return; }
+    if (len > 8192) {
+        close(client_fd);
+        return;
+    }
 
     /* 2. Read Rest of Startup/SSL Packet */
     n = recv(client_fd, buffer + 4, len - 4, 0);
-    if (n < (ssize_t)(len - 4)) { close(client_fd); return; }
+    if (n < (ssize_t)(len - 4)) {
+        close(client_fd);
+        return;
+    }
 
     uint32_t protocol = ProtocolReader::read_int32(buffer + 4);
-    
+
     /* Check for SSL Request */
     if (protocol == 80877103) {
         char ssl_deny = 'N';
         send(client_fd, &ssl_deny, 1, 0);
-        
+
         n = recv(client_fd, buffer, 4, 0);
-        if (n < 4) { close(client_fd); return; }
+        if (n < 4) {
+            close(client_fd);
+            return;
+        }
         len = ProtocolReader::read_int32(buffer);
         n = recv(client_fd, buffer + 4, len - 4, 0);
-        if (n < (ssize_t)(len - 4)) { close(client_fd); return; }
+        if (n < (ssize_t)(len - 4)) {
+            close(client_fd);
+            return;
+        }
         protocol = ProtocolReader::read_int32(buffer + 4);
     }
 
-    if (protocol != 196608) { close(client_fd); return; }
+    if (protocol != 196608) {
+        close(client_fd);
+        return;
+    }
 
     /* Send AuthenticationOK ('R') */
     std::vector<char> auth_ok = {'R', 0, 0, 0, 8, 0, 0, 0, 0};
@@ -227,7 +261,7 @@ void Server::handle_connection(int client_fd) {
         n = recv(client_fd, buffer, 4, 0);
         if (n < 4) break;
         len = ProtocolReader::read_int32(buffer);
-        
+
         std::vector<char> body(len - 4);
         if (len > 4) {
             n = recv(client_fd, body.data(), len - 4, 0);
@@ -237,30 +271,30 @@ void Server::handle_connection(int client_fd) {
         if (type == 'Q') { /* Simple Query */
             std::string sql(body.data());
             stats_.queries_executed.fetch_add(1);
-            
+
             try {
                 auto lexer = std::make_unique<parser::Lexer>(sql);
                 parser::Parser parser(std::move(lexer));
                 auto stmt = parser.parse_statement();
-                
+
                 if (stmt) {
                     auto result = client_executor.execute(*stmt);
-                    
+
                     if (result.success()) {
                         /* 1. Send RowDescription ('T') for SELECT */
                         if (stmt->type() == parser::StmtType::Select) {
                             std::vector<char> desc = {'T'};
-                            ProtocolWriter::append_int32(desc, 0); // Length placeholder
+                            ProtocolWriter::append_int32(desc, 0);  // Length placeholder
                             ProtocolWriter::append_int16(desc, result.schema().column_count());
-                            
+
                             for (const auto& col : result.schema().columns()) {
                                 ProtocolWriter::append_string(desc, col.name());
-                                ProtocolWriter::append_int32(desc, 0); // Table OID
-                                ProtocolWriter::append_int16(desc, 0); // Attr index
-                                ProtocolWriter::append_int32(desc, 25); // Type OID (TEXT=25)
-                                ProtocolWriter::append_int16(desc, -1); // Type size
-                                ProtocolWriter::append_int32(desc, -1); // Type modifier
-                                ProtocolWriter::append_int16(desc, 0); // Format (Text)
+                                ProtocolWriter::append_int32(desc, 0);   // Table OID
+                                ProtocolWriter::append_int16(desc, 0);   // Attr index
+                                ProtocolWriter::append_int32(desc, 25);  // Type OID (TEXT=25)
+                                ProtocolWriter::append_int16(desc, -1);  // Type size
+                                ProtocolWriter::append_int32(desc, -1);  // Type modifier
+                                ProtocolWriter::append_int16(desc, 0);   // Format (Text)
                             }
                             ProtocolWriter::finish_message(desc);
                             send(client_fd, desc.data(), desc.size(), 0);
@@ -268,9 +302,9 @@ void Server::handle_connection(int client_fd) {
                             /* 2. Send DataRows ('D') */
                             for (const auto& row : result.rows()) {
                                 std::vector<char> data = {'D'};
-                                ProtocolWriter::append_int32(data, 0); // Length
+                                ProtocolWriter::append_int32(data, 0);  // Length
                                 ProtocolWriter::append_int16(data, row.size());
-                                
+
                                 for (const auto& val : row.values()) {
                                     std::string s = val.to_string();
                                     ProtocolWriter::append_int32(data, s.size());
@@ -283,8 +317,9 @@ void Server::handle_connection(int client_fd) {
 
                         /* 3. Send CommandComplete ('C') */
                         std::vector<char> complete = {'C'};
-                        std::string msg = (stmt->type() == parser::StmtType::Select) ? 
-                                          "SELECT " + std::to_string(result.row_count()) : "OK";
+                        std::string msg = (stmt->type() == parser::StmtType::Select)
+                                              ? "SELECT " + std::to_string(result.row_count())
+                                              : "OK";
                         ProtocolWriter::append_int32(complete, 4 + msg.size() + 1);
                         ProtocolWriter::append_string(complete, msg);
                         send(client_fd, complete.data(), complete.size(), 0);
@@ -292,7 +327,8 @@ void Server::handle_connection(int client_fd) {
                         /* TODO: Send ErrorResponse ('E') */
                     }
                 }
-            } catch (...) { /* Handle parsing/exec errors */ }
+            } catch (...) { /* Handle parsing/exec errors */
+            }
         } else if (type == 'X') {
             break;
         }
@@ -304,7 +340,7 @@ void Server::handle_connection(int client_fd) {
     close(client_fd);
 }
 
-} // namespace network
-} // namespace cloudsql
+}  // namespace network
+}  // namespace cloudsql
 
 /** @} */ /* network */

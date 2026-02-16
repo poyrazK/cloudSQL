@@ -7,6 +7,7 @@
  */
 
 #include "catalog/catalog.hpp"
+
 #include <ctime>
 
 namespace cloudsql {
@@ -55,14 +56,13 @@ bool Catalog::save(const std::string& filename) const {
 /**
  * @brief Create a new table
  */
-oid_t Catalog::create_table(const std::string& table_name, 
-                   std::vector<ColumnInfo> columns) {
+oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInfo> columns) {
     TableInfo table;
     table.table_id = next_oid_++;
     table.name = table_name;
     table.columns = std::move(columns);
     table.created_at = get_current_time();
-    
+
     tables_[table.table_id] = std::make_unique<TableInfo>(std::move(table));
     return table.table_id;
 }
@@ -117,8 +117,8 @@ std::vector<TableInfo*> Catalog::get_all_tables() {
  * @brief Create an index
  */
 oid_t Catalog::create_index(const std::string& index_name, oid_t table_id,
-                   std::vector<uint16_t> column_positions,
-                   IndexType index_type, bool is_unique) {
+                            std::vector<uint16_t> column_positions, IndexType index_type,
+                            bool is_unique) {
     auto table = get_table(table_id);
     if (!table.has_value()) {
         return 0;
@@ -220,7 +220,7 @@ void Catalog::print() const {
     std::cout << "=== System Catalog ===" << std::endl;
     std::cout << "Database: " << database_.name << std::endl;
     std::cout << "Tables: " << tables_.size() << std::endl;
-    
+
     for (const auto& pair : tables_) {
         const auto& table = *pair.second;
         std::cout << "  Table: " << table.name << " (OID: " << table.table_id << ")" << std::endl;
@@ -235,6 +235,6 @@ uint64_t Catalog::get_current_time() {
     return static_cast<uint64_t>(std::time(nullptr));
 }
 
-} // namespace cloudsql
+}  // namespace cloudsql
 
 /** @} */ /* catalog */

@@ -8,14 +8,15 @@
 
 #include <cstdint>
 #include <cstring>
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <memory>
-#include <optional>
-#include <variant>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+
 #include "common/value.hpp"
 
 namespace cloudsql {
@@ -27,7 +28,7 @@ using oid_t = uint32_t;
  * @brief Column information structure (C++ class)
  */
 class ColumnInfo {
-public:
+   public:
     std::string name;
     common::ValueType type;
     uint16_t position;
@@ -37,43 +38,34 @@ public:
     std::optional<std::string> default_value;
     uint32_t flags;
 
-    ColumnInfo() 
-        : type(common::TYPE_NULL)
-        , position(0)
-        , max_length(0)
-        , nullable(true)
-        , is_primary_key(false)
-        , flags(0)
-    {}
+    ColumnInfo()
+        : type(common::TYPE_NULL),
+          position(0),
+          max_length(0),
+          nullable(true),
+          is_primary_key(false),
+          flags(0) {}
 
     ColumnInfo(std::string name, common::ValueType type, uint16_t pos)
-        : name(std::move(name))
-        , type(type)
-        , position(pos)
-        , max_length(0)
-        , nullable(true)
-        , is_primary_key(false)
-        , flags(0)
-    {}
+        : name(std::move(name)),
+          type(type),
+          position(pos),
+          max_length(0),
+          nullable(true),
+          is_primary_key(false),
+          flags(0) {}
 };
 
 /**
  * @brief Index type enumeration
  */
-enum class IndexType : uint8_t {
-    BTree = 0,
-    Hash = 1,
-    GiST = 2,
-    SPGiST = 3,
-    GIN = 3,
-    BRIN = 4
-};
+enum class IndexType : uint8_t { BTree = 0, Hash = 1, GiST = 2, SPGiST = 3, GIN = 3, BRIN = 4 };
 
 /**
  * @brief Index information structure (C++ class)
  */
 class IndexInfo {
-public:
+   public:
     oid_t index_id;
     std::string name;
     oid_t table_id;
@@ -85,20 +77,19 @@ public:
     uint32_t flags;
 
     IndexInfo()
-        : index_id(0)
-        , table_id(0)
-        , index_type(IndexType::BTree)
-        , is_unique(false)
-        , is_primary(false)
-        , flags(0)
-    {}
+        : index_id(0),
+          table_id(0),
+          index_type(IndexType::BTree),
+          is_unique(false),
+          is_primary(false),
+          flags(0) {}
 };
 
 /**
  * @brief Table information structure (C++ class)
  */
 class TableInfo {
-public:
+   public:
     oid_t table_id;
     std::string name;
     std::vector<ColumnInfo> columns;
@@ -109,13 +100,7 @@ public:
     uint64_t created_at;
     uint64_t modified_at;
 
-    TableInfo()
-        : table_id(0)
-        , num_rows(0)
-        , flags(0)
-        , created_at(0)
-        , modified_at(0)
-    {}
+    TableInfo() : table_id(0), num_rows(0), flags(0), created_at(0), modified_at(0) {}
 
     /**
      * @brief Get column by name
@@ -142,23 +127,19 @@ public:
     /**
      * @brief Get number of columns
      */
-    uint16_t num_columns() const {
-        return static_cast<uint16_t>(columns.size());
-    }
+    uint16_t num_columns() const { return static_cast<uint16_t>(columns.size()); }
 
     /**
      * @brief Get number of indexes
      */
-    uint16_t num_indexes() const {
-        return static_cast<uint16_t>(indexes.size());
-    }
+    uint16_t num_indexes() const { return static_cast<uint16_t>(indexes.size()); }
 };
 
 /**
  * @brief Database information structure (C++ class)
  */
 class DatabaseInfo {
-public:
+   public:
     oid_t database_id;
     std::string name;
     uint32_t encoding;
@@ -166,23 +147,19 @@ public:
     std::vector<oid_t> table_ids;
     uint64_t created_at;
 
-    DatabaseInfo()
-        : database_id(0)
-        , encoding(0)
-        , created_at(0)
-    {}
+    DatabaseInfo() : database_id(0), encoding(0), created_at(0) {}
 };
 
 /**
  * @brief System Catalog class
  */
 class Catalog {
-public:
+   public:
     /**
      * @brief Default constructor
      */
     Catalog() : next_oid_(1) {}
-    
+
     /**
      * @brief Create a new catalog
      */
@@ -202,8 +179,7 @@ public:
      * @brief Create a new table
      * @return Table OID or 0 on error
      */
-    oid_t create_table(const std::string& table_name, 
-                       std::vector<ColumnInfo> columns);
+    oid_t create_table(const std::string& table_name, std::vector<ColumnInfo> columns);
 
     /**
      * @brief Drop a table
@@ -230,8 +206,8 @@ public:
      * @return Index OID or 0 on error
      */
     oid_t create_index(const std::string& index_name, oid_t table_id,
-                       std::vector<uint16_t> column_positions,
-                       IndexType index_type, bool is_unique);
+                       std::vector<uint16_t> column_positions, IndexType index_type,
+                       bool is_unique);
 
     /**
      * @brief Drop an index
@@ -266,16 +242,12 @@ public:
     /**
      * @brief Get database info
      */
-    const DatabaseInfo& get_database() const {
-        return database_;
-    }
+    const DatabaseInfo& get_database() const { return database_; }
 
     /**
      * @brief Set database info
      */
-    void set_database(const DatabaseInfo& db) {
-        database_ = db;
-    }
+    void set_database(const DatabaseInfo& db) { database_ = db; }
 
     /**
      * @brief Print catalog contents
@@ -287,7 +259,7 @@ public:
      */
     uint64_t get_version() const { return version_; }
 
-private:
+   private:
     std::unordered_map<oid_t, std::unique_ptr<TableInfo>> tables_;
     DatabaseInfo database_;
     oid_t next_oid_;
@@ -296,6 +268,6 @@ private:
     static uint64_t get_current_time();
 };
 
-} // namespace cloudsql
+}  // namespace cloudsql
 
-#endif // SQL_ENGINE_CATALOG_CATALOG_HPP
+#endif  // SQL_ENGINE_CATALOG_CATALOG_HPP

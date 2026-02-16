@@ -4,6 +4,7 @@
  */
 
 #include "parser/expression.hpp"
+
 #include "executor/types.hpp"
 
 namespace cloudsql {
@@ -12,56 +13,95 @@ namespace parser {
 /**
  * @brief Evaluate binary expression
  */
-common::Value BinaryExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
+common::Value BinaryExpr::evaluate(const executor::Tuple* tuple,
+                                   const executor::Schema* schema) const {
     common::Value left_val = left_->evaluate(tuple, schema);
     common::Value right_val = right_->evaluate(tuple, schema);
-    
+
     switch (op_) {
         case TokenType::Plus:
-            if (left_val.type() == common::TYPE_FLOAT64 || right_val.type() == common::TYPE_FLOAT64) {
+            if (left_val.type() == common::TYPE_FLOAT64 ||
+                right_val.type() == common::TYPE_FLOAT64) {
                 return common::Value::make_float64(left_val.to_float64() + right_val.to_float64());
             }
             return common::Value::make_int64(left_val.to_int64() + right_val.to_int64());
         case TokenType::Minus:
-            if (left_val.type() == common::TYPE_FLOAT64 || right_val.type() == common::TYPE_FLOAT64) {
+            if (left_val.type() == common::TYPE_FLOAT64 ||
+                right_val.type() == common::TYPE_FLOAT64) {
                 return common::Value::make_float64(left_val.to_float64() - right_val.to_float64());
             }
             return common::Value::make_int64(left_val.to_int64() - right_val.to_int64());
         case TokenType::Star:
-            if (left_val.type() == common::TYPE_FLOAT64 || right_val.type() == common::TYPE_FLOAT64) {
+            if (left_val.type() == common::TYPE_FLOAT64 ||
+                right_val.type() == common::TYPE_FLOAT64) {
                 return common::Value::make_float64(left_val.to_float64() * right_val.to_float64());
             }
             return common::Value::make_int64(left_val.to_int64() * right_val.to_int64());
         case TokenType::Slash:
             return common::Value::make_float64(left_val.to_float64() / right_val.to_float64());
-        case TokenType::Eq: return common::Value(left_val == right_val);
-        case TokenType::Ne: return common::Value(left_val != right_val);
-        case TokenType::Lt: return common::Value(left_val < right_val);
-        case TokenType::Le: return common::Value(left_val <= right_val);
-        case TokenType::Gt: return common::Value(left_val > right_val);
-        case TokenType::Ge: return common::Value(left_val >= right_val);
-        case TokenType::And: return common::Value(left_val.as_bool() && right_val.as_bool());
-        case TokenType::Or: return common::Value(left_val.as_bool() || right_val.as_bool());
-        default: return common::Value::make_null();
+        case TokenType::Eq:
+            return common::Value(left_val == right_val);
+        case TokenType::Ne:
+            return common::Value(left_val != right_val);
+        case TokenType::Lt:
+            return common::Value(left_val < right_val);
+        case TokenType::Le:
+            return common::Value(left_val <= right_val);
+        case TokenType::Gt:
+            return common::Value(left_val > right_val);
+        case TokenType::Ge:
+            return common::Value(left_val >= right_val);
+        case TokenType::And:
+            return common::Value(left_val.as_bool() && right_val.as_bool());
+        case TokenType::Or:
+            return common::Value(left_val.as_bool() || right_val.as_bool());
+        default:
+            return common::Value::make_null();
     }
 }
 
 std::string BinaryExpr::to_string() const {
     std::string op_str;
     switch (op_) {
-        case TokenType::Plus: op_str = " + "; break;
-        case TokenType::Minus: op_str = " - "; break;
-        case TokenType::Star: op_str = " * "; break;
-        case TokenType::Slash: op_str = " / "; break;
-        case TokenType::Eq: op_str = " = "; break;
-        case TokenType::Ne: op_str = " <> "; break;
-        case TokenType::Lt: op_str = " < "; break;
-        case TokenType::Le: op_str = " <= "; break;
-        case TokenType::Gt: op_str = " > "; break;
-        case TokenType::Ge: op_str = " >= "; break;
-        case TokenType::And: op_str = " AND "; break;
-        case TokenType::Or: op_str = " OR "; break;
-        default: op_str = " "; break;
+        case TokenType::Plus:
+            op_str = " + ";
+            break;
+        case TokenType::Minus:
+            op_str = " - ";
+            break;
+        case TokenType::Star:
+            op_str = " * ";
+            break;
+        case TokenType::Slash:
+            op_str = " / ";
+            break;
+        case TokenType::Eq:
+            op_str = " = ";
+            break;
+        case TokenType::Ne:
+            op_str = " <> ";
+            break;
+        case TokenType::Lt:
+            op_str = " < ";
+            break;
+        case TokenType::Le:
+            op_str = " <= ";
+            break;
+        case TokenType::Gt:
+            op_str = " > ";
+            break;
+        case TokenType::Ge:
+            op_str = " >= ";
+            break;
+        case TokenType::And:
+            op_str = " AND ";
+            break;
+        case TokenType::Or:
+            op_str = " OR ";
+            break;
+        default:
+            op_str = " ";
+            break;
     }
     return left_->to_string() + op_str + right_->to_string();
 }
@@ -73,7 +113,8 @@ std::unique_ptr<Expression> BinaryExpr::clone() const {
 /**
  * @brief Evaluate unary expression
  */
-common::Value UnaryExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
+common::Value UnaryExpr::evaluate(const executor::Tuple* tuple,
+                                  const executor::Schema* schema) const {
     common::Value val = expr_->evaluate(tuple, schema);
     switch (op_) {
         case TokenType::Minus:
@@ -83,7 +124,8 @@ common::Value UnaryExpr::evaluate(const executor::Tuple* tuple, const executor::
             break;
         case TokenType::Not:
             return common::Value(!val.as_bool());
-        default: break;
+        default:
+            break;
     }
     return common::Value::make_null();
 }
@@ -99,14 +141,15 @@ std::unique_ptr<Expression> UnaryExpr::clone() const {
 /**
  * @brief Evaluate column expression using tuple and schema
  */
-common::Value ColumnExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
+common::Value ColumnExpr::evaluate(const executor::Tuple* tuple,
+                                   const executor::Schema* schema) const {
     if (!tuple || !schema) return common::Value::make_null();
-    
+
     size_t index = schema->find_column(name_);
     if (index == static_cast<size_t>(-1)) {
         return common::Value::make_null();
     }
-    
+
     return tuple->get(index);
 }
 
@@ -115,13 +158,14 @@ std::string ColumnExpr::to_string() const {
 }
 
 std::unique_ptr<Expression> ColumnExpr::clone() const {
-    return has_table() 
-        ? std::make_unique<ColumnExpr>(table_name_, name_)
-        : std::make_unique<ColumnExpr>(name_);
+    return has_table() ? std::make_unique<ColumnExpr>(table_name_, name_)
+                       : std::make_unique<ColumnExpr>(name_);
 }
 
-common::Value ConstantExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
-    (void)tuple; (void)schema;
+common::Value ConstantExpr::evaluate(const executor::Tuple* tuple,
+                                     const executor::Schema* schema) const {
+    (void)tuple;
+    (void)schema;
     return value_;
 }
 
@@ -139,15 +183,16 @@ std::unique_ptr<Expression> ConstantExpr::clone() const {
 /**
  * @brief Evaluate function expression
  */
-common::Value FunctionExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
+common::Value FunctionExpr::evaluate(const executor::Tuple* tuple,
+                                     const executor::Schema* schema) const {
     if (!tuple || !schema) return common::Value::make_null();
-    
+
     /* Attempt to look up the function result in the schema (e.g. for aggregates) */
     size_t index = schema->find_column(this->to_string());
     if (index != static_cast<size_t>(-1)) {
         return tuple->get(index);
     }
-    
+
     return common::Value::make_null();
 }
 
@@ -210,7 +255,8 @@ std::unique_ptr<Expression> InExpr::clone() const {
 /**
  * @brief Evaluate IS NULL expression
  */
-common::Value IsNullExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
+common::Value IsNullExpr::evaluate(const executor::Tuple* tuple,
+                                   const executor::Schema* schema) const {
     common::Value val = expr_->evaluate(tuple, schema);
     bool result = val.is_null();
     return common::Value(not_flag_ ? !result : result);

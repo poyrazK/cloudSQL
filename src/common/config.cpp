@@ -7,9 +7,10 @@
  */
 
 #include "common/config.hpp"
-#include <iostream>
-#include <fstream>
+
 #include <algorithm>
+#include <fstream>
+#include <iostream>
 
 namespace cloudsql {
 namespace config {
@@ -18,16 +19,15 @@ namespace config {
  * @brief Default constructor with default values
  */
 Config::Config()
-    : port(DEFAULT_PORT)
-    , data_dir(DEFAULT_DATA_DIR)
-    , config_file("")
-    , mode(RunMode::Embedded)
-    , max_connections(DEFAULT_MAX_CONNECTIONS)
-    , buffer_pool_size(DEFAULT_BUFFER_POOL_SIZE)
-    , page_size(DEFAULT_PAGE_SIZE)
-    , debug(false)
-    , verbose(false)
-{}
+    : port(DEFAULT_PORT),
+      data_dir(DEFAULT_DATA_DIR),
+      config_file(""),
+      mode(RunMode::Embedded),
+      max_connections(DEFAULT_MAX_CONNECTIONS),
+      buffer_pool_size(DEFAULT_BUFFER_POOL_SIZE),
+      page_size(DEFAULT_PAGE_SIZE),
+      debug(false),
+      verbose(false) {}
 
 /**
  * @brief Load configuration from file
@@ -137,7 +137,8 @@ bool Config::validate() const {
     }
 
     if (page_size < 1024 || page_size > 65536) {
-        std::cerr << "Invalid page size: " << page_size << " (must be between 1024 and 65536)" << std::endl;
+        std::cerr << "Invalid page size: " << page_size << " (must be between 1024 and 65536)"
+                  << std::endl;
         return false;
     }
 
@@ -154,7 +155,8 @@ bool Config::validate() const {
  */
 void Config::print() const {
     std::cout << "=== SQL Engine Configuration ===" << std::endl;
-    std::cout << "Mode:         " << (mode == RunMode::Distributed ? "distributed" : "embedded") << std::endl;
+    std::cout << "Mode:         " << (mode == RunMode::Distributed ? "distributed" : "embedded")
+              << std::endl;
     std::cout << "Port:         " << port << std::endl;
     std::cout << "Data dir:     " << data_dir << std::endl;
     std::cout << "Max conns:    " << max_connections << std::endl;
@@ -177,7 +179,7 @@ std::string Config::trim(const std::string& str) {
     return str.substr(start, end - start + 1);
 }
 
-} // namespace config
-} // namespace cloudsql
+}  // namespace config
+}  // namespace cloudsql
 
 /** @} */ /* config */

@@ -7,8 +7,9 @@
  */
 
 #include "parser/parser.hpp"
-#include <iostream>
+
 #include <algorithm>
+#include <iostream>
 
 namespace cloudsql {
 namespace parser {
@@ -16,22 +17,21 @@ namespace parser {
 /**
  * @brief Construct a new Parser
  */
-Parser::Parser(std::unique_ptr<Lexer> lexer) 
-    : lexer_(std::move(lexer)) {}
+Parser::Parser(std::unique_ptr<Lexer> lexer) : lexer_(std::move(lexer)) {}
 
 /**
  * @brief Parse a single SQL statement
  */
 std::unique_ptr<Statement> Parser::parse_statement() {
     Token tok = peek_token();
-    
+
     std::unique_ptr<Statement> stmt = nullptr;
     switch (tok.type()) {
         case TokenType::Select:
             stmt = parse_select();
             break;
         case TokenType::Create:
-            next_token(); // consume CREATE
+            next_token();  // consume CREATE
             if (peek_token().type() == TokenType::Table) {
                 stmt = parse_create_table();
             }
@@ -73,28 +73,28 @@ std::unique_ptr<Statement> Parser::parse_statement() {
 std::unique_ptr<Statement> Parser::parse_select() {
     auto stmt = std::make_unique<SelectStatement>();
     if (!consume(TokenType::Select)) return nullptr;
-    
+
     /* DISTINCT */
     if (consume(TokenType::Distinct)) {
         stmt->set_distinct(true);
     }
-    
+
     /* Columns */
     bool first = true;
     while (true) {
         if (!first && !consume(TokenType::Comma)) break;
         first = false;
-        
+
         auto expr = parse_expression();
         if (!expr) {
             std::cerr << "Parser Error: Invalid column expression" << std::endl;
             return nullptr;
         }
         stmt->add_column(std::move(expr));
-        
+
         if (peek_token().type() == TokenType::From) break;
     }
-    
+
     /* FROM */
     if (consume(TokenType::From)) {
         auto from_expr = parse_expression();
@@ -128,17 +128,18 @@ std::unique_ptr<Statement> Parser::parse_select() {
             stmt->add_join(join_type, std::move(join_table), std::move(join_cond));
         }
     } else {
-        std::cerr << "Parser Error: Missing FROM clause. Current token: " << peek_token().to_string() << std::endl;
+        std::cerr << "Parser Error: Missing FROM clause. Current token: "
+                  << peek_token().to_string() << std::endl;
         return nullptr;
     }
-    
+
     /* WHERE */
     if (consume(TokenType::Where)) {
         auto where_expr = parse_expression();
         if (!where_expr) return nullptr;
         stmt->set_where(std::move(where_expr));
     }
-    
+
     /* GROUP BY */
     if (peek_token().type() == TokenType::Group) {
         consume(TokenType::Group);
@@ -147,18 +148,18 @@ std::unique_ptr<Statement> Parser::parse_select() {
             while (true) {
                 if (!g_first && !consume(TokenType::Comma)) break;
                 g_first = false;
-                
+
                 auto expr = parse_expression();
                 if (!expr) return nullptr;
                 stmt->add_group_by(std::move(expr));
-                
+
                 if (peek_token().type() != TokenType::Comma) break;
             }
         } else {
             return nullptr;
         }
     }
-    
+
     /* HAVING */
     if (peek_token().type() == TokenType::Having) {
         consume(TokenType::Having);
@@ -166,7 +167,7 @@ std::unique_ptr<Statement> Parser::parse_select() {
         if (!having_expr) return nullptr;
         stmt->set_having(std::move(having_expr));
     }
-    
+
     /* ORDER BY */
     if (peek_token().type() == TokenType::Order) {
         consume(TokenType::Order);
@@ -175,22 +176,23 @@ std::unique_ptr<Statement> Parser::parse_select() {
             while (true) {
                 if (!o_first && !consume(TokenType::Comma)) break;
                 o_first = false;
-                
+
                 auto expr = parse_expression();
                 if (!expr) return nullptr;
                 stmt->add_order_by(std::move(expr));
-                
-                if (peek_token().type() == TokenType::Asc || peek_token().type() == TokenType::Desc) {
+
+                if (peek_token().type() == TokenType::Asc ||
+                    peek_token().type() == TokenType::Desc) {
                     next_token();
                 }
-                
+
                 if (peek_token().type() != TokenType::Comma) break;
             }
         } else {
             return nullptr;
         }
     }
-    
+
     /* LIMIT */
     if (consume(TokenType::Limit)) {
         Token val = next_token();
@@ -200,7 +202,7 @@ std::unique_ptr<Statement> Parser::parse_select() {
             return nullptr;
         }
     }
-    
+
     /* OFFSET */
     if (consume(TokenType::Offset)) {
         Token val = next_token();
@@ -210,10 +212,9 @@ std::unique_ptr<Statement> Parser::parse_select() {
             return nullptr;
         }
     }
-    
+
     return stmt;
 }
-
 
 /**
  * @brief Parse CREATE TABLE statement
@@ -221,40 +222,40 @@ std::unique_ptr<Statement> Parser::parse_select() {
 std::unique_ptr<Statement> Parser::parse_create_table() {
     auto stmt = std::make_unique<CreateTableStatement>();
     if (!consume(TokenType::Table)) return nullptr;
-    
+
     /* IF NOT EXISTS */
     if (consume(TokenType::Not)) {
         if (!consume(TokenType::Exists)) return nullptr;
     }
-    
+
     Token name = next_token();
     if (name.type() != TokenType::Identifier) return nullptr;
     stmt->set_table_name(name.lexeme());
-    
+
     if (!consume(TokenType::LParen)) return nullptr;
-    
+
     bool first = true;
     while (true) {
         if (!first && !consume(TokenType::Comma)) break;
         first = false;
-        
+
         Token col_name = next_token();
         if (col_name.type() != TokenType::Identifier) return nullptr;
-        
+
         Token col_type = next_token();
         std::string type_str = col_type.lexeme();
-        
+
         if (col_type.type() == TokenType::Varchar) {
-             if (consume(TokenType::LParen)) {
-                 Token len = next_token();
-                 if (len.type() != TokenType::Number) return nullptr;
-                 consume(TokenType::RParen);
-                 type_str += "(" + len.lexeme() + ")";
-             }
+            if (consume(TokenType::LParen)) {
+                Token len = next_token();
+                if (len.type() != TokenType::Number) return nullptr;
+                consume(TokenType::RParen);
+                type_str += "(" + len.lexeme() + ")";
+            }
         }
-        
+
         stmt->add_column(col_name.lexeme(), type_str);
-        
+
         while (true) {
             Token t = peek_token();
             if (t.type() == TokenType::Primary) {
@@ -272,10 +273,10 @@ std::unique_ptr<Statement> Parser::parse_create_table() {
                 break;
             }
         }
-        
+
         if (peek_token().type() == TokenType::RParen) break;
     }
-    
+
     if (!consume(TokenType::RParen)) return nullptr;
     return stmt;
 }
@@ -287,53 +288,53 @@ std::unique_ptr<Statement> Parser::parse_insert() {
     auto stmt = std::make_unique<InsertStatement>();
     if (!consume(TokenType::Insert)) return nullptr;
     if (!consume(TokenType::Into)) return nullptr;
-    
+
     Token table_tok = next_token();
     if (table_tok.type() != TokenType::Identifier) return nullptr;
     stmt->set_table(std::make_unique<ColumnExpr>(table_tok.lexeme()));
-    
+
     if (consume(TokenType::LParen)) {
         bool first = true;
         while (true) {
             if (!first && !consume(TokenType::Comma)) break;
             first = false;
-            
+
             Token col_tok = next_token();
             if (col_tok.type() != TokenType::Identifier) return nullptr;
             stmt->add_column(std::make_unique<ColumnExpr>(col_tok.lexeme()));
-            
+
             if (peek_token().type() == TokenType::RParen) break;
         }
         if (!consume(TokenType::RParen)) return nullptr;
     }
-    
+
     if (!consume(TokenType::Values)) return nullptr;
-    
+
     bool first_row = true;
     while (true) {
         if (!first_row && !consume(TokenType::Comma)) break;
         first_row = false;
-        
+
         if (!consume(TokenType::LParen)) return nullptr;
-        
+
         std::vector<std::unique_ptr<Expression>> row;
         bool first_val = true;
         while (true) {
             if (!first_val && !consume(TokenType::Comma)) break;
             first_val = false;
-            
+
             auto expr = parse_expression();
             if (!expr) return nullptr;
             row.push_back(std::move(expr));
-            
+
             if (peek_token().type() == TokenType::RParen) break;
         }
         stmt->add_row(std::move(row));
         if (!consume(TokenType::RParen)) return nullptr;
-        
+
         if (peek_token().type() != TokenType::Comma) break;
     }
-    
+
     return stmt;
 }
 
@@ -442,17 +443,16 @@ std::unique_ptr<Expression> Parser::parse_not() {
 std::unique_ptr<Expression> Parser::parse_compare() {
     auto left = parse_add_sub();
     if (!left) return nullptr;
-    
+
     Token tok = peek_token();
-    if (tok.type() == TokenType::Eq || tok.type() == TokenType::Ne ||
-        tok.type() == TokenType::Lt || tok.type() == TokenType::Le ||
-        tok.type() == TokenType::Gt || tok.type() == TokenType::Ge) {
+    if (tok.type() == TokenType::Eq || tok.type() == TokenType::Ne || tok.type() == TokenType::Lt ||
+        tok.type() == TokenType::Le || tok.type() == TokenType::Gt || tok.type() == TokenType::Ge) {
         next_token();
         auto right = parse_add_sub();
         if (!right) return nullptr;
         return std::make_unique<BinaryExpr>(std::move(left), tok.type(), std::move(right));
     }
-    
+
     /* Handle IS NULL / IS NOT NULL */
     if (consume(TokenType::Is)) {
         bool not_flag = consume(TokenType::Not);
@@ -476,8 +476,9 @@ std::unique_ptr<Expression> Parser::parse_compare() {
         if (!consume(TokenType::RParen)) return nullptr;
         return std::make_unique<InExpr>(std::move(left), std::move(values), not_flag);
     } else if (not_flag) {
-        /* NOT was consumed but not followed by IN - this shouldn't happen here normally as parse_not handles it,
-           but if we are here it might be a syntax error or a future expansion. */
+        /* NOT was consumed but not followed by IN - this shouldn't happen here normally as
+           parse_not handles it, but if we are here it might be a syntax error or a future
+           expansion. */
         return nullptr;
     }
 
@@ -520,7 +521,7 @@ std::unique_ptr<Expression> Parser::parse_unary() {
 
 std::unique_ptr<Expression> Parser::parse_primary() {
     Token tok = peek_token();
-    
+
     if (tok.type() == TokenType::Number) {
         next_token();
         if (tok.lexeme().find('.') != std::string::npos) {
@@ -528,12 +529,10 @@ std::unique_ptr<Expression> Parser::parse_primary() {
         } else {
             return std::make_unique<ConstantExpr>(common::Value::make_int64(tok.as_int64()));
         }
-    } 
-    else if (tok.type() == TokenType::String) {
+    } else if (tok.type() == TokenType::String) {
         next_token();
         return std::make_unique<ConstantExpr>(common::Value::make_text(tok.as_string()));
-    } 
-    else if (tok.type() == TokenType::Identifier || tok.is_keyword()) {
+    } else if (tok.type() == TokenType::Identifier || tok.is_keyword()) {
         Token id = next_token();
 
         /* Handle NULL keyword as constant */
@@ -544,13 +543,13 @@ std::unique_ptr<Expression> Parser::parse_primary() {
         /* Check if it's a function call */
         if (peek_token().type() == TokenType::LParen) {
             consume(TokenType::LParen);
-            
+
             /* Normalize function name to uppercase for consistency */
             std::string func_name = id.lexeme();
             std::transform(func_name.begin(), func_name.end(), func_name.begin(), ::toupper);
-            
+
             auto func = std::make_unique<FunctionExpr>(func_name);
-            
+
             /* Handle DISTINCT inside function call, e.g. COUNT(DISTINCT col) */
             if (peek_token().type() == TokenType::Distinct) {
                 consume(TokenType::Distinct);
@@ -568,27 +567,27 @@ std::unique_ptr<Expression> Parser::parse_primary() {
             if (!consume(TokenType::RParen)) return nullptr;
             return func;
         }
-        
+
         /* Check for table.column syntax */
         if (peek_token().type() == TokenType::Dot) {
             consume(TokenType::Dot);
             Token col_id = next_token();
             if (col_id.type() != TokenType::Identifier && !col_id.is_keyword()) {
-                std::cerr << "Parser Error: Expected column name after '.' but got " << col_id.to_string() << std::endl;
+                std::cerr << "Parser Error: Expected column name after '.' but got "
+                          << col_id.to_string() << std::endl;
                 return nullptr;
             }
             return std::make_unique<ColumnExpr>(id.lexeme(), col_id.lexeme());
         }
-        
+
         return std::make_unique<ColumnExpr>(id.lexeme());
-    } 
-    else if (consume(TokenType::LParen)) {
+    } else if (consume(TokenType::LParen)) {
         auto expr = parse_expression();
         if (!expr) return nullptr;
         if (!consume(TokenType::RParen)) return nullptr;
         return expr;
     }
-    
+
     return nullptr;
 }
 
@@ -597,7 +596,7 @@ std::unique_ptr<Expression> Parser::parse_primary() {
  */
 std::unique_ptr<Statement> Parser::parse_drop() {
     if (!consume(TokenType::Drop)) return nullptr;
-    
+
     bool if_exists = false;
     if (peek_token().type() == TokenType::Table) {
         consume(TokenType::Table);
@@ -605,23 +604,22 @@ std::unique_ptr<Statement> Parser::parse_drop() {
             if (!consume(TokenType::Exists)) return nullptr;
             if_exists = true;
         }
-        
+
         Token name = next_token();
         if (name.type() != TokenType::Identifier) return nullptr;
         return std::make_unique<DropTableStatement>(name.lexeme(), if_exists);
-    } 
-    else if (peek_token().type() == TokenType::Index) {
+    } else if (peek_token().type() == TokenType::Index) {
         consume(TokenType::Index);
         if (consume(TokenType::If)) {
             if (!consume(TokenType::Exists)) return nullptr;
             if_exists = true;
         }
-        
+
         Token name = next_token();
         if (name.type() != TokenType::Identifier) return nullptr;
         return std::make_unique<DropIndexStatement>(name.lexeme(), if_exists);
     }
-    
+
     return nullptr;
 }
 
@@ -658,7 +656,7 @@ bool Parser::consume(TokenType type) {
     return false;
 }
 
-} // namespace parser
-} // namespace cloudsql
+}  // namespace parser
+}  // namespace cloudsql
 
 /** @} */ /* parser */

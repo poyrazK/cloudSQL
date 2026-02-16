@@ -7,8 +7,22 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-test:
+  style-check:
     runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run clang-format check
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format
+        find src include tests -name "*.cpp" -o -name "*.hpp" | xargs clang-format --dry-run --Werror
+
+  build-and-test:
+    needs: style-check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: [clang++, g++]
 
     steps:
     - uses: actions/checkout@v3
@@ -16,19 +30,32 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake clang clang-tidy llvm
+        sudo apt-get install -y cmake clang clang-tidy llvm ninja-build ccache
+
+    - name: Cache ccache
+      uses: actions/cache@v3
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-${{ matrix.compiler }}-ccache-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.compiler }}-ccache-
 
     - name: Configure CMake
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_CXX_COMPILER=clang++ -DBUILD_TESTS=ON -DBUILD_COVERAGE=OFF
+        export CCACHE_DIR=~/.ccache
+        cmake .. -G Ninja \
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DBUILD_TESTS=ON \
+          -DBUILD_COVERAGE=OFF
 
-    - name: Build with Clang-Tidy
+    - name: Build
       run: |
         cd build
-        make -j$(nproc) sqlEngineCore
-        make -j$(nproc)
+        ninja sqlEngineCore
+        ninja
 
     - name: Run Tests
       run: |
@@ -39,7 +66,3 @@ jobs:
         ./transaction_manager_tests
         ./statement_tests
         ./recovery_tests
-
-    - name: Check memory safety (ASan)
-      run: |
-        echo "ASan is enabled via CMAKE_CXX_FLAGS in CMakeLists.txt and verified during 'Run Tests' step."

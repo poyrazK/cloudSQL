@@ -12,10 +12,11 @@
 #ifndef CLOUDSQL_STORAGE_HEAP_TABLE_HPP
 #define CLOUDSQL_STORAGE_HEAP_TABLE_HPP
 
-#include <string>
-#include <memory>
-#include <vector>
 #include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "executor/types.hpp"
 #include "storage/storage_manager.hpp"
 
@@ -27,21 +28,21 @@ namespace storage {
  * @brief Manages a physical heap file containing database records
  */
 class HeapTable {
-public:
+   public:
     /**
      * @struct TupleId
      * @brief Record Identifier (RID) consisting of a page number and slot index
      */
     struct TupleId {
-        uint32_t page_num;  /**< Physical page index in the file */
-        uint16_t slot_num;  /**< Logical slot index within the page */
-        
+        uint32_t page_num; /**< Physical page index in the file */
+        uint16_t slot_num; /**< Logical slot index within the page */
+
         TupleId() : page_num(0), slot_num(0) {}
         TupleId(uint32_t page, uint16_t slot) : page_num(page), slot_num(slot) {}
-        
+
         /** @return true if the ID represents a null/invalid record */
         bool is_null() const { return page_num == 0 && slot_num == 0; }
-        
+
         /** @return Human-readable string representation */
         std::string to_string() const {
             return "(" + std::to_string(page_num) + ", " + std::to_string(slot_num) + ")";
@@ -59,7 +60,7 @@ public:
     struct PageHeader {
         uint32_t next_page;         /**< Next page in the heap chain */
         uint16_t num_slots;         /**< Total slots allocated in this page */
-        uint16_t free_space_offset;  /**< Pointer to the start of free space */
+        uint16_t free_space_offset; /**< Pointer to the start of free space */
         uint16_t flags;             /**< Page-level metadata flags */
     };
 
@@ -68,8 +69,8 @@ public:
      * @brief MVCC metadata prepended to every tuple
      */
     struct TupleHeader {
-        uint64_t xmin;  /**< Transaction ID that created this tuple */
-        uint64_t xmax;  /**< Transaction ID that deleted this tuple (0 if active) */
+        uint64_t xmin; /**< Transaction ID that created this tuple */
+        uint64_t xmax; /**< Transaction ID that deleted this tuple (0 if active) */
     };
 
     /**
@@ -81,21 +82,21 @@ public:
         uint64_t xmin;
         uint64_t xmax;
     };
-    
+
     /**
      * @class Iterator
      * @brief Forward-only iterator for scanning heap table records
      */
     class Iterator {
-    private:
+       private:
         HeapTable& table_;
-        TupleId next_id_;           /**< ID of the next record to be checked */
-        TupleId last_id_;           /**< ID of the record returned by the last next() call */
-        bool eof_ = false;          /**< End-of-file indicator */
-        
-    public:
+        TupleId next_id_;  /**< ID of the next record to be checked */
+        TupleId last_id_;  /**< ID of the record returned by the last next() call */
+        bool eof_ = false; /**< End-of-file indicator */
+
+       public:
         explicit Iterator(HeapTable& table);
-        
+
         /**
          * @brief Fetches the next non-deleted record from the heap
          * @param[out] out_tuple Container for the retrieved record
@@ -116,14 +117,14 @@ public:
         /** @return RID of the most recently retrieved record */
         const TupleId& current_id() const { return last_id_; }
     };
-    
-private:
+
+   private:
     std::string table_name_;
     std::string filename_;
     StorageManager& storage_manager_;
     executor::Schema schema_;
-    
-public:
+
+   public:
     /**
      * @brief Constructor
      * @param table_name Logical name of the table
@@ -131,23 +132,23 @@ public:
      * @param schema Table schema definition
      */
     HeapTable(std::string table_name, StorageManager& storage_manager, executor::Schema schema);
-    
+
     ~HeapTable() = default;
-    
+
     /* Disable copy semantics */
     HeapTable(const HeapTable&) = delete;
     HeapTable& operator=(const HeapTable&) = delete;
-    
+
     /* Enable move semantics (assignment deleted due to reference member) */
     HeapTable(HeapTable&&) noexcept = default;
     HeapTable& operator=(HeapTable&&) noexcept = delete;
-    
+
     /** @return Logical table name */
     const std::string& table_name() const { return table_name_; }
 
     /** @return Schema definition */
     const executor::Schema& schema() const { return schema_; }
-    
+
     /**
      * @brief Inserts a new record into the heap
      * @param tuple The data to insert
@@ -190,13 +191,13 @@ public:
      * @return true if the record exists and was retrieved
      */
     bool get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const;
-    
+
     /** @return Total count of non-deleted records in the table */
     uint64_t tuple_count() const;
-    
+
     /** @return An iterator starting at the first page */
     Iterator scan() { return Iterator(*this); }
-    
+
     /** @return true if the physical file exists */
     bool exists() const;
 
@@ -206,7 +207,7 @@ public:
     /** @brief Removes the physical heap file */
     bool drop();
 
-private:
+   private:
     bool read_page(uint32_t page_num, char* buffer) const;
     bool write_page(uint32_t page_num, const char* buffer);
 };

@@ -3,13 +3,14 @@
  * @brief Unit tests for Lock Manager
  */
 
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <vector>
 #include <atomic>
 #include <cassert>
+#include <chrono>
+#include <iostream>
 #include <stdexcept>
+#include <thread>
+#include <vector>
+
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
@@ -20,29 +21,32 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 
 #define TEST(name) void test_##name()
-#define RUN_TEST(name) do { \
-    std::cout << "  " << #name << "... "; \
-    try { \
-        test_##name(); \
-        std::cout << "PASSED" << std::endl; \
-        tests_passed++; \
-    } catch (const std::exception& e) { \
-        std::cout << "FAILED: " << e.what() << std::endl; \
-        tests_failed++; \
-    } \
-} while(0)
+#define RUN_TEST(name)                                        \
+    do {                                                      \
+        std::cout << "  " << #name << "... ";                 \
+        try {                                                 \
+            test_##name();                                    \
+            std::cout << "PASSED" << std::endl;               \
+            tests_passed++;                                   \
+        } catch (const std::exception& e) {                   \
+            std::cout << "FAILED: " << e.what() << std::endl; \
+            tests_failed++;                                   \
+        }                                                     \
+    } while (0)
 
-#define EXPECT_TRUE(a) do { \
-    if (!(a)) { \
-        throw std::runtime_error("Expected true but got false"); \
-    } \
-} while(0)
+#define EXPECT_TRUE(a)                                               \
+    do {                                                             \
+        if (!(a)) {                                                  \
+            throw std::runtime_error("Expected true but got false"); \
+        }                                                            \
+    } while (0)
 
-#define EXPECT_FALSE(a) do { \
-    if (a) { \
-        throw std::runtime_error("Expected false but got true"); \
-    } \
-} while(0)
+#define EXPECT_FALSE(a)                                              \
+    do {                                                             \
+        if (a) {                                                     \
+            throw std::runtime_error("Expected false but got true"); \
+        }                                                            \
+    } while (0)
 
 TEST(LockManager_SharedBasic) {
     LockManager lm;
@@ -66,13 +70,13 @@ TEST(LockManager_ExclusiveBasic) {
     Transaction txn2(102);
 
     EXPECT_TRUE(lm.acquire_exclusive(&txn1, "RID1"));
-    
+
     /* txn2 should block, but for unit test we can't block main thread easily without spawning */
     /* Let's test the already held case */
     EXPECT_TRUE(lm.acquire_exclusive(&txn1, "RID1"));
 
     lm.unlock(&txn1, "RID1");
-    
+
     /* Now txn2 can get it */
     EXPECT_TRUE(lm.acquire_exclusive(&txn2, "RID1"));
     lm.unlock(&txn2, "RID1");
@@ -119,7 +123,7 @@ TEST(LockManager_MultipleSharedContention) {
     Transaction txn1(101);
     Transaction txn2(102);
     Transaction txn3(103);
-    
+
     std::atomic<int> shared_granted{0};
 
     lm.acquire_exclusive(&txn1, "RID1");
@@ -139,7 +143,7 @@ TEST(LockManager_MultipleSharedContention) {
     t2.join();
     t3.join();
     EXPECT_TRUE(shared_granted.load() == 2);
-    
+
     lm.unlock(&txn2, "RID1");
     lm.unlock(&txn3, "RID1");
 }
@@ -147,15 +151,15 @@ TEST(LockManager_MultipleSharedContention) {
 TEST(LockManager_UnlockInvalid) {
     LockManager lm;
     Transaction txn1(101);
-    
+
     /* Unlock non-existent RID */
     EXPECT_FALSE(lm.unlock(&txn1, "NON_EXISTENT"));
-    
+
     /* Unlock RID not held by this txn */
     EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
     Transaction txn2(102);
     EXPECT_FALSE(lm.unlock(&txn2, "RID1"));
-    
+
     lm.unlock(&txn1, "RID1");
 }
 
@@ -167,12 +171,10 @@ TEST(LockManager_AbortedWait) {
 
     lm.acquire_exclusive(&txn1, "RID1");
 
-    std::thread t2([&]() {
-        success = lm.acquire_shared(&txn2, "RID1");
-    });
+    std::thread t2([&]() { success = lm.acquire_shared(&txn2, "RID1"); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
+
     /* Abort txn2 while it's waiting */
     txn2.set_state(TransactionState::ABORTED);
     lm.unlock(&txn1, "RID1"); /* This will trigger notify_all and wake txn2 */
@@ -185,7 +187,7 @@ TEST(LockManager_RedundantShared) {
     LockManager lm;
     Transaction txn1(101);
     EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
-    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1")); // Coverage for line 19-20
+    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));  // Coverage for line 19-20
     lm.unlock(&txn1, "RID1");
 }
 
@@ -197,22 +199,20 @@ TEST(LockManager_ExclusiveAbortedWait) {
 
     lm.acquire_exclusive(&txn1, "RID1");
 
-    std::thread t2([&]() {
-        success = lm.acquire_exclusive(&txn2, "RID1");
-    });
+    std::thread t2([&]() { success = lm.acquire_exclusive(&txn2, "RID1"); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     txn2.set_state(TransactionState::ABORTED);
     lm.unlock(&txn1, "RID1");
 
     t2.join();
-    EXPECT_FALSE(success.load()); // Coverage for line 100-101
+    EXPECT_FALSE(success.load());  // Coverage for line 100-101
 }
 
 int main() {
     std::cout << "Lock Manager Unit Tests" << std::endl;
     std::cout << "========================" << std::endl << std::endl;
-    
+
     RUN_TEST(LockManager_SharedBasic);
     RUN_TEST(LockManager_ExclusiveBasic);
     RUN_TEST(LockManager_SharedExclusiveContention);
@@ -222,9 +222,10 @@ int main() {
     RUN_TEST(LockManager_AbortedWait);
     RUN_TEST(LockManager_RedundantShared);
     RUN_TEST(LockManager_ExclusiveAbortedWait);
-    
+
     std::cout << std::endl << "========================" << std::endl;
-    std::cout << "Results: " << tests_passed << " passed, " << tests_failed << " failed" << std::endl;
-    
+    std::cout << "Results: " << tests_passed << " passed, " << tests_failed << " failed"
+              << std::endl;
+
     return (tests_failed > 0);
 }

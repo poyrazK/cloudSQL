@@ -6,12 +6,13 @@
 #ifndef CLOUDSQL_RECOVERY_LOG_MANAGER_HPP
 #define CLOUDSQL_RECOVERY_LOG_MANAGER_HPP
 
-#include <mutex>
+#include <atomic>
 #include <condition_variable>
+#include <fstream>
+#include <mutex>
 #include <thread>
 #include <vector>
-#include <atomic>
-#include <fstream>
+
 #include "recovery/log_record.hpp"
 
 namespace cloudsql {
@@ -23,7 +24,7 @@ static constexpr lsn_t INVALID_LSN = -1;
  * @brief Manages the WAL buffer and flushing to disk
  */
 class LogManager {
-public:
+   public:
     explicit LogManager(const std::string& log_file_path);
     ~LogManager();
 
@@ -49,38 +50,38 @@ public:
      * @param force If true, force flush even if buffer is not full
      */
     void flush(bool force = false);
-    
+
     /**
      * @brief Get the persistent LSN (flushed to disk)
      */
     lsn_t get_persistent_lsn() { return persistent_lsn_; }
-    
+
     /**
      * @brief Get the next LSN to be assigned
      */
     lsn_t get_next_lsn() { return next_lsn_; }
 
-private:
+   private:
     std::string log_file_path_;
     std::ofstream log_stream_;
-    
+
     char* log_buffer_;
-    uint32_t log_buffer_size_ = 4096 * 16; // 64KB buffer
+    uint32_t log_buffer_size_ = 4096 * 16;  // 64KB buffer
     uint32_t log_buffer_offset_ = 0;
-    
+
     std::mutex latch_;
     std::thread flush_thread_;
     std::condition_variable cv_;
     std::atomic<bool> enable_flushing_{false};
     std::atomic<bool> stop_flush_thread_{false};
-    
+
     std::atomic<lsn_t> next_lsn_{0};
     std::atomic<lsn_t> persistent_lsn_{INVALID_LSN};
-    
+
     void flush_thread_loop();
 };
 
-} // namespace recovery
-} // namespace cloudsql
+}  // namespace recovery
+}  // namespace cloudsql
 
-#endif // CLOUDSQL_RECOVERY_LOG_MANAGER_HPP
+#endif  // CLOUDSQL_RECOVERY_LOG_MANAGER_HPP

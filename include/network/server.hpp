@@ -6,21 +6,22 @@
 #ifndef SQL_ENGINE_NETWORK_SERVER_HPP
 #define SQL_ENGINE_NETWORK_SERVER_HPP
 
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <functional>
-#include <atomic>
-#include <thread>
-#include <iostream>
-#include <memory>
-#include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <thread>
+
 #include "catalog/catalog.hpp"
-#include "storage/storage_manager.hpp"
 #include "executor/query_executor.hpp"
+#include "storage/storage_manager.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
@@ -31,7 +32,7 @@ namespace network {
  * @brief Server statistics (C++ class)
  */
 class ServerStats {
-public:
+   public:
     std::atomic<uint64_t> connections_accepted{0};
     std::atomic<uint64_t> connections_active{0};
     std::atomic<uint64_t> queries_executed{0};
@@ -43,19 +44,13 @@ public:
 /**
  * @brief Server status enumeration
  */
-enum class ServerStatus {
-    Stopped,
-    Starting,
-    Running,
-    Stopping,
-    Error
-};
+enum class ServerStatus { Stopped, Starting, Running, Stopping, Error };
 
 /**
  * @brief Network Server class
  */
 class Server {
-public:
+   public:
     /**
      * @brief Constructor
      */
@@ -74,7 +69,8 @@ public:
     /**
      * @brief Create a new server instance
      */
-    static std::unique_ptr<Server> create(uint16_t port, Catalog& catalog, storage::StorageManager& storage_manager);
+    static std::unique_ptr<Server> create(uint16_t port, Catalog& catalog,
+                                          storage::StorageManager& storage_manager);
 
     /**
      * @brief Start the server
@@ -97,7 +93,7 @@ public:
     bool is_running() const { return running_.load(); }
     std::string get_status_string() const;
 
-private:
+   private:
     void accept_connections();
     void handle_connection(int client_fd);
 
@@ -105,19 +101,19 @@ private:
     int listen_fd_;
     std::atomic<bool> running_{false};
     std::atomic<ServerStatus> status_;
-    
+
     Catalog& catalog_;
     storage::StorageManager& storage_manager_;
     transaction::LockManager lock_manager_;
     transaction::TransactionManager transaction_manager_;
-    
+
     ServerStats stats_;
     std::thread accept_thread_;
     std::vector<std::thread> worker_threads_;
     std::mutex thread_mutex_;
 };
 
-} // namespace network
-} // namespace cloudsql
+}  // namespace network
+}  // namespace cloudsql
 
-#endif // SQL_ENGINE_NETWORK_SERVER_HPP
+#endif  // SQL_ENGINE_NETWORK_SERVER_HPP

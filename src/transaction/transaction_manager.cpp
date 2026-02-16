@@ -4,6 +4,7 @@
  */
 
 #include "transaction/transaction_manager.hpp"
+
 #include "storage/heap_table.hpp"
 
 namespace cloudsql {
@@ -11,44 +12,45 @@ namespace transaction {
 
 Transaction* TransactionManager::begin(IsolationLevel level) {
     std::lock_guard<std::mutex> lock(manager_latch_);
-    
+
     txn_id_t txn_id = next_txn_id_++;
     auto txn = std::make_unique<Transaction>(txn_id, level);
-    
+
     /* Log BEGIN */
     if (log_manager_) {
         recovery::LogRecord log(txn_id, -1, recovery::LogRecordType::BEGIN);
         auto lsn = log_manager_->append_log_record(log);
         txn->set_prev_lsn(lsn);
     }
-    
+
     /* Capture Snapshot */
     TransactionSnapshot snapshot;
     snapshot.xmax = next_txn_id_.load();
     snapshot.xmin = snapshot.xmax;
-    
+
     for (const auto& [id, _] : active_transactions_) {
         snapshot.active_txns.insert(id);
         if (id < snapshot.xmin) snapshot.xmin = id;
     }
-    
+
     txn->set_snapshot(std::move(snapshot));
-    
+
     Transaction* txn_ptr = txn.get();
     active_transactions_[txn_id] = std::move(txn);
-    
+
     return txn_ptr;
 }
 
 void TransactionManager::commit(Transaction* txn) {
     if (!txn) return;
-    
+
     if (log_manager_) {
-        recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), recovery::LogRecordType::COMMIT);
+        recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
+                                recovery::LogRecordType::COMMIT);
         log_manager_->append_log_record(log);
         log_manager_->flush(true);
     }
-    
+
     txn->set_state(TransactionState::COMMITTED);
 
     /* Release all locks */
@@ -65,16 +67,16 @@ void TransactionManager::commit(Transaction* txn) {
 
 void TransactionManager::abort(Transaction* txn) {
     if (!txn) return;
-    
+
     /* Undo all changes */
     undo_transaction(txn);
-    
+
     if (log_manager_) {
         recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), recovery::LogRecordType::ABORT);
         log_manager_->append_log_record(log);
         log_manager_->flush(true);
     }
-    
+
     txn->set_state(TransactionState::ABORTED);
 
     /* Release all locks */
@@ -104,7 +106,7 @@ void TransactionManager::undo_transaction(Transaction* txn) {
         }
 
         storage::HeapTable table(log.table_name, storage_manager_, schema);
-        
+
         switch (log.type) {
             case UndoLog::Type::INSERT:
                 table.physical_remove(log.rid);
@@ -128,5 +130,5 @@ Transaction* TransactionManager::get_transaction(txn_id_t txn_id) {
     return nullptr;
 }
 
-} // namespace transaction
-} // namespace cloudsql
+}  // namespace transaction
+}  // namespace cloudsql
