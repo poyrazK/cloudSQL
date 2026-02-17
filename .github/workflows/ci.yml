@@ -23,6 +23,10 @@ jobs:
     strategy:
       matrix:
         compiler: [clang++, g++]
+        sanitizer: [address, thread]
+        exclude:
+          - compiler: g++
+            sanitizer: thread # Focus TSan on Clang for faster CI
 
     steps:
     - uses: actions/checkout@v3
@@ -30,26 +34,34 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake clang clang-tidy llvm ninja-build ccache
+        sudo apt-get install -y cmake clang clang-tidy llvm ninja-build ccache lcov
 
     - name: Cache ccache
       uses: actions/cache@v3
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-${{ matrix.compiler }}-ccache-${{ github.sha }}
+        key: ${{ runner.os }}-${{ matrix.compiler }}-${{ matrix.sanitizer }}-ccache-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-${{ matrix.compiler }}-ccache-
+          ${{ runner.os }}-${{ matrix.compiler }}-${{ matrix.sanitizer }}-ccache-
 
     - name: Configure CMake
       run: |
         mkdir build
         cd build
         export CCACHE_DIR=~/.ccache
+        # Use matrix sanitizer. ThreadSanitizer requires specialized flags.
+        if [ "${{ matrix.sanitizer }}" == "thread" ]; then
+          SAN_FLAGS="-fsanitize=thread"
+        else
+          SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+        fi
+        
         cmake .. -G Ninja \
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_FLAGS="$SAN_FLAGS" \
           -DBUILD_TESTS=ON \
-          -DBUILD_COVERAGE=OFF
+          -DBUILD_COVERAGE=${{ matrix.sanitizer == 'address' && 'ON' || 'OFF' }}
 
     - name: Build
       run: |
@@ -66,3 +78,25 @@ jobs:
         ./transaction_manager_tests
         ./statement_tests
         ./recovery_tests
+
+    - name: Generate Coverage Report
+      if: matrix.sanitizer == 'address' && matrix.compiler == 'clang++'
+      run: |
+        cd build
+        lcov --directory . --capture --output-file coverage.info
+        lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' --output-file filtered_coverage.info
+        genhtml filtered_coverage.info --output-directory out_coverage
+
+    - name: Upload Coverage
+      if: matrix.sanitizer == 'address' && matrix.compiler == 'clang++'
+      uses: actions/upload-artifact@v3
+      with:
+        name: code-coverage-report
+        path: build/out_coverage
+
+    - name: Upload Binaries
+      if: matrix.sanitizer == 'address'
+      uses: actions/upload-artifact@v3
+      with:
+        name: cloudsql-bin-${{ matrix.compiler }}
+        path: build/sqlEngine
