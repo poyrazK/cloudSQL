@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Position Independent Code (required for TSan and good practice for libraries)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Enable AddressSanitizer
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
