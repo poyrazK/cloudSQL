@@ -379,6 +379,9 @@ TEST(NetworkTest_Handshake) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        throw std::runtime_error("Failed to create socket in NetworkTest_Handshake");
+    }
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
