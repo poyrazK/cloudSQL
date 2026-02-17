@@ -49,18 +49,11 @@ jobs:
         mkdir build
         cd build
         export CCACHE_DIR=~/.ccache
-        if [ "${{ matrix.sanitizer }}" == "thread" ]; then
-          SAN_FLAGS="-fsanitize=thread"
-        else
-          SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
-        fi
         
         cmake .. -G Ninja \
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-          -DCMAKE_CXX_FLAGS="$SAN_FLAGS" \
-          -DCMAKE_EXE_LINKER_FLAGS="$SAN_FLAGS" \
-          -DCMAKE_SHARED_LINKER_FLAGS="$SAN_FLAGS" \
+          -DUSE_SANITIZER=${{ matrix.sanitizer }} \
           -DBUILD_TESTS=ON \
           -DBUILD_COVERAGE=${{ matrix.sanitizer == 'address' && 'ON' || 'OFF' }}
 

@@ -9,11 +9,27 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Position Independent Code (required for TSan and good practice for libraries)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Enable AddressSanitizer
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
+# Build options
+option(BUILD_TESTS "Build tests" ON)
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+option(BUILD_COVERAGE "Build with coverage instrumentation" OFF)
+set(USE_SANITIZER "address" CACHE STRING "Sanitizer to use: address, thread, or none")
+
+# Configure Sanitizers
+if(NOT USE_SANITIZER STREQUAL "none")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        if(USE_SANITIZER STREQUAL "address")
+            set(SAN_FLAGS "-fsanitize=address -fno-omit-frame-pointer")
+        elseif(USE_SANITIZER STREQUAL "thread")
+            set(SAN_FLAGS "-fsanitize=thread")
+        endif()
+        
+        if(SAN_FLAGS)
+            add_compile_options(${SAN_FLAGS})
+            add_link_options(${SAN_FLAGS})
+            message(STATUS "Enabled sanitizer: ${USE_SANITIZER}")
+        endif()
+    endif()
 endif()
 
 # Enable compiler warnings
@@ -37,11 +53,6 @@ if(CLANG_TIDY_BIN)
 else()
     message(WARNING "clang-tidy not found")
 endif()
-
-# Build options
-option(BUILD_TESTS "Build tests" ON)
-option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
-option(BUILD_COVERAGE "Build with coverage instrumentation" OFF)
 
 if(BUILD_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -132,5 +143,5 @@ message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")
-message(STATUS "  Sanitizers: AddressSanitizer enabled")
+message(STATUS "  Sanitizer: ${USE_SANITIZER}")
 message(STATUS "=============================================")
