@@ -77,7 +77,7 @@ jobs:
       if: matrix.sanitizer == 'address' && matrix.compiler == 'clang++'
       run: |
         cd build
-        lcov --directory . --capture --output-file coverage.info
+        lcov --directory . --capture --output-file coverage.info --gcov-tool "$GITHUB_WORKSPACE/.github/scripts/llvm-gcov.sh"
         lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' --output-file filtered_coverage.info
         genhtml filtered_coverage.info --output-directory out_coverage
 
