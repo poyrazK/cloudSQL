@@ -18,13 +18,13 @@ set(USE_SANITIZER "address" CACHE STRING "Sanitizer to use: address, thread, or 
 # Configure Sanitizers
 if(NOT USE_SANITIZER STREQUAL "none")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        if(USE_SANITIZER STREQUAL "address")
-            set(SAN_FLAGS "-fsanitize=address -fno-omit-frame-pointer")
-        elseif(USE_SANITIZER STREQUAL "thread")
+        if (USE_SANITIZER STREQUAL "address")
+            set(SAN_FLAGS "-fsanitize=address" "-fno-omit-frame-pointer")
+        elseif (USE_SANITIZER STREQUAL "thread")
             set(SAN_FLAGS "-fsanitize=thread")
         endif()
         
-        if(SAN_FLAGS)
+        if (SAN_FLAGS)
             add_compile_options(${SAN_FLAGS})
             add_link_options(${SAN_FLAGS})
             message(STATUS "Enabled sanitizer: ${USE_SANITIZER}")
