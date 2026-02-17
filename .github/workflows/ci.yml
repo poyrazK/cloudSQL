@@ -10,7 +10,7 @@ jobs:
   style-check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Run clang-format check
       run: |
         sudo apt-get update
@@ -29,7 +29,7 @@ jobs:
             sanitizer: thread # Focus TSan on Clang for faster CI
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install dependencies
       run: |
@@ -37,7 +37,7 @@ jobs:
         sudo apt-get install -y cmake clang clang-tidy llvm ninja-build ccache lcov
 
     - name: Cache ccache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ matrix.compiler }}-${{ matrix.sanitizer }}-ccache-${{ github.sha }}
@@ -89,14 +89,14 @@ jobs:
 
     - name: Upload Coverage
       if: matrix.sanitizer == 'address' && matrix.compiler == 'clang++'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: code-coverage-report
         path: build/out_coverage
 
     - name: Upload Binaries
       if: matrix.sanitizer == 'address'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: cloudsql-bin-${{ matrix.compiler }}
         path: build/sqlEngine
