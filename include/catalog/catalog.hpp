@@ -25,87 +25,66 @@ namespace cloudsql {
 using oid_t = uint32_t;
 
 /**
- * @brief Column information structure (C++ class)
+ * @brief Column information structure
  */
-class ColumnInfo {
-   public:
+struct ColumnInfo {
     std::string name;
-    common::ValueType type;
-    uint16_t position;
-    uint32_t max_length;
-    bool nullable;
-    bool is_primary_key;
+    common::ValueType type = common::ValueType::TYPE_NULL;
+    uint16_t position = 0;
+    uint32_t max_length = 0;
+    bool nullable = true;
+    bool is_primary_key = false;
     std::optional<std::string> default_value;
-    uint32_t flags;
+    uint32_t flags = 0;
 
-    ColumnInfo()
-        : type(common::TYPE_NULL),
-          position(0),
-          max_length(0),
-          nullable(true),
-          is_primary_key(false),
-          flags(0) {}
+    ColumnInfo() = default;
 
     ColumnInfo(std::string name, common::ValueType type, uint16_t pos)
-        : name(std::move(name)),
-          type(type),
-          position(pos),
-          max_length(0),
-          nullable(true),
-          is_primary_key(false),
-          flags(0) {}
+        : name(std::move(name)), type(type), position(pos) {}
 };
 
 /**
  * @brief Index type enumeration
  */
-enum class IndexType : uint8_t { BTree = 0, Hash = 1, GiST = 2, SPGiST = 3, GIN = 3, BRIN = 4 };
+enum class IndexType : uint8_t { BTree = 0, Hash = 1, GiST = 2, SPGiST = 3, GIN = 4, BRIN = 5 };
 
 /**
- * @brief Index information structure (C++ class)
+ * @brief Index information structure
  */
-class IndexInfo {
-   public:
-    oid_t index_id;
+struct IndexInfo {
+    oid_t index_id = 0;
     std::string name;
-    oid_t table_id;
+    oid_t table_id = 0;
     std::vector<uint16_t> column_positions;
-    IndexType index_type;
+    IndexType index_type = IndexType::BTree;
     std::string filename;
-    bool is_unique;
-    bool is_primary;
-    uint32_t flags;
+    bool is_unique = false;
+    bool is_primary = false;
+    uint32_t flags = 0;
 
-    IndexInfo()
-        : index_id(0),
-          table_id(0),
-          index_type(IndexType::BTree),
-          is_unique(false),
-          is_primary(false),
-          flags(0) {}
+    IndexInfo() = default;
 };
 
 /**
- * @brief Table information structure (C++ class)
+ * @brief Table information structure
  */
-class TableInfo {
-   public:
-    oid_t table_id;
+struct TableInfo {
+    oid_t table_id = 0;
     std::string name;
     std::vector<ColumnInfo> columns;
     std::vector<IndexInfo> indexes;
-    uint64_t num_rows;
+    uint64_t num_rows = 0;
     std::string filename;
-    uint32_t flags;
-    uint64_t created_at;
-    uint64_t modified_at;
+    uint32_t flags = 0;
+    uint64_t created_at = 0;
+    uint64_t modified_at = 0;
 
-    TableInfo() : table_id(0), num_rows(0), flags(0), created_at(0), modified_at(0) {}
+    TableInfo() = default;
 
     /**
      * @brief Get column by name
      */
-    std::optional<ColumnInfo*> get_column(const std::string& col_name) {
+    [[nodiscard]] std::optional<ColumnInfo*> get_column(const std::string& col_name) {
         for (auto& col : columns) {
             if (col.name == col_name) {
                 return &col;
@@ -117,7 +96,7 @@ class TableInfo {
     /**
      * @brief Get column by position (0-based)
      */
-    std::optional<ColumnInfo*> get_column_by_position(uint16_t pos) {
+    [[nodiscard]] std::optional<ColumnInfo*> get_column_by_position(uint16_t pos) {
         if (pos < columns.size()) {
             return &columns[pos];
         }
@@ -127,27 +106,26 @@ class TableInfo {
     /**
      * @brief Get number of columns
      */
-    uint16_t num_columns() const { return static_cast<uint16_t>(columns.size()); }
+    [[nodiscard]] uint16_t num_columns() const { return static_cast<uint16_t>(columns.size()); }
 
     /**
      * @brief Get number of indexes
      */
-    uint16_t num_indexes() const { return static_cast<uint16_t>(indexes.size()); }
+    [[nodiscard]] uint16_t num_indexes() const { return static_cast<uint16_t>(indexes.size()); }
 };
 
 /**
- * @brief Database information structure (C++ class)
+ * @brief Database information structure
  */
-class DatabaseInfo {
-   public:
-    oid_t database_id;
+struct DatabaseInfo {
+    oid_t database_id = 0;
     std::string name;
-    uint32_t encoding;
+    uint32_t encoding = 0;
     std::string collation;
     std::vector<oid_t> table_ids;
-    uint64_t created_at;
+    uint64_t created_at = 0;
 
-    DatabaseInfo() : database_id(0), encoding(0), created_at(0) {}
+    DatabaseInfo() = default;
 };
 
 /**
@@ -158,12 +136,12 @@ class Catalog {
     /**
      * @brief Default constructor
      */
-    Catalog() : next_oid_(1) {}
+    Catalog() = default;
 
     /**
      * @brief Create a new catalog
      */
-    static std::unique_ptr<Catalog> create();
+    [[nodiscard]] static std::unique_ptr<Catalog> create();
 
     /**
      * @brief Load catalog from file
@@ -173,7 +151,7 @@ class Catalog {
     /**
      * @brief Save catalog to file
      */
-    bool save(const std::string& filename) const;
+    [[nodiscard]] bool save(const std::string& filename) const;
 
     /**
      * @brief Create a new table
@@ -189,17 +167,17 @@ class Catalog {
     /**
      * @brief Get table by ID
      */
-    std::optional<TableInfo*> get_table(oid_t table_id);
+    [[nodiscard]] std::optional<TableInfo*> get_table(oid_t table_id);
 
     /**
      * @brief Get table by name
      */
-    std::optional<TableInfo*> get_table_by_name(const std::string& table_name);
+    [[nodiscard]] std::optional<TableInfo*> get_table_by_name(const std::string& table_name);
 
     /**
      * @brief Get all tables
      */
-    std::vector<TableInfo*> get_all_tables();
+    [[nodiscard]] std::vector<TableInfo*> get_all_tables();
 
     /**
      * @brief Create an index
@@ -217,12 +195,12 @@ class Catalog {
     /**
      * @brief Get index by ID
      */
-    std::optional<std::pair<TableInfo*, IndexInfo*>> get_index(oid_t index_id);
+    [[nodiscard]] std::optional<std::pair<TableInfo*, IndexInfo*>> get_index(oid_t index_id);
 
     /**
      * @brief Get indexes for a table
      */
-    std::vector<IndexInfo*> get_table_indexes(oid_t table_id);
+    [[nodiscard]] std::vector<IndexInfo*> get_table_indexes(oid_t table_id);
 
     /**
      * @brief Update table statistics
@@ -232,17 +210,17 @@ class Catalog {
     /**
      * @brief Check if table exists
      */
-    bool table_exists(oid_t table_id) const;
+    [[nodiscard]] bool table_exists(oid_t table_id) const;
 
     /**
      * @brief Check if table exists by name
      */
-    bool table_exists_by_name(const std::string& table_name) const;
+    [[nodiscard]] bool table_exists_by_name(const std::string& table_name) const;
 
     /**
      * @brief Get database info
      */
-    const DatabaseInfo& get_database() const { return database_; }
+    [[nodiscard]] const DatabaseInfo& get_database() const { return database_; }
 
     /**
      * @brief Set database info
@@ -257,16 +235,18 @@ class Catalog {
     /**
      * @brief Get catalog version
      */
-    uint64_t get_version() const { return version_; }
+    [[nodiscard]] uint64_t get_version() const { return version_; }
 
    private:
     std::unordered_map<oid_t, std::unique_ptr<TableInfo>> tables_;
     DatabaseInfo database_;
-    oid_t next_oid_;
+    oid_t next_oid_ = 1;
     uint64_t version_ = 1;
 
-    static uint64_t get_current_time();
+    [[nodiscard]] static uint64_t get_current_time();
 };
+
+
 
 }  // namespace cloudsql
 
