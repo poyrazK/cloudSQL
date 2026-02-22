@@ -5,35 +5,44 @@
 
 #include "parser/expression.hpp"
 
-#include "executor/types.hpp"
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
-namespace cloudsql {
-namespace parser {
+#include "common/value.hpp"
+#include "executor/types.hpp"
+#include "parser/token.hpp"
+
+namespace cloudsql::parser {
 
 /**
  * @brief Evaluate binary expression
  */
 common::Value BinaryExpr::evaluate(const executor::Tuple* tuple,
                                    const executor::Schema* schema) const {
-    common::Value left_val = left_->evaluate(tuple, schema);
-    common::Value right_val = right_->evaluate(tuple, schema);
+    const common::Value left_val = left_->evaluate(tuple, schema);
+    const common::Value right_val = right_->evaluate(tuple, schema);
 
     switch (op_) {
         case TokenType::Plus:
-            if (left_val.type() == common::TYPE_FLOAT64 ||
-                right_val.type() == common::TYPE_FLOAT64) {
+            if (left_val.type() == common::ValueType::TYPE_FLOAT64 ||
+                right_val.type() == common::ValueType::TYPE_FLOAT64) {
                 return common::Value::make_float64(left_val.to_float64() + right_val.to_float64());
             }
             return common::Value::make_int64(left_val.to_int64() + right_val.to_int64());
         case TokenType::Minus:
-            if (left_val.type() == common::TYPE_FLOAT64 ||
-                right_val.type() == common::TYPE_FLOAT64) {
+            if (left_val.type() == common::ValueType::TYPE_FLOAT64 ||
+                right_val.type() == common::ValueType::TYPE_FLOAT64) {
                 return common::Value::make_float64(left_val.to_float64() - right_val.to_float64());
             }
             return common::Value::make_int64(left_val.to_int64() - right_val.to_int64());
         case TokenType::Star:
-            if (left_val.type() == common::TYPE_FLOAT64 ||
-                right_val.type() == common::TYPE_FLOAT64) {
+            if (left_val.type() == common::ValueType::TYPE_FLOAT64 ||
+                right_val.type() == common::ValueType::TYPE_FLOAT64) {
                 return common::Value::make_float64(left_val.to_float64() * right_val.to_float64());
             }
             return common::Value::make_int64(left_val.to_int64() * right_val.to_int64());
@@ -115,7 +124,7 @@ std::unique_ptr<Expression> BinaryExpr::clone() const {
  */
 common::Value UnaryExpr::evaluate(const executor::Tuple* tuple,
                                   const executor::Schema* schema) const {
-    common::Value val = expr_->evaluate(tuple, schema);
+    const common::Value val = expr_->evaluate(tuple, schema);
     switch (op_) {
         case TokenType::Minus:
             if (val.is_numeric()) {
@@ -143,9 +152,11 @@ std::unique_ptr<Expression> UnaryExpr::clone() const {
  */
 common::Value ColumnExpr::evaluate(const executor::Tuple* tuple,
                                    const executor::Schema* schema) const {
-    if (!tuple || !schema) return common::Value::make_null();
+    if (tuple == nullptr || schema == nullptr) {
+        return common::Value::make_null();
+    }
 
-    size_t index = schema->find_column(name_);
+    const size_t index = schema->find_column(name_);
     if (index == static_cast<size_t>(-1)) {
         return common::Value::make_null();
     }
@@ -170,7 +181,7 @@ common::Value ConstantExpr::evaluate(const executor::Tuple* tuple,
 }
 
 std::string ConstantExpr::to_string() const {
-    if (value_.type() == common::TYPE_TEXT) {
+    if (value_.type() == common::ValueType::TYPE_TEXT) {
         return "'" + value_.to_string() + "'";
     }
     return value_.to_string();
@@ -185,10 +196,12 @@ std::unique_ptr<Expression> ConstantExpr::clone() const {
  */
 common::Value FunctionExpr::evaluate(const executor::Tuple* tuple,
                                      const executor::Schema* schema) const {
-    if (!tuple || !schema) return common::Value::make_null();
+    if (tuple == nullptr || schema == nullptr) {
+        return common::Value::make_null();
+    }
 
     /* Attempt to look up the function result in the schema (e.g. for aggregates) */
-    size_t index = schema->find_column(this->to_string());
+    const size_t index = schema->find_column(this->to_string());
     if (index != static_cast<size_t>(-1)) {
         return tuple->get(index);
     }
@@ -198,14 +211,20 @@ common::Value FunctionExpr::evaluate(const executor::Tuple* tuple,
 
 std::string FunctionExpr::to_string() const {
     std::string result = func_name_ + "(";
-    if (distinct_) result += "DISTINCT ";
+    if (distinct_) {
+        result += "DISTINCT ";
+    }
     bool first = true;
     for (const auto& arg : args_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += arg->to_string();
         first = false;
     }
-    if (args_.empty() && func_name_ == "COUNT") result += "*";
+    if (args_.empty() && func_name_ == "COUNT") {
+        result += "*";
+    }
     result += ")";
     return result;
 }
@@ -223,7 +242,7 @@ std::unique_ptr<Expression> FunctionExpr::clone() const {
  * @brief Evaluate IN expression
  */
 common::Value InExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
-    common::Value col_val = column_->evaluate(tuple, schema);
+    const common::Value col_val = column_->evaluate(tuple, schema);
     for (const auto& val : values_) {
         if (col_val == val->evaluate(tuple, schema)) {
             return common::Value(!not_flag_);
@@ -236,7 +255,9 @@ std::string InExpr::to_string() const {
     std::string result = column_->to_string() + (not_flag_ ? " NOT IN (" : " IN (");
     bool first = true;
     for (const auto& val : values_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += val->to_string();
         first = false;
     }
@@ -246,6 +267,7 @@ std::string InExpr::to_string() const {
 
 std::unique_ptr<Expression> InExpr::clone() const {
     std::vector<std::unique_ptr<Expression>> cloned_vals;
+    cloned_vals.reserve(values_.size());
     for (const auto& val : values_) {
         cloned_vals.push_back(val->clone());
     }
@@ -257,8 +279,8 @@ std::unique_ptr<Expression> InExpr::clone() const {
  */
 common::Value IsNullExpr::evaluate(const executor::Tuple* tuple,
                                    const executor::Schema* schema) const {
-    common::Value val = expr_->evaluate(tuple, schema);
-    bool result = val.is_null();
+    const common::Value val = expr_->evaluate(tuple, schema);
+    const bool result = val.is_null();
     return common::Value(not_flag_ ? !result : result);
 }
 
@@ -270,5 +292,4 @@ std::unique_ptr<Expression> IsNullExpr::clone() const {
     return std::make_unique<IsNullExpr>(expr_->clone(), not_flag_);
 }
 
-}  // namespace parser
-}  // namespace cloudsql
+}  // namespace cloudsql::parser

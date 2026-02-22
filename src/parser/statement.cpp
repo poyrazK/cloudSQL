@@ -5,8 +5,9 @@
 
 #include "parser/statement.hpp"
 
-namespace cloudsql {
-namespace parser {
+#include <string>
+
+namespace cloudsql::parser {
 
 /**
  * @brief Convert SELECT statement to string
@@ -14,11 +15,15 @@ namespace parser {
 std::string SelectStatement::to_string() const {
     std::string result = "SELECT ";
 
-    if (distinct_) result += "DISTINCT ";
+    if (distinct_) {
+        result += "DISTINCT ";
+    }
 
     bool first = true;
     for (const auto& col : columns_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += col->to_string();
         first = false;
     }
@@ -56,7 +61,9 @@ std::string SelectStatement::to_string() const {
         result += " GROUP BY ";
         first = true;
         for (const auto& expr : group_by_) {
-            if (!first) result += ", ";
+            if (!first) {
+                result += ", ";
+            }
             result += expr->to_string();
             first = false;
         }
@@ -70,7 +77,9 @@ std::string SelectStatement::to_string() const {
         result += " ORDER BY ";
         first = true;
         for (const auto& expr : order_by_) {
-            if (!first) result += ", ";
+            if (!first) {
+                result += ", ";
+            }
             result += expr->to_string();
             first = false;
         }
@@ -95,7 +104,9 @@ std::string InsertStatement::to_string() const {
 
     bool first = true;
     for (const auto& col : columns_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += col->to_string();
         first = false;
     }
@@ -103,11 +114,15 @@ std::string InsertStatement::to_string() const {
 
     first = true;
     for (const auto& row : values_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += "(";
         bool inner_first = true;
         for (const auto& val : row) {
-            if (!inner_first) result += ", ";
+            if (!inner_first) {
+                result += ", ";
+            }
             result += val->to_string();
             inner_first = false;
         }
@@ -126,7 +141,9 @@ std::string UpdateStatement::to_string() const {
 
     bool first = true;
     for (const auto& [col, val] : set_clauses_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += col->to_string() + " = " + val->to_string();
         first = false;
     }
@@ -159,11 +176,19 @@ std::string CreateTableStatement::to_string() const {
 
     bool first = true;
     for (const auto& col : columns_) {
-        if (!first) result += ", ";
+        if (!first) {
+            result += ", ";
+        }
         result += col.name_ + " " + col.type_;
-        if (col.is_primary_key_) result += " PRIMARY KEY";
-        if (col.is_not_null_) result += " NOT NULL";
-        if (col.is_unique_) result += " UNIQUE";
+        if (col.is_primary_key_) {
+            result += " PRIMARY KEY";
+        }
+        if (col.is_not_null_) {
+            result += " NOT NULL";
+        }
+        if (col.is_unique_) {
+            result += " UNIQUE";
+        }
         first = false;
     }
 
@@ -171,5 +196,4 @@ std::string CreateTableStatement::to_string() const {
     return result;
 }
 
-}  // namespace parser
-}  // namespace cloudsql
+}  // namespace cloudsql::parser
