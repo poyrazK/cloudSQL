@@ -5,10 +5,13 @@
 
 #include "transaction/lock_manager.hpp"
 
-#include <algorithm>
+#include <iterator>
+#include <mutex>
+#include <string>
 
-namespace cloudsql {
-namespace transaction {
+#include "transaction/transaction.hpp"
+
+namespace cloudsql::transaction {
 
 bool LockManager::acquire_shared(Transaction* txn, const std::string& rid) {
     std::unique_lock<std::mutex> lock(latch_);
@@ -17,17 +20,21 @@ bool LockManager::acquire_shared(Transaction* txn, const std::string& rid) {
     /* Check if we already hold a lock */
     for (const auto& req : queue.request_queue) {
         if (req.txn_id == txn->get_id()) {
-            if (req.mode == LockMode::EXCLUSIVE || req.mode == LockMode::SHARED) return true;
+            if (req.mode == LockMode::EXCLUSIVE || req.mode == LockMode::SHARED) {
+                return true;
+            }
         }
     }
 
     queue.request_queue.push_back({txn->get_id(), LockMode::SHARED, false});
-    auto it = std::prev(queue.request_queue.end());  // Iterator to our request
+    const auto it = std::prev(queue.request_queue.end());  // Iterator to our request
 
     /* Wait loop */
     queue.cv.wait(lock, [&]() {
         /* Check if we are aborted */
-        if (txn->get_state() == TransactionState::ABORTED) return true;
+        if (txn->get_state() == TransactionState::ABORTED) {
+            return true;
+        }
 
         /* Check compatibility */
         /* Shared locks are compatible with other shared locks, but not exclusive */
@@ -42,7 +49,7 @@ bool LockManager::acquire_shared(Transaction* txn, const std::string& rid) {
     });
 
     if (txn->get_state() == TransactionState::ABORTED) {
-        queue.request_queue.erase(it);
+        static_cast<void>(queue.request_queue.erase(it));
         return false;
     }
 
@@ -57,11 +64,13 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
 
     /* Check for lock upgrade */
     bool upgrade = false;
-    auto it = queue.request_queue.end();
+    [[maybe_unused]] auto it = queue.request_queue.end();
 
     for (auto iter = queue.request_queue.begin(); iter != queue.request_queue.end(); ++iter) {
         if (iter->txn_id == txn->get_id()) {
-            if (iter->mode == LockMode::EXCLUSIVE) return true;  // Already held
+            if (iter->mode == LockMode::EXCLUSIVE) {
+                return true;  // Already held
+            }
             if (iter->mode == LockMode::SHARED) {
                 /* We have S lock, need upgrade */
                 upgrade = true;
@@ -80,10 +89,12 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
     }
 
     queue.request_queue.push_back({txn->get_id(), LockMode::EXCLUSIVE, false});
-    auto my_req = std::prev(queue.request_queue.end());
+    const auto my_req = std::prev(queue.request_queue.end());
 
     queue.cv.wait(lock, [&]() {
-        if (txn->get_state() == TransactionState::ABORTED) return true;
+        if (txn->get_state() == TransactionState::ABORTED) {
+            return true;
+        }
 
         /* Exclusive requires NO other locks held by OTHERS */
         bool can_grant = true;
@@ -99,7 +110,7 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
     });
 
     if (txn->get_state() == TransactionState::ABORTED) {
-        queue.request_queue.erase(my_req);
+        static_cast<void>(queue.request_queue.erase(my_req));
         return false;
     }
 
@@ -109,14 +120,16 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
 }
 
 bool LockManager::unlock(Transaction* txn, const std::string& rid) {
-    std::unique_lock<std::mutex> lock(latch_);
-    if (lock_table_.find(rid) == lock_table_.end()) return false;
+    const std::unique_lock<std::mutex> lock(latch_);
+    if (lock_table_.find(rid) == lock_table_.end()) {
+        return false;
+    }
 
     auto& queue = lock_table_[rid];
     bool found = false;
     for (auto it = queue.request_queue.begin(); it != queue.request_queue.end(); ++it) {
         if (it->txn_id == txn->get_id()) {
-            queue.request_queue.erase(it);
+            static_cast<void>(queue.request_queue.erase(it));
             found = true;
             break;
         }
@@ -128,5 +141,4 @@ bool LockManager::unlock(Transaction* txn, const std::string& rid) {
     return found;
 }
 
-}  // namespace transaction
-}  // namespace cloudsql
+}  // namespace cloudsql::transaction
