@@ -9,19 +9,23 @@
 #include "storage/storage_manager.hpp"
 
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
 
-namespace cloudsql {
-namespace storage {
+namespace cloudsql::storage {
 
 /**
  * @brief Construct a new Storage Manager
  */
 StorageManager::StorageManager(std::string data_dir) : data_dir_(std::move(data_dir)) {
-    create_dir_if_not_exists();
+    static_cast<void>(create_dir_if_not_exists());
 }
 
 /**
@@ -41,11 +45,13 @@ StorageManager::~StorageManager() {
 bool StorageManager::open_file(const std::string& filename) {
     if (open_files_.find(filename) != open_files_.end()) {
         auto& file = open_files_[filename];
-        if (file->is_open()) return true;
-        open_files_.erase(filename);
+        if (file->is_open()) {
+            return true;
+        }
+        static_cast<void>(open_files_.erase(filename));
     }
 
-    std::string filepath = data_dir_ + "/" + filename;
+    const std::string filepath = data_dir_ + "/" + filename;
     auto file = std::make_unique<std::fstream>();
 
     /* Open for read/write in binary mode. */
@@ -66,7 +72,7 @@ bool StorageManager::open_file(const std::string& filename) {
     }
 
     open_files_[filename] = std::move(file);
-    stats_.files_opened++;
+    static_cast<void>(stats_.files_opened.fetch_add(1));
     return true;
 }
 
@@ -80,7 +86,7 @@ bool StorageManager::close_file(const std::string& filename) {
     }
 
     it->second->close();
-    open_files_.erase(it);
+    static_cast<void>(open_files_.erase(it));
     return true;
 }
 
@@ -89,31 +95,34 @@ bool StorageManager::close_file(const std::string& filename) {
  */
 bool StorageManager::read_page(const std::string& filename, uint32_t page_num, char* buffer) {
     if (open_files_.find(filename) == open_files_.end()) {
-        if (!open_file(filename)) return false;
+        if (!open_file(filename)) {
+            return false;
+        }
     }
 
     auto& file = open_files_[filename];
     file->clear(); /* Clear flags like EOF */
-    file->seekg(static_cast<std::streamoff>(page_num) * PAGE_SIZE, std::ios::beg);
+    file->seekg(static_cast<std::streamoff>(page_num) * static_cast<std::streamoff>(PAGE_SIZE),
+                std::ios::beg);
 
     if (file->fail()) {
         return false;
     }
 
-    file->read(buffer, PAGE_SIZE);
+    static_cast<void>(file->read(buffer, PAGE_SIZE));
 
-    if (file->gcount() < (std::streamsize)PAGE_SIZE) {
+    if (file->gcount() < static_cast<std::streamsize>(PAGE_SIZE)) {
         if (file->eof() || file->gcount() == 0) {
             /* If we reached end of file or read nothing, zero-fill the rest */
-            std::fill(buffer + file->gcount(), buffer + PAGE_SIZE, 0);
+            std::fill(std::next(buffer, file->gcount()), std::next(buffer, static_cast<std::ptrdiff_t>(PAGE_SIZE)), 0);
             file->clear();
             return true;
         }
         return false;
     }
 
-    stats_.pages_read++;
-    stats_.bytes_read += PAGE_SIZE;
+    static_cast<void>(stats_.pages_read.fetch_add(1));
+    static_cast<void>(stats_.bytes_read.fetch_add(PAGE_SIZE));
     return true;
 }
 
@@ -123,22 +132,29 @@ bool StorageManager::read_page(const std::string& filename, uint32_t page_num, c
 bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
                                 const char* buffer) {
     if (open_files_.find(filename) == open_files_.end()) {
-        if (!open_file(filename)) return false;
+        if (!open_file(filename)) {
+            return false;
+        }
     }
 
     auto& file = open_files_[filename];
     file->clear();
-    file->seekp(static_cast<std::streamoff>(page_num) * PAGE_SIZE, std::ios::beg);
+    file->seekp(static_cast<std::streamoff>(page_num) * static_cast<std::streamoff>(PAGE_SIZE),
+                std::ios::beg);
 
-    if (file->fail()) return false;
+    if (file->fail()) {
+        return false;
+    }
 
-    file->write(buffer, PAGE_SIZE);
-    if (file->fail()) return false;
+    static_cast<void>(file->write(buffer, PAGE_SIZE));
+    if (file->fail()) {
+        return false;
+    }
 
     file->flush();
 
-    stats_.pages_written++;
-    stats_.bytes_written += PAGE_SIZE;
+    static_cast<void>(stats_.pages_written.fetch_add(1));
+    static_cast<void>(stats_.bytes_written.fetch_add(PAGE_SIZE));
     return true;
 }
 
@@ -146,16 +162,14 @@ bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
  * @brief Create data directory if it doesn't exist
  */
 bool StorageManager::create_dir_if_not_exists() {
-    struct stat st;
+    struct stat st {};
     if (stat(data_dir_.c_str(), &st) != 0) {
-        if (mkdir(data_dir_.c_str(), 0755) != 0) {
+        if (mkdir(data_dir_.c_str(), DEFAULT_DIR_MODE) != 0) {
             return false;
         }
     }
     return true;
 }
 
-}  // namespace storage
-}  // namespace cloudsql
 
-/** @} */ /* storage */
+}  // namespace cloudsql::storage
