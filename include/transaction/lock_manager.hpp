@@ -14,16 +14,15 @@
 
 #include "transaction/transaction.hpp"
 
-namespace cloudsql {
-namespace transaction {
+namespace cloudsql::transaction {
 
-enum class LockMode { SHARED, EXCLUSIVE };
+enum class LockMode : uint8_t { SHARED, EXCLUSIVE };
 
 class LockManager {
    private:
     struct LockRequest {
-        txn_id_t txn_id;
-        LockMode mode;
+        txn_id_t txn_id = 0;
+        LockMode mode = LockMode::SHARED;
         bool granted = false;
     };
 
@@ -39,6 +38,12 @@ class LockManager {
    public:
     LockManager() = default;
     ~LockManager() = default;
+
+    // Disable copy/move for lock manager
+    LockManager(const LockManager&) = delete;
+    LockManager& operator=(const LockManager&) = delete;
+    LockManager(LockManager&&) = delete;
+    LockManager& operator=(LockManager&&) = delete;
 
     /**
      * @brief Acquire a shared (read) lock on a tuple
@@ -56,7 +61,6 @@ class LockManager {
     bool unlock(Transaction* txn, const std::string& rid);
 };
 
-}  // namespace transaction
-}  // namespace cloudsql
+}  // namespace cloudsql::transaction
 
 #endif  // CLOUDSQL_TRANSACTION_LOCK_MANAGER_HPP

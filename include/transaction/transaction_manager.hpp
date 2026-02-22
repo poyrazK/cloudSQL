@@ -16,8 +16,7 @@
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
-namespace cloudsql {
-namespace transaction {
+namespace cloudsql::transaction {
 
 class TransactionManager {
    private:
@@ -47,7 +46,8 @@ class TransactionManager {
     Transaction* get_transaction(txn_id_t txn_id);
 };
 
-}  // namespace transaction
-}  // namespace cloudsql
+
+
+}  // namespace cloudsql::transaction
 
 #endif  // CLOUDSQL_TRANSACTION_TRANSACTION_MANAGER_HPP
