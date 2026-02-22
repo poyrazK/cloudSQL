@@ -8,26 +8,13 @@
 
 #include "common/config.hpp"
 
-#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <string>
 
-namespace cloudsql {
-namespace config {
-
-/**
- * @brief Default constructor with default values
- */
-Config::Config()
-    : port(DEFAULT_PORT),
-      data_dir(DEFAULT_DATA_DIR),
-      config_file(""),
-      mode(RunMode::Embedded),
-      max_connections(DEFAULT_MAX_CONNECTIONS),
-      buffer_pool_size(DEFAULT_BUFFER_POOL_SIZE),
-      page_size(DEFAULT_PAGE_SIZE),
-      debug(false),
-      verbose(false) {}
+namespace cloudsql::config {
 
 /**
  * @brief Load configuration from file
@@ -39,7 +26,7 @@ bool Config::load(const std::string& filename) {
 
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Cannot open config file: " << filename << std::endl;
+        std::cerr << "Cannot open config file: " << filename << "\n";
         return false;
     }
 
@@ -51,13 +38,13 @@ bool Config::load(const std::string& filename) {
         }
 
         /* Parse key=value */
-        auto eq_pos = line.find('=');
+        const auto eq_pos = line.find('=');
         if (eq_pos == std::string::npos) {
             continue;
         }
 
-        std::string key = trim(line.substr(0, eq_pos));
-        std::string value = trim(line.substr(eq_pos + 1));
+        const std::string key = trim(line.substr(0, eq_pos));
+        const std::string value = trim(line.substr(eq_pos + 1));
 
         if (key.empty() || value.empty()) {
             continue;
@@ -97,7 +84,7 @@ bool Config::save(const std::string& filename) const {
 
     std::ofstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Cannot open config file for writing: " << filename << std::endl;
+        std::cerr << "Cannot open config file for writing: " << filename << "\n";
         return false;
     }
 
@@ -121,29 +108,29 @@ bool Config::save(const std::string& filename) const {
  * @brief Validate configuration
  */
 bool Config::validate() const {
-    if (port == 0 || port > 65535) {
-        std::cerr << "Invalid port number: " << port << std::endl;
+    if (port == 0 || port > MAX_PORT) {
+        std::cerr << "Invalid port number: " << port << "\n";
         return false;
     }
 
     if (max_connections < 1) {
-        std::cerr << "Invalid max connections: " << max_connections << std::endl;
+        std::cerr << "Invalid max connections: " << max_connections << "\n";
         return false;
     }
 
     if (buffer_pool_size < 1) {
-        std::cerr << "Invalid buffer pool size: " << buffer_pool_size << std::endl;
+        std::cerr << "Invalid buffer pool size: " << buffer_pool_size << "\n";
         return false;
     }
 
-    if (page_size < 1024 || page_size > 65536) {
-        std::cerr << "Invalid page size: " << page_size << " (must be between 1024 and 65536)"
-                  << std::endl;
+    if (page_size < MIN_PAGE_SIZE || page_size > MAX_PAGE_SIZE) {
+        std::cerr << "Invalid page size: " << page_size << " (must be between " << MIN_PAGE_SIZE
+                  << " and " << MAX_PAGE_SIZE << ")\n";
         return false;
     }
 
     if (data_dir.empty()) {
-        std::cerr << "Data directory cannot be empty" << std::endl;
+        std::cerr << "Data directory cannot be empty\n";
         return false;
     }
 
@@ -154,32 +141,31 @@ bool Config::validate() const {
  * @brief Print configuration to stdout
  */
 void Config::print() const {
-    std::cout << "=== SQL Engine Configuration ===" << std::endl;
+    std::cout << "=== SQL Engine Configuration ===\n";
     std::cout << "Mode:         " << (mode == RunMode::Distributed ? "distributed" : "embedded")
-              << std::endl;
-    std::cout << "Port:         " << port << std::endl;
-    std::cout << "Data dir:     " << data_dir << std::endl;
-    std::cout << "Max conns:    " << max_connections << std::endl;
-    std::cout << "Buffer pool:  " << buffer_pool_size << " pages" << std::endl;
-    std::cout << "Page size:    " << page_size << " bytes" << std::endl;
-    std::cout << "Debug:        " << (debug ? "enabled" : "disabled") << std::endl;
-    std::cout << "Verbose:      " << (verbose ? "enabled" : "disabled") << std::endl;
-    std::cout << "================================" << std::endl;
+              << "\n";
+    std::cout << "Port:         " << port << "\n";
+    std::cout << "Data dir:     " << data_dir << "\n";
+    std::cout << "Max conns:    " << max_connections << "\n";
+    std::cout << "Buffer pool:  " << buffer_pool_size << " pages\n";
+    std::cout << "Page size:    " << page_size << " bytes\n";
+    std::cout << "Debug:        " << (debug ? "enabled" : "disabled") << "\n";
+    std::cout << "Verbose:      " << (verbose ? "enabled" : "disabled") << "\n";
+    std::cout << "================================\n";
 }
 
 /**
  * @brief Trim whitespace from string
  */
 std::string Config::trim(const std::string& str) {
-    size_t start = str.find_first_not_of(" \t\n\r");
+    const size_t start = str.find_first_not_of(" \t\n\r");
     if (start == std::string::npos) {
         return "";
     }
-    size_t end = str.find_last_not_of(" \t\n\r");
+    const size_t end = str.find_last_not_of(" \t\n\r");
     return str.substr(start, end - start + 1);
 }
 
-}  // namespace config
-}  // namespace cloudsql
+}  // namespace cloudsql::config
 
 /** @} */ /* config */
