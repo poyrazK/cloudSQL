@@ -19,15 +19,14 @@
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
-namespace cloudsql {
-namespace executor {
+namespace cloudsql::executor {
 
 using namespace cloudsql::transaction;
 
 /**
  * @brief Operator types
  */
-enum class OperatorType {
+enum class OperatorType : uint8_t {
     SeqScan,
     IndexScan,
     Filter,
@@ -45,13 +44,13 @@ enum class OperatorType {
 /**
  * @brief Execution state
  */
-enum class ExecState { Init, Open, Executing, Done, Error };
+enum class ExecState : uint8_t { Init, Open, Executing, Done, Error };
 
 /**
  * @brief Base operator class (Volcano iterator model)
  */
 class Operator {
-   protected:
+   private:
     OperatorType type_;
     ExecState state_ = ExecState::Init;
     std::string error_message_;
@@ -59,15 +58,21 @@ class Operator {
     LockManager* lock_manager_;
 
    public:
-    Operator(OperatorType type, Transaction* txn = nullptr, LockManager* lock_manager = nullptr)
+    explicit Operator(OperatorType type, Transaction* txn = nullptr, LockManager* lock_manager = nullptr)
         : type_(type), txn_(txn), lock_manager_(lock_manager) {}
     virtual ~Operator() = default;
 
-    OperatorType type() const { return type_; }
-    ExecState state() const { return state_; }
-    const std::string& error() const { return error_message_; }
-    Transaction* get_txn() const { return txn_; }
-    LockManager* get_lock_manager() const { return lock_manager_; }
+    // Disable copy/move for base operator
+    Operator(const Operator&) = delete;
+    Operator& operator=(const Operator&) = delete;
+    Operator(Operator&&) = delete;
+    Operator& operator=(Operator&&) = delete;
+
+    [[nodiscard]] OperatorType type() const { return type_; }
+    [[nodiscard]] ExecState state() const { return state_; }
+    [[nodiscard]] const std::string& error() const { return error_message_; }
+    [[nodiscard]] Transaction* get_txn() const { return txn_; }
+    [[nodiscard]] LockManager* get_lock_manager() const { return lock_manager_; }
 
     virtual bool init() { return true; }
     virtual bool open() { return true; }
@@ -78,16 +83,23 @@ class Operator {
     }
     virtual void close() {}
 
-    virtual Schema& output_schema() = 0;
+    [[nodiscard]] virtual Schema& output_schema() = 0;
 
     virtual void add_child(std::unique_ptr<Operator> child) { (void)child; }
-    virtual const std::vector<std::unique_ptr<Operator>>& children() const {
-        static std::vector<std::unique_ptr<Operator>> empty;
+    [[nodiscard]] virtual const std::vector<std::unique_ptr<Operator>>& children() const {
+        static const std::vector<std::unique_ptr<Operator>> empty;
         return empty;
     }
 
-    bool is_done() const { return state_ == ExecState::Done; }
-    bool has_error() const { return state_ == ExecState::Error; }
+    [[nodiscard]] bool is_done() const { return state_ == ExecState::Done; }
+    [[nodiscard]] bool has_error() const { return state_ == ExecState::Error; }
+
+   protected:
+    void set_state(ExecState s) { state_ = s; }
+    void set_error(std::string msg) { 
+        error_message_ = std::move(msg);
+        state_ = ExecState::Error;
+    }
 };
 
 /**
@@ -108,8 +120,8 @@ class SeqScanOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
-    const std::string& table_name() const { return table_name_; }
+    [[nodiscard]] Schema& output_schema() override;
+    [[nodiscard]] const std::string& table_name() const { return table_name_; }
 };
 
 /**
@@ -135,7 +147,7 @@ class IndexScanOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
 };
 
 /**
@@ -154,7 +166,7 @@ class FilterOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
 };
 
@@ -175,7 +187,7 @@ class ProjectOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
 };
 
@@ -200,19 +212,19 @@ class SortOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
 };
 
 /**
  * @brief Aggregate types
  */
-enum class AggregateType { Count, Sum, Avg, Min, Max };
+enum class AggregateType : uint8_t { Count, Sum, Avg, Min, Max };
 
 /**
  * @brief Aggregate specification
  */
 struct AggregateInfo {
-    AggregateType type;
+    AggregateType type = AggregateType::Count;
     std::unique_ptr<parser::Expression> expr;
     std::string name;
     bool is_distinct = false;
@@ -239,7 +251,7 @@ class AggregateOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
 };
 
 /**
@@ -273,7 +285,7 @@ class HashJoinOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
 };
 
@@ -294,11 +306,10 @@ class LimitOperator : public Operator {
     bool open() override;
     bool next(Tuple& out_tuple) override;
     void close() override;
-    Schema& output_schema() override;
+    [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
 };
 
-}  // namespace executor
-}  // namespace cloudsql
+}  // namespace cloudsql::executor
 
 #endif  // CLOUDSQL_EXECUTOR_OPERATOR_HPP

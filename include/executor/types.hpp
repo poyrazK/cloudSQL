@@ -13,8 +13,7 @@
 
 #include "common/value.hpp"
 
-namespace cloudsql {
-namespace executor {
+namespace cloudsql::executor {
 
 /**
  * @brief Tuple (row) structure
@@ -27,30 +26,27 @@ class Tuple {
     Tuple() = default;
     explicit Tuple(std::vector<common::Value> values) : values_(std::move(values)) {}
 
-    Tuple(const Tuple& other) : values_(other.values_) {}
-    Tuple(Tuple&& other) noexcept : values_(std::move(other.values_)) {}
-    Tuple& operator=(const Tuple& other) {
-        values_ = other.values_;
-        return *this;
-    }
-    Tuple& operator=(Tuple&& other) noexcept {
-        values_ = std::move(other.values_);
-        return *this;
-    }
+    Tuple(const Tuple& other) = default;
+    Tuple(Tuple&& other) noexcept = default;
+    Tuple& operator=(const Tuple& other) = default;
+    Tuple& operator=(Tuple&& other) noexcept = default;
+    ~Tuple() = default;
 
-    const common::Value& get(size_t index) const { return values_.at(index); }
+    [[nodiscard]] const common::Value& get(size_t index) const { return values_.at(index); }
     void set(size_t index, const common::Value& value) {
-        if (values_.size() <= index) values_.resize(index + 1);
+        if (values_.size() <= index) {
+            values_.resize(index + 1);
+        }
         values_[index] = value;
     }
 
-    size_t size() const { return values_.size(); }
-    bool empty() const { return values_.empty(); }
+    [[nodiscard]] size_t size() const { return values_.size(); }
+    [[nodiscard]] bool empty() const { return values_.empty(); }
 
-    const auto& values() const { return values_; }
-    auto& values() { return values_; }
+    [[nodiscard]] const std::vector<common::Value>& values() const { return values_; }
+    [[nodiscard]] std::vector<common::Value>& values() { return values_; }
 
-    std::string to_string() const;
+    [[nodiscard]] std::string to_string() const;
 };
 
 /**
@@ -59,7 +55,7 @@ class Tuple {
 class ColumnMeta {
    private:
     std::string name_;
-    common::ValueType type_;
+    common::ValueType type_ = common::ValueType::TYPE_NULL;
     bool nullable_ = true;
 
    public:
@@ -67,18 +63,18 @@ class ColumnMeta {
     ColumnMeta(std::string name, common::ValueType type, bool nullable = true)
         : name_(std::move(name)), type_(type), nullable_(nullable) {}
 
-    const std::string& name() const { return name_; }
-    common::ValueType type() const { return type_; }
-    bool nullable() const { return nullable_; }
+    [[nodiscard]] const std::string& name() const { return name_; }
+    [[nodiscard]] common::ValueType type() const { return type_; }
+    [[nodiscard]] bool nullable() const { return nullable_; }
 
     void set_name(std::string name) { name_ = std::move(name); }
     void set_type(common::ValueType type) { type_ = type; }
     void set_nullable(bool nullable) { nullable_ = nullable; }
 
-    bool operator==(const ColumnMeta& other) const {
+    [[nodiscard]] bool operator==(const ColumnMeta& other) const {
         return name_ == other.name_ && type_ == other.type_ && nullable_ == other.nullable_;
     }
-    bool operator!=(const ColumnMeta& other) const { return !(*this == other); }
+    [[nodiscard]] bool operator!=(const ColumnMeta& other) const { return !(*this == other); }
 };
 
 /**
@@ -97,9 +93,9 @@ class Schema {
         columns_.emplace_back(std::move(name), type, nullable);
     }
 
-    size_t column_count() const { return columns_.size(); }
-    const ColumnMeta& get_column(size_t index) const { return columns_.at(index); }
-    size_t find_column(const std::string& name) const {
+    [[nodiscard]] size_t column_count() const { return columns_.size(); }
+    [[nodiscard]] const ColumnMeta& get_column(size_t index) const { return columns_.at(index); }
+    [[nodiscard]] size_t find_column(const std::string& name) const {
         /* 1. Try exact match */
         for (size_t i = 0; i < columns_.size(); i++) {
             if (columns_[i].name() == name) {
@@ -109,7 +105,7 @@ class Schema {
 
         /* 2. Try suffix match (for unqualified names in joined schemas) */
         if (name.find('.') == std::string::npos) {
-            std::string suffix = "." + name;
+            const std::string suffix = "." + name;
             for (size_t i = 0; i < columns_.size(); i++) {
                 const std::string& col_name = columns_[i].name();
                 if (col_name.size() > suffix.size() &&
@@ -122,10 +118,10 @@ class Schema {
         return static_cast<size_t>(-1);
     }
 
-    const auto& columns() const { return columns_; }
-    auto& columns() { return columns_; }
+    [[nodiscard]] const std::vector<ColumnMeta>& columns() const { return columns_; }
+    [[nodiscard]] std::vector<ColumnMeta>& columns() { return columns_; }
 
-    bool operator==(const Schema& other) const { return columns_ == other.columns_; }
+    [[nodiscard]] bool operator==(const Schema& other) const { return columns_ == other.columns_; }
 };
 
 /**
@@ -143,39 +139,41 @@ class QueryResult {
    public:
     QueryResult() = default;
 
-    bool success() const { return !has_error_; }
-    const std::string& error() const { return error_message_; }
+    [[nodiscard]] bool success() const { return !has_error_; }
+    [[nodiscard]] const std::string& error() const { return error_message_; }
     void set_error(const std::string& msg) {
         error_message_ = msg;
         has_error_ = true;
     }
 
     void set_schema(const Schema& schema) { schema_ = schema; }
-    const Schema& schema() const { return schema_; }
+    [[nodiscard]] const Schema& schema() const { return schema_; }
 
     void add_row(const Tuple& row) { rows_.push_back(row); }
+    void add_row(Tuple&& row) { rows_.push_back(std::move(row)); }
     void add_rows(const std::vector<Tuple>& new_rows) {
         rows_.insert(rows_.end(), new_rows.begin(), new_rows.end());
     }
 
-    size_t row_count() const { return rows_.size(); }
-    const auto& rows() const { return rows_; }
-    auto& rows() { return rows_; }
+    [[nodiscard]] size_t row_count() const { return rows_.size(); }
+    [[nodiscard]] const std::vector<Tuple>& rows() const { return rows_; }
+    [[nodiscard]] std::vector<Tuple>& rows() { return rows_; }
 
-    uint64_t execution_time() const { return execution_time_us_; }
+    [[nodiscard]] uint64_t execution_time() const { return execution_time_us_; }
     void set_execution_time(uint64_t us) { execution_time_us_ = us; }
 
-    uint64_t rows_affected() const { return rows_affected_; }
+    [[nodiscard]] uint64_t rows_affected() const { return rows_affected_; }
     void set_rows_affected(uint64_t count) { rows_affected_ = count; }
 };
 
-}  // namespace executor
-}  // namespace cloudsql
+}  // namespace cloudsql::executor
 
 inline std::string cloudsql::executor::Tuple::to_string() const {
     std::string result = "(";
     for (size_t i = 0; i < values_.size(); i++) {
-        if (i > 0) result += ", ";
+        if (i > 0) {
+            result += ", ";
+        }
         result += values_[i].to_string();
     }
     result += ")";

@@ -14,8 +14,7 @@
 #include "storage/storage_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
-namespace cloudsql {
-namespace executor {
+namespace cloudsql::executor {
 
 /**
  * @brief Top-level executor that coordinates planning and operator execution
@@ -27,6 +26,12 @@ class QueryExecutor {
                   transaction::TransactionManager& transaction_manager,
                   recovery::LogManager* log_manager = nullptr);
     ~QueryExecutor() = default;
+
+    // Disable copy/move for executor
+    QueryExecutor(const QueryExecutor&) = delete;
+    QueryExecutor& operator=(const QueryExecutor&) = delete;
+    QueryExecutor(QueryExecutor&&) = delete;
+    QueryExecutor& operator=(QueryExecutor&&) = delete;
 
     /**
      * @brief Execute a SQL statement and return results
@@ -59,7 +64,8 @@ class QueryExecutor {
                                          transaction::Transaction* txn);
 };
 
-}  // namespace executor
-}  // namespace cloudsql
+
+
+}  // namespace cloudsql::executor
 
 #endif  // CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP
