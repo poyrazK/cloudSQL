@@ -20,8 +20,7 @@
 #include "executor/types.hpp"
 #include "storage/storage_manager.hpp"
 
-namespace cloudsql {
-namespace storage {
+namespace cloudsql::storage {
 
 /**
  * @class HeapTable
@@ -41,10 +40,10 @@ class HeapTable {
         TupleId(uint32_t page, uint16_t slot) : page_num(page), slot_num(slot) {}
 
         /** @return true if the ID represents a null/invalid record */
-        bool is_null() const { return page_num == 0 && slot_num == 0; }
+        [[nodiscard]] bool is_null() const { return page_num == 0 && slot_num == 0; }
 
         /** @return Human-readable string representation */
-        std::string to_string() const {
+        [[nodiscard]] std::string to_string() const {
             return "(" + std::to_string(page_num) + ", " + std::to_string(slot_num) + ")";
         }
 
@@ -79,8 +78,8 @@ class HeapTable {
      */
     struct TupleMeta {
         executor::Tuple tuple;
-        uint64_t xmin;
-        uint64_t xmax;
+        uint64_t xmin = 0;
+        uint64_t xmax = 0;
     };
 
     /**
@@ -112,10 +111,10 @@ class HeapTable {
         bool next_meta(TupleMeta& out_meta);
 
         /** @return true if the scan has reached the end of the table */
-        bool is_done() const { return eof_; }
+        [[nodiscard]] bool is_done() const { return eof_; }
 
         /** @return RID of the most recently retrieved record */
-        const TupleId& current_id() const { return last_id_; }
+        [[nodiscard]] const TupleId& current_id() const { return last_id_; }
     };
 
    private:
@@ -144,10 +143,10 @@ class HeapTable {
     HeapTable& operator=(HeapTable&&) noexcept = delete;
 
     /** @return Logical table name */
-    const std::string& table_name() const { return table_name_; }
+    [[nodiscard]] const std::string& table_name() const { return table_name_; }
 
     /** @return Schema definition */
-    const executor::Schema& schema() const { return schema_; }
+    [[nodiscard]] const executor::Schema& schema() const { return schema_; }
 
     /**
      * @brief Inserts a new record into the heap
@@ -193,13 +192,10 @@ class HeapTable {
     bool get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const;
 
     /** @return Total count of non-deleted records in the table */
-    uint64_t tuple_count() const;
+    [[nodiscard]] uint64_t tuple_count() const;
 
     /** @return An iterator starting at the first page */
-    Iterator scan() { return Iterator(*this); }
-
-    /** @return true if the physical file exists */
-    bool exists() const;
+    [[nodiscard]] Iterator scan() { return Iterator(*this); }
 
     /** @brief Initializes the physical heap file */
     bool create();
@@ -212,8 +208,9 @@ class HeapTable {
     bool write_page(uint32_t page_num, const char* buffer);
 };
 
-}  // namespace storage
-}  // namespace cloudsql
+
+
+}  // namespace cloudsql::storage
 
 #endif  // CLOUDSQL_STORAGE_HEAP_TABLE_HPP
 
