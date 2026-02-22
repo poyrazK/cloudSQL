@@ -1,22 +1,34 @@
 /**
  * @file lexer.cpp
  * @brief SQL Lexer implementation
- *
- * @defgroup lexer Lexer Implementation
- * @{
  */
 
 #include "parser/lexer.hpp"
 
 #include <algorithm>
-#include <iostream>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <string>
+#include <utility>
 
-namespace cloudsql {
-namespace parser {
+#include "parser/token.hpp"
 
-/* Static keyword initialization */
+namespace cloudsql::parser {
+
+// Static member initialization
 const std::map<std::string, TokenType> Lexer::keywords_ = Lexer::init_keywords();
 
+Lexer::Lexer(std::string input) : input_(std::move(input)) {
+    if (!input_.empty()) {
+        current_char_ = input_[0];
+    }
+}
+
+/**
+ * @brief Initialize SQL keywords map
+ */
 std::map<std::string, TokenType> Lexer::init_keywords() {
     return {{"SELECT", TokenType::Select},
             {"FROM", TokenType::From},
@@ -24,14 +36,13 @@ std::map<std::string, TokenType> Lexer::init_keywords() {
             {"INSERT", TokenType::Insert},
             {"INTO", TokenType::Into},
             {"VALUES", TokenType::Values},
+            {"DELETE", TokenType::Delete},
             {"UPDATE", TokenType::Update},
             {"SET", TokenType::Set},
-            {"DELETE", TokenType::Delete},
             {"CREATE", TokenType::Create},
             {"TABLE", TokenType::Table},
-            {"DROP", TokenType::Drop},
             {"INDEX", TokenType::Index},
-            {"ON", TokenType::On},
+            {"DROP", TokenType::Drop},
             {"AND", TokenType::And},
             {"OR", TokenType::Or},
             {"NOT", TokenType::Not},
@@ -39,436 +50,264 @@ std::map<std::string, TokenType> Lexer::init_keywords() {
             {"LIKE", TokenType::Like},
             {"IS", TokenType::Is},
             {"NULL", TokenType::Null},
-            {"PRIMARY", TokenType::Primary},
-            {"KEY", TokenType::Key},
-            {"FOREIGN", TokenType::Foreign},
-            {"REFERENCES", TokenType::References},
+            {"TRUE", TokenType::True},
+            {"FALSE", TokenType::False},
             {"JOIN", TokenType::Join},
+            {"ON", TokenType::On},
             {"LEFT", TokenType::Left},
             {"RIGHT", TokenType::Right},
             {"INNER", TokenType::Inner},
             {"OUTER", TokenType::Outer},
-            {"ORDER", TokenType::Order},
+            {"GROUP", TokenType::Group},
             {"BY", TokenType::By},
+            {"ORDER", TokenType::Order},
             {"ASC", TokenType::Asc},
             {"DESC", TokenType::Desc},
-            {"GROUP", TokenType::Group},
-            {"HAVING", TokenType::Having},
             {"LIMIT", TokenType::Limit},
             {"OFFSET", TokenType::Offset},
-            {"AS", TokenType::As},
-            {"DISTINCT", TokenType::Distinct},
-            {"COUNT", TokenType::Count},
-            {"SUM", TokenType::Sum},
-            {"AVG", TokenType::Avg},
-            {"MIN", TokenType::Min},
-            {"MAX", TokenType::Max},
             {"BEGIN", TokenType::Begin},
             {"COMMIT", TokenType::Commit},
             {"ROLLBACK", TokenType::Rollback},
-            {"TRUNCATE", TokenType::Truncate},
-            {"ALTER", TokenType::Alter},
-            {"ADD", TokenType::Add},
-            {"COLUMN", TokenType::Column},
-            {"TYPE", TokenType::Type},
-            {"CONSTRAINT", TokenType::Constraint},
-            {"UNIQUE", TokenType::Unique},
-            {"CHECK", TokenType::Check},
-            {"DEFAULT", TokenType::Default},
-            {"EXISTS", TokenType::Exists},
             {"IF", TokenType::If},
-            {"VARCHAR", TokenType::Varchar}};
+            {"EXISTS", TokenType::Exists},
+            {"UNIQUE", TokenType::Unique},
+            {"INT", TokenType::TypeInt},
+            {"INTEGER", TokenType::TypeInt},
+            {"BIGINT", TokenType::TypeBigInt},
+            {"FLOAT", TokenType::TypeFloat},
+            {"DOUBLE", TokenType::TypeDouble},
+            {"TEXT", TokenType::TypeText},
+            {"VARCHAR", TokenType::TypeVarchar},
+            {"CHAR", TokenType::TypeChar},
+            {"BOOL", TokenType::TypeBool},
+            {"BOOLEAN", TokenType::TypeBool},
+            {"DISTINCT", TokenType::Distinct}};
 }
 
-/**
- * @brief Construct a lexer
- */
-Lexer::Lexer(const std::string& input) : input_(input), position_(0), line_(1), column_(1) {
-    if (!input_.empty()) {
-        current_char_ = input_[0];
-    } else {
-        current_char_ = '\0';
+Token Lexer::next_token() {
+    while (true) {
+        skip_whitespace();
+
+        if (position_ >= input_.length()) {
+            return {TokenType::End, ""};
+        }
+
+        if (current_char_ == '-' && position_ + 1 < input_.length() && input_[position_ + 1] == '-') {
+            skip_comment();
+            continue;
+        }
+        break;
     }
+
+    const char c = current_char_;
+
+    /* Identifiers and Keywords */
+    if (std::isalpha(c) || c == '_') {
+        auto tok = read_identifier();
+        tok.set_position(line_, column_ - static_cast<uint32_t>(tok.lexeme().length()));
+        return tok;
+    }
+
+    /* Numbers */
+    if (std::isdigit(c)) {
+        auto tok = read_number();
+        tok.set_position(line_, column_ - static_cast<uint32_t>(tok.lexeme().length()));
+        return tok;
+    }
+
+    /* Strings */
+    if (c == '\'') {
+        auto tok = read_string();
+        tok.set_position(line_, column_ - static_cast<uint32_t>(tok.lexeme().length()));
+        return tok;
+    }
+
+    /* Operators and Punctuation */
+    auto tok = read_operator();
+    tok.set_position(line_, column_ - static_cast<uint32_t>(tok.lexeme().length()));
+    return tok;
 }
 
-/**
- * @brief Advance to the next character
- */
 void Lexer::advance() {
-    if (position_ < input_.size()) {
+    position_++;
+    if (position_ >= input_.length()) {
+        current_char_ = '\0';
+    } else {
+        current_char_ = input_[position_];
+    }
+    column_++;
+}
+
+void Lexer::skip_whitespace() {
+    while (position_ < input_.length() && std::isspace(current_char_)) {
         if (current_char_ == '\n') {
             line_++;
-            column_ = 1;
-        } else {
-            column_++;
+            column_ = 0;
         }
-        position_++;
-        if (position_ < input_.size()) {
-            current_char_ = input_[position_];
-        } else {
-            current_char_ = '\0';
-        }
-    }
-}
-
-/**
- * @brief Skip whitespace characters and comments
- */
-void Lexer::skip_whitespace() {
-    while (!is_at_end()) {
-        if (current_char_ == ' ' || current_char_ == '\t' || current_char_ == '\n' ||
-            current_char_ == '\r') {
-            advance();
-        } else if (current_char_ == '-') {
-            // Check for single-line comment (--)
-            if (position_ + 1 < input_.size() && input_[position_ + 1] == '-') {
-                skip_comment();
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-}
-
-/**
- * @brief Skip a single-line comment
- */
-void Lexer::skip_comment() {
-    while (!is_at_end() && current_char_ != '\n') {
         advance();
     }
 }
 
-bool Lexer::is_letter() const {
-    return (current_char_ >= 'a' && current_char_ <= 'z') ||
-           (current_char_ >= 'A' && current_char_ <= 'Z') || current_char_ == '_';
+void Lexer::skip_comment() {
+    // Skip '--'
+    advance();
+    advance();
+    while (position_ < input_.length() && current_char_ != '\n') {
+        advance();
+    }
 }
 
-bool Lexer::is_digit() const {
-    return current_char_ >= '0' && current_char_ <= '9';
+Token Lexer::read_identifier() {
+    const size_t start = position_;
+    while (position_ < input_.length() && (std::isalnum(current_char_) || current_char_ == '_')) {
+        advance();
+    }
+
+    const std::string text = input_.substr(start, position_ - start);
+    std::string upper_text = text;
+    std::transform(upper_text.begin(), upper_text.end(), upper_text.begin(),
+                   [](unsigned char val) { return static_cast<char>(std::toupper(val)); });
+
+    auto it = keywords_.find(upper_text);
+    if (it != keywords_.end()) {
+        if (it->second == TokenType::True) {
+            return {it->second, true};
+        }
+        if (it->second == TokenType::False) {
+            return {it->second, false};
+        }
+        return {it->second, text};
+    }
+
+    return {TokenType::Identifier, text};
 }
 
-bool Lexer::is_identifier_char() const {
-    return is_letter() || is_digit();
+Token Lexer::read_number() {
+    const size_t start = position_;
+    bool is_float = false;
+
+    while (position_ < input_.length() && (std::isdigit(current_char_) || current_char_ == '.')) {
+        if (current_char_ == '.') {
+            if (is_float) {
+                break;
+            }
+            is_float = true;
+        }
+        advance();
+    }
+
+    const std::string text = input_.substr(start, position_ - start);
+    if (is_float) {
+        try {
+            const double v = std::stod(text);
+            return {TokenType::Number, v};
+        } catch (...) {
+            static_cast<void>(0);
+            return {TokenType::Error, text};
+        }
+    } else {
+        try {
+            const int64_t v = std::stoll(text);
+            return {TokenType::Number, v};
+        } catch (...) {
+            /* If it overflows int64, try as double */
+            try {
+                const double v = std::stod(text);
+                return {TokenType::Number, v};
+            } catch (...) {
+                static_cast<void>(0);
+                return {TokenType::Error, text};
+            }
+        }
+    }
+}
+
+Token Lexer::read_string() {
+    advance(); /* Skip opening quote */
+    const size_t start = position_;
+
+    while (position_ < input_.length() && current_char_ != '\'') {
+        advance();
+    }
+
+    if (position_ >= input_.length()) {
+        return {TokenType::Error, input_.substr(start)};
+    }
+
+    const std::string text = input_.substr(start, position_ - start);
+    advance(); /* Skip closing quote */
+    return {TokenType::String, text, true};
+}
+
+Token Lexer::read_operator() {
+    const char c = current_char_;
+    advance();
+    switch (c) {
+        case '(':
+            return {TokenType::LParen, "("};
+        case ')':
+            return {TokenType::RParen, ")"};
+        case ',':
+            return {TokenType::Comma, ","};
+        case '.':
+            return {TokenType::Dot, "."};
+        case ';':
+            return {TokenType::Semicolon, ";"};
+        case '*':
+            return {TokenType::Star, "*"};
+        case '+':
+            return {TokenType::Plus, "+"};
+        case '-':
+            return {TokenType::Minus, "-"};
+        case '/':
+            return {TokenType::Slash, "/"};
+        case '=':
+            return {TokenType::Eq, "="};
+        case '<':
+            if (current_char_ == '>') {
+                advance();
+                return {TokenType::Ne, "<>"};
+            }
+            if (current_char_ == '=') {
+                advance();
+                return {TokenType::Le, "<="};
+            }
+            return {TokenType::Lt, "<"};
+        case '>':
+            if (current_char_ == '=') {
+                advance();
+                return {TokenType::Ge, ">="};
+            }
+            return {TokenType::Gt, ">"};
+        case '!':
+            if (current_char_ == '=') {
+                advance();
+                return {TokenType::Ne, "!="};
+            }
+            return {TokenType::Error, "!"};
+        default:
+            return {TokenType::Error, std::string(1, c)};
+    }
+}
+
+Token Lexer::peek_token() {
+    const size_t old_pos = position_;
+    const uint32_t old_line = line_;
+    const uint32_t old_col = column_;
+    const char old_char = current_char_;
+
+    Token tok = next_token();
+
+    position_ = old_pos;
+    line_ = old_line;
+    column_ = old_col;
+    current_char_ = old_char;
+
+    return tok;
 }
 
 bool Lexer::is_at_end() const {
-    return position_ >= input_.size();
+    return position_ >= input_.length();
 }
 
-Token Lexer::make_token(TokenType type) {
-    return Token(type, "", line_, column_);
-}
-
-Token Lexer::make_error(const std::string& message) {
-    Token error(TokenType::Error, message);
-    error.set_position(line_, column_);
-    return error;
-}
-
-/**
- * @brief Read a number literal
- */
-Token Lexer::read_number() {
-    uint32_t start_line = line_;
-    uint32_t start_col = column_;
-
-    std::string number_str;
-    while (is_digit()) {
-        number_str += current_char_;
-        advance();
-    }
-
-    // Check for decimal point
-    if (current_char_ == '.' && position_ + 1 < input_.size() &&
-        (input_[position_ + 1] >= '0' && input_[position_ + 1] <= '9')) {
-        // std::cerr << "DEBUG Lexer: Entering decimal block for " << number_str << std::endl;
-        number_str += current_char_;
-        advance();
-        while (is_digit()) {
-            number_str += current_char_;
-            advance();
-        }
-
-        // Check for exponent
-        if (current_char_ == 'e' || current_char_ == 'E') {
-            number_str += current_char_;
-            advance();
-            if (current_char_ == '+' || current_char_ == '-') {
-                number_str += current_char_;
-                advance();
-            }
-            while (is_digit()) {
-                number_str += current_char_;
-                advance();
-            }
-        }
-
-        try {
-            double value = std::stod(number_str);
-            Token tok(TokenType::Number, value);
-            tok.set_position(start_line, start_col);
-            return tok;
-        } catch (...) {
-            // Fallback
-        }
-    }
-
-    try {
-        int64_t value = std::stoll(number_str);
-        Token tok(TokenType::Number, value);
-        tok.set_position(start_line, start_col);
-        return tok;
-    } catch (...) {
-        return make_error("Invalid number literal: " + number_str);
-    }
-}
-
-/**
- * @brief Read a string literal
- */
-Token Lexer::read_string() {
-    uint32_t start_line = line_;
-    uint32_t start_col = column_;
-
-    char quote_char = current_char_;
-    advance();  // Skip opening quote
-
-    std::string value;
-    while (!is_at_end() && current_char_ != quote_char) {
-        if (current_char_ == '\\' && position_ + 1 < input_.size()) {
-            advance();
-            switch (current_char_) {
-                case 'n':
-                    value += '\n';
-                    break;
-                case 't':
-                    value += '\t';
-                    break;
-                case 'r':
-                    value += '\r';
-                    break;
-                case '\'':
-                    value += '\'';
-                    break;
-                case '"':
-                    value += '"';
-                    break;
-                case '\\':
-                    value += '\\';
-                    break;
-                default:
-                    value += current_char_;
-                    break;
-            }
-        } else {
-            value += current_char_;
-        }
-        advance();
-    }
-
-    // Skip closing quote
-    if (!is_at_end() && current_char_ == quote_char) {
-        advance();
-    }
-
-    Token tok(TokenType::String, value, true);
-    tok.set_position(start_line, start_col);
-    return tok;
-}
-
-/**
- * @brief Read an identifier or keyword
- */
-Token Lexer::read_identifier() {
-    uint32_t start_line = line_;
-    uint32_t start_col = column_;
-
-    std::string identifier;
-    while (is_identifier_char()) {
-        identifier += current_char_;
-        advance();
-    }
-
-    // Check if it's a keyword (case-insensitive lookup usually but our map is uppercase)
-    std::string lookup = identifier;
-    std::transform(lookup.begin(), lookup.end(), lookup.begin(), ::toupper);
-
-    auto it = keywords_.find(lookup);
-    if (it != keywords_.end()) {
-        Token tok(it->second, identifier);
-        tok.set_position(start_line, start_col);
-        return tok;
-    }
-
-    // It's an identifier
-    Token tok(TokenType::Identifier, identifier);
-    tok.set_position(start_line, start_col);
-    return tok;
-}
-
-/**
- * @brief Read an operator
- */
-Token Lexer::read_operator() {
-    uint32_t start_line = line_;
-    uint32_t start_col = column_;
-
-    char c = current_char_;
-    advance();
-
-    // Two-character operators
-    if (position_ < input_.size()) {
-        char next = current_char_;
-
-        if (c == '=' && next == '=') {
-            advance();
-            Token tok(TokenType::Eq, "==");
-            tok.set_position(start_line, start_col);
-            return tok;
-        }
-        if (c == '<' && next == '>') {
-            advance();
-            Token tok(TokenType::Ne, "<>");
-            tok.set_position(start_line, start_col);
-            return tok;
-        }
-        if (c == '<' && next == '=') {
-            advance();
-            Token tok(TokenType::Le, "<=");
-            tok.set_position(start_line, start_col);
-            return tok;
-        }
-        if (c == '>' && next == '=') {
-            advance();
-            Token tok(TokenType::Ge, ">=");
-            tok.set_position(start_line, start_col);
-            return tok;
-        }
-        if (c == '|' && next == '|') {
-            advance();
-            Token tok(TokenType::Concat, "||");
-            tok.set_position(start_line, start_col);
-            return tok;
-        }
-    }
-
-    // Single-character operators
-    std::string op(1, c);
-    TokenType type;
-
-    switch (c) {
-        case '=':
-            type = TokenType::Eq;
-            break;
-        case '<':
-            type = TokenType::Lt;
-            break;
-        case '>':
-            type = TokenType::Gt;
-            break;
-        case '+':
-            type = TokenType::Plus;
-            break;
-        case '-':
-            type = TokenType::Minus;
-            break;
-        case '*':
-            type = TokenType::Star;
-            break;
-        case '/':
-            type = TokenType::Slash;
-            break;
-        case '%':
-            type = TokenType::Percent;
-            break;
-        case '(':
-            type = TokenType::LParen;
-            break;
-        case ')':
-            type = TokenType::RParen;
-            break;
-        case ',':
-            type = TokenType::Comma;
-            break;
-        case ';':
-            type = TokenType::Semicolon;
-            break;
-        case '.':
-            type = TokenType::Dot;
-            break;
-        case ':':
-            type = TokenType::Colon;
-            break;
-        default:
-            return make_error("Unknown operator: " + op);
-    }
-
-    Token tok(type, op);
-    tok.set_position(start_line, start_col);
-    return tok;
-}
-
-/**
- * @brief Get the next token
- */
-Token Lexer::next_token() {
-    skip_whitespace();
-
-    if (is_at_end()) {
-        return Token(TokenType::End, "", line_, column_);
-    }
-
-    char c = current_char_;
-
-    // Number
-    if (is_digit()) {
-        return read_number();
-    }
-
-    // String
-    if (c == '\'' || c == '"') {
-        return read_string();
-    }
-
-    // Identifier or keyword
-    if (is_letter()) {
-        return read_identifier();
-    }
-
-    // Operator
-    return read_operator();
-}
-
-/**
- * @brief Peek at the next token without consuming it
- */
-Token Lexer::peek_token() {
-    if (is_at_end()) {
-        return Token(TokenType::End, "", line_, column_);
-    }
-
-    // Save state
-    size_t saved_pos = position_;
-    uint32_t saved_line = line_;
-    uint32_t saved_col = column_;
-    char saved_char = current_char_;
-
-    // Get next token
-    Token tok = next_token();
-
-    // Restore state
-    position_ = saved_pos;
-    line_ = saved_line;
-    column_ = saved_col;
-    current_char_ = saved_char;
-
-    return tok;
-}
-
-}  // namespace parser
-}  // namespace cloudsql
-
-/** @} */ /* lexer */
+}  // namespace cloudsql::parser
