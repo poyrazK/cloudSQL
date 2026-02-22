@@ -9,13 +9,26 @@
 #include "executor/operator.hpp"
 
 #include <algorithm>
-#include <iostream>
-#include <limits>
+#include <cstddef>
+#include <cstdint>
 #include <map>
-#include <set>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
-namespace cloudsql {
-namespace executor {
+#include "common/value.hpp"
+#include "executor/types.hpp"
+#include "parser/expression.hpp"
+#include "storage/btree_index.hpp"
+#include "storage/heap_table.hpp"
+#include "transaction/lock_manager.hpp"
+#include "transaction/transaction.hpp"
+
+namespace cloudsql::executor {
 
 /* --- SeqScanOperator --- */
 
@@ -32,19 +45,19 @@ SeqScanOperator::SeqScanOperator(std::unique_ptr<storage::HeapTable> table, Tran
 }
 
 bool SeqScanOperator::init() {
-    state_ = ExecState::Init;
+    set_state(ExecState::Init);
     return true;
 }
 
 bool SeqScanOperator::open() {
-    state_ = ExecState::Open;
+    set_state(ExecState::Open);
     iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan());
     return true;
 }
 
 bool SeqScanOperator::next(Tuple& out_tuple) {
     if (!iterator_ || iterator_->is_done()) {
-        state_ = ExecState::Done;
+        set_state(ExecState::Done);
         return false;
     }
 
@@ -52,16 +65,17 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
     while (iterator_->next_meta(meta)) {
         /* MVCC Visibility Check */
         bool visible = true;
-        if (txn_) {
-            const auto& snapshot = txn_->get_snapshot();
-            uint64_t my_id = txn_->get_id();
+        const Transaction* const txn = get_txn();
+        if (txn != nullptr) {
+            const auto& snapshot = txn->get_snapshot();
+            const uint64_t my_id = txn->get_id();
 
             // 1. Check xmin (creation)
-            bool xmin_visible =
+            const bool xmin_visible =
                 (meta.xmin == my_id) || (meta.xmin == 0) || snapshot.is_visible(meta.xmin);
 
             // 2. Check xmax (deletion)
-            bool xmax_visible =
+            const bool xmax_visible =
                 (meta.xmax == 0) || (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
 
             visible = xmin_visible && xmax_visible;
@@ -76,13 +90,13 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
         }
     }
 
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
     return false;
 }
 
 void SeqScanOperator::close() {
     iterator_.reset();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& SeqScanOperator::output_schema() {
@@ -109,12 +123,12 @@ IndexScanOperator::IndexScanOperator(std::unique_ptr<storage::HeapTable> table,
 }
 
 bool IndexScanOperator::init() {
-    state_ = ExecState::Init;
+    set_state(ExecState::Init);
     return true;
 }
 
 bool IndexScanOperator::open() {
-    state_ = ExecState::Open;
+    set_state(ExecState::Open);
     matching_ids_ = index_->search(search_key_);
     current_match_index_ = 0;
     return true;
@@ -128,16 +142,17 @@ bool IndexScanOperator::next(Tuple& out_tuple) {
         if (table_->get_meta(tid, meta)) {
             /* MVCC Visibility Check */
             bool visible = true;
-            if (txn_) {
-                const auto& snapshot = txn_->get_snapshot();
-                uint64_t my_id = txn_->get_id();
+            const Transaction* const txn = get_txn();
+            if (txn != nullptr) {
+                const auto& snapshot = txn->get_snapshot();
+                const uint64_t my_id = txn->get_id();
 
                 // 1. Check xmin (creation)
-                bool xmin_visible =
+                const bool xmin_visible =
                     (meta.xmin == my_id) || (meta.xmin == 0) || snapshot.is_visible(meta.xmin);
 
                 // 2. Check xmax (deletion)
-                bool xmax_visible =
+                const bool xmax_visible =
                     (meta.xmax == 0) || (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
 
                 visible = xmin_visible && xmax_visible;
@@ -152,13 +167,13 @@ bool IndexScanOperator::next(Tuple& out_tuple) {
         }
     }
 
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
     return false;
 }
 
 void IndexScanOperator::close() {
     matching_ids_.clear();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& IndexScanOperator::output_schema() {
@@ -172,7 +187,9 @@ FilterOperator::FilterOperator(std::unique_ptr<Operator> child,
     : Operator(OperatorType::Filter, child->get_txn(), child->get_lock_manager()),
       child_(std::move(child)),
       condition_(std::move(condition)) {
-    if (child_) schema_ = child_->output_schema();
+    if (child_) {
+        schema_ = child_->output_schema();
+    }
 }
 
 bool FilterOperator::init() {
@@ -180,8 +197,10 @@ bool FilterOperator::init() {
 }
 
 bool FilterOperator::open() {
-    if (!child_->open()) return false;
-    state_ = ExecState::Open;
+    if (!child_->open()) {
+        return false;
+    }
+    set_state(ExecState::Open);
     return true;
 }
 
@@ -189,19 +208,19 @@ bool FilterOperator::next(Tuple& out_tuple) {
     Tuple tuple;
     while (child_->next(tuple)) {
         /* Evaluate condition against the current tuple context */
-        common::Value result = condition_->evaluate(&tuple, &schema_);
+        const common::Value result = condition_->evaluate(&tuple, &schema_);
         if (result.as_bool()) {
             out_tuple = std::move(tuple);
             return true;
         }
     }
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
     return false;
 }
 
 void FilterOperator::close() {
     child_->close();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& FilterOperator::output_schema() {
@@ -221,8 +240,8 @@ ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child,
       columns_(std::move(columns)) {
     if (child_) {
         /* Result schema: use the name of the expression (e.g. column name) */
-        for (size_t i = 0; i < columns_.size(); ++i) {
-            schema_.add_column(columns_[i]->to_string(), common::TYPE_TEXT);
+        for (const auto& col : columns_) {
+            schema_.add_column(col->to_string(), common::ValueType::TYPE_TEXT);
         }
     }
 }
@@ -232,24 +251,27 @@ bool ProjectOperator::init() {
 }
 
 bool ProjectOperator::open() {
-    if (!child_->open()) return false;
-    state_ = ExecState::Open;
+    if (!child_->open()) {
+        return false;
+    }
+    set_state(ExecState::Open);
     return true;
 }
 
 bool ProjectOperator::next(Tuple& out_tuple) {
     Tuple input;
     if (!child_->next(input)) {
-        state_ = ExecState::Done;
+        set_state(ExecState::Done);
         return false;
     }
 
     std::vector<common::Value> output_values;
+    output_values.reserve(columns_.size());
     auto input_schema = child_->output_schema();
     for (const auto& col : columns_) {
         /* Evaluate projection expression with input tuple context */
         common::Value v = col->evaluate(&input, &input_schema);
-        output_values.push_back(v);
+        output_values.push_back(std::move(v));
     }
     out_tuple = Tuple(std::move(output_values));
     return true;
@@ -257,7 +279,7 @@ bool ProjectOperator::next(Tuple& out_tuple) {
 
 void ProjectOperator::close() {
     child_->close();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& ProjectOperator::output_schema() {
@@ -277,7 +299,9 @@ SortOperator::SortOperator(std::unique_ptr<Operator> child,
       child_(std::move(child)),
       sort_keys_(std::move(sort_keys)),
       ascending_(std::move(ascending)) {
-    if (child_) schema_ = child_->output_schema();
+    if (child_) {
+        schema_ = child_->output_schema();
+    }
 }
 
 bool SortOperator::init() {
@@ -285,7 +309,9 @@ bool SortOperator::init() {
 }
 
 bool SortOperator::open() {
-    if (!child_->open()) return false;
+    if (!child_->open()) {
+        return false;
+    }
 
     sorted_tuples_.clear();
     Tuple tuple;
@@ -297,23 +323,27 @@ bool SortOperator::open() {
     std::stable_sort(sorted_tuples_.begin(), sorted_tuples_.end(),
                      [this](const Tuple& a, const Tuple& b) {
                          for (size_t i = 0; i < sort_keys_.size(); ++i) {
-                             common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_);
-                             common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_);
-                             bool asc = static_cast<bool>(ascending_[i]);
-                             if (val_a < val_b) return asc;
-                             if (val_b < val_a) return !asc;
+                             const common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_);
+                             const common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_);
+                             const bool asc = ascending_[i];
+                             if (val_a < val_b) {
+                                 return asc;
+                             }
+                             if (val_b < val_a) {
+                                 return !asc;
+                             }
                          }
                          return false;
                      });
 
     current_index_ = 0;
-    state_ = ExecState::Open;
+    set_state(ExecState::Open);
     return true;
 }
 
 bool SortOperator::next(Tuple& out_tuple) {
     if (current_index_ >= sorted_tuples_.size()) {
-        state_ = ExecState::Done;
+        set_state(ExecState::Done);
         return false;
     }
     out_tuple = std::move(sorted_tuples_[current_index_++]);
@@ -323,7 +353,7 @@ bool SortOperator::next(Tuple& out_tuple) {
 void SortOperator::close() {
     sorted_tuples_.clear();
     child_->close();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& SortOperator::output_schema() {
@@ -342,11 +372,15 @@ AggregateOperator::AggregateOperator(std::unique_ptr<Operator> child,
     if (child_) {
         /* Use actual expression string for column name to allow lookup */
         for (const auto& gb : group_by_) {
-            if (gb) schema_.add_column(gb->to_string(), common::TYPE_TEXT);
+            if (gb) {
+                schema_.add_column(gb->to_string(), common::ValueType::TYPE_TEXT);
+            }
         }
         for (const auto& agg : aggregates_) {
-            common::ValueType t = common::TYPE_FLOAT64;
-            if (agg.type == AggregateType::Count) t = common::TYPE_INT64;
+            common::ValueType t = common::ValueType::TYPE_FLOAT64;
+            if (agg.type == AggregateType::Count) {
+                t = common::ValueType::TYPE_INT64;
+            }
             schema_.add_column(agg.name, t);
         }
     }
@@ -357,7 +391,9 @@ bool AggregateOperator::init() {
 }
 
 bool AggregateOperator::open() {
-    if (!child_->open()) return false;
+    if (!child_->open()) {
+        return false;
+    }
 
     struct GroupState {
         std::vector<common::Value> group_values;
@@ -365,20 +401,19 @@ bool AggregateOperator::open() {
         std::vector<double> sums;
         std::vector<common::Value> mins;
         std::vector<common::Value> maxes;
-        std::vector<std::set<std::string>> distinct_seen;
+        std::unordered_map<size_t, std::unordered_set<std::string>> distinct_seen;
 
         GroupState() = default;
-        GroupState(size_t agg_size) {
+        explicit GroupState(size_t agg_size) {
             counts.assign(agg_size, 0);
             sums.assign(agg_size, 0.0);
             mins.assign(agg_size, common::Value::make_null());
             maxes.assign(agg_size, common::Value::make_null());
-            distinct_seen.resize(agg_size);
         }
     };
 
     std::map<std::string, GroupState> groups_map;
-    bool is_global = group_by_.empty();
+    const bool is_global = group_by_.empty();
 
     /* Pre-initialize if global aggregation */
     if (is_global) {
@@ -412,15 +447,19 @@ bool AggregateOperator::open() {
             if (aggregates_[i].expr) {
                 val = aggregates_[i].expr->evaluate(&tuple, &child_schema);
             } else {
-                val = common::Value::make_int64(1);
+                val = common::Value::make_int64(static_cast<int64_t>(1));
             }
 
-            if (val.is_null()) continue;
+            if (val.is_null()) {
+                continue;
+            }
 
             /* Handle DISTINCT */
             if (aggregates_[i].is_distinct) {
-                std::string val_str = val.to_string();
-                if (state.distinct_seen[i].count(val_str)) continue;
+                const std::string val_str = val.to_string();
+                if (state.distinct_seen[i].count(val_str) > 0) {
+                    continue;
+                }
                 state.distinct_seen[i].insert(val_str);
             }
 
@@ -430,16 +469,22 @@ bool AggregateOperator::open() {
             }
 
             state.counts[i]++;
-            if (val.is_numeric()) state.sums[i] += val.to_float64();
+            if (val.is_numeric()) {
+                state.sums[i] += val.to_float64();
+            }
 
-            if (state.mins[i].is_null() || val < state.mins[i]) state.mins[i] = val;
-            if (state.maxes[i].is_null() || state.maxes[i] < val) state.maxes[i] = val;
+            if (state.mins[i].is_null() || val < state.mins[i]) {
+                state.mins[i] = val;
+            }
+            if (state.maxes[i].is_null() || state.maxes[i] < val) {
+                state.maxes[i] = val;
+            }
         }
     }
 
     groups_.clear();
-    for (auto it = groups_map.begin(); it != groups_map.end(); ++it) {
-        auto& state = it->second;
+    for (auto& pair : groups_map) {
+        auto& state = pair.second;
         std::vector<common::Value> row = std::move(state.group_values);
         for (size_t i = 0; i < aggregates_.size(); ++i) {
             switch (aggregates_[i].type) {
@@ -456,10 +501,11 @@ bool AggregateOperator::open() {
                     row.push_back(std::move(state.maxes[i]));
                     break;
                 case AggregateType::Avg:
-                    if (state.counts[i] > 0)
-                        row.push_back(common::Value::make_float64(state.sums[i] / state.counts[i]));
-                    else
+                    if (state.counts[i] > 0) {
+                        row.push_back(common::Value::make_float64(state.sums[i] / static_cast<double>(state.counts[i])));
+                    } else {
                         row.push_back(common::Value::make_null());
+                    }
                     break;
             }
         }
@@ -467,13 +513,13 @@ bool AggregateOperator::open() {
     }
 
     current_group_ = 0;
-    state_ = ExecState::Open;
+    set_state(ExecState::Open);
     return true;
 }
 
 bool AggregateOperator::next(Tuple& out_tuple) {
     if (current_group_ >= groups_.size()) {
-        state_ = ExecState::Done;
+        set_state(ExecState::Done);
         return false;
     }
     out_tuple = std::move(groups_[current_group_++]);
@@ -483,7 +529,7 @@ bool AggregateOperator::next(Tuple& out_tuple) {
 void AggregateOperator::close() {
     groups_.clear();
     child_->close();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& AggregateOperator::output_schema() {
@@ -502,8 +548,12 @@ HashJoinOperator::HashJoinOperator(std::unique_ptr<Operator> left, std::unique_p
       right_key_(std::move(right_key)) {
     /* Build resulting schema */
     if (left_ && right_) {
-        for (const auto& col : left_->output_schema().columns()) schema_.add_column(col);
-        for (const auto& col : right_->output_schema().columns()) schema_.add_column(col);
+        for (const auto& col : left_->output_schema().columns()) {
+            schema_.add_column(col);
+        }
+        for (const auto& col : right_->output_schema().columns()) {
+            schema_.add_column(col);
+        }
     }
 }
 
@@ -512,20 +562,22 @@ bool HashJoinOperator::init() {
 }
 
 bool HashJoinOperator::open() {
-    if (!left_->open() || !right_->open()) return false;
+    if (!left_->open() || !right_->open()) {
+        return false;
+    }
 
     /* Build phase: scan right side into hash table */
     hash_table_.clear();
     Tuple right_tuple;
     auto right_schema = right_->output_schema();
     while (right_->next(right_tuple)) {
-        common::Value key = right_key_->evaluate(&right_tuple, &right_schema);
+        const common::Value key = right_key_->evaluate(&right_tuple, &right_schema);
         hash_table_.emplace(key.to_string(), std::move(right_tuple));
     }
 
     left_tuple_ = std::nullopt;
     match_iter_ = std::nullopt;
-    state_ = ExecState::Open;
+    set_state(ExecState::Open);
     return true;
 }
 
@@ -533,44 +585,48 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
     auto left_schema = left_->output_schema();
 
     while (true) {
-        if (match_iter_) {
+        if (match_iter_.has_value()) {
             /* We are currently iterating through matches for a left tuple */
-            if (match_iter_->current != match_iter_->end) {
-                const auto& right_tuple = match_iter_->current->second;
+            auto& iter_state = match_iter_.value();
+            if (iter_state.current != iter_state.end) {
+                const auto& right_tuple = iter_state.current->second;
 
                 /* Concatenate left and right tuples */
-                std::vector<common::Value> joined_values = left_tuple_->values();
-                joined_values.insert(joined_values.end(), right_tuple.values().begin(),
-                                     right_tuple.values().end());
+                if (left_tuple_.has_value()) {
+                    std::vector<common::Value> joined_values = left_tuple_->value().values();
+                    joined_values.insert(joined_values.end(), right_tuple.values().begin(),
+                                         right_tuple.values().end());
 
-                out_tuple = Tuple(std::move(joined_values));
-                match_iter_->current++;
-                return true;
-            } else {
-                /* No more matches for this left tuple */
-                match_iter_ = std::nullopt;
-                left_tuple_ = std::nullopt;
+                    out_tuple = Tuple(std::move(joined_values));
+                    iter_state.current++;
+                    return true;
+                }
             }
+            /* No more matches for this left tuple */
+            match_iter_ = std::nullopt;
+            left_tuple_ = std::nullopt;
         }
 
         /* Pull next tuple from left side */
         Tuple next_left;
         if (!left_->next(next_left)) {
-            state_ = ExecState::Done;
+            set_state(ExecState::Done);
             return false;
         }
 
         left_tuple_ = std::move(next_left);
-        common::Value key = left_key_->evaluate(&*left_tuple_, &left_schema);
+        if (left_tuple_.has_value()) {
+            const common::Value key = left_key_->evaluate(&(left_tuple_.value()), &left_schema);
 
-        /* Look up in hash table */
-        auto range = hash_table_.equal_range(key.to_string());
-        if (range.first != range.second) {
-            match_iter_ = {range.first, range.second};
-            /* Continue loop to return the first match */
-        } else {
-            /* No match for this left tuple, pull next */
-            left_tuple_ = std::nullopt;
+            /* Look up in hash table */
+            auto range = hash_table_.equal_range(key.to_string());
+            if (range.first != range.second) {
+                match_iter_ = {range.first, range.second};
+                /* Continue loop to return the first match */
+            } else {
+                /* No match for this left tuple, pull next */
+                left_tuple_ = std::nullopt;
+            }
         }
     }
 }
@@ -581,7 +637,7 @@ void HashJoinOperator::close() {
     hash_table_.clear();
     match_iter_ = std::nullopt;
     left_tuple_ = std::nullopt;
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& HashJoinOperator::output_schema() {
@@ -609,7 +665,9 @@ bool LimitOperator::init() {
 }
 
 bool LimitOperator::open() {
-    if (!child_->open()) return false;
+    if (!child_->open()) {
+        return false;
+    }
 
     /* Skip offset rows */
     Tuple tuple;
@@ -617,18 +675,18 @@ bool LimitOperator::open() {
         current_count_++;
     }
     current_count_ = 0;
-    state_ = ExecState::Open;
+    set_state(ExecState::Open);
     return true;
 }
 
 bool LimitOperator::next(Tuple& out_tuple) {
     if (current_count_ >= limit_) {
-        state_ = ExecState::Done;
+        set_state(ExecState::Done);
         return false;
     }
 
     if (!child_->next(out_tuple)) {
-        state_ = ExecState::Done;
+        set_state(ExecState::Done);
         return false;
     }
 
@@ -638,7 +696,7 @@ bool LimitOperator::next(Tuple& out_tuple) {
 
 void LimitOperator::close() {
     child_->close();
-    state_ = ExecState::Done;
+    set_state(ExecState::Done);
 }
 
 Schema& LimitOperator::output_schema() {
@@ -649,7 +707,6 @@ void LimitOperator::add_child(std::unique_ptr<Operator> child) {
     child_ = std::move(child);
 }
 
-}  // namespace executor
-}  // namespace cloudsql
+}  // namespace cloudsql::executor
 
 /** @} */ /* executor */
