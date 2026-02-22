@@ -10,13 +10,12 @@
 #include <string>
 #include <variant>
 
-namespace cloudsql {
-namespace parser {
+namespace cloudsql::parser {
 
 /**
  * @brief Token types for SQL
  */
-enum class TokenType {
+enum class TokenType : uint8_t {
     End = 0,
 
     /* Keywords */
@@ -41,6 +40,8 @@ enum class TokenType {
     Like,
     Is,
     Null,
+    True,
+    False,
     Primary,
     Key,
     Foreign,
@@ -68,18 +69,21 @@ enum class TokenType {
     Begin,
     Commit,
     Rollback,
-    Truncate,
-    Alter,
-    Add,
-    Column,
-    Type,
-    Constraint,
+    If,
+    Exists,
     Unique,
     Check,
     Default,
-    Exists,
-    If,
-    Varchar,
+    
+    /* Data Types */
+    TypeInt,
+    TypeBigInt,
+    TypeFloat,
+    TypeDouble,
+    TypeText,
+    TypeVarchar,
+    TypeChar,
+    TypeBool,
 
     /* Identifiers and literals */
     Identifier,
@@ -129,11 +133,13 @@ class Token {
    public:
     Token();
     explicit Token(TokenType type);
-    Token(TokenType type, const std::string& lexeme);
-    Token(TokenType type, const std::string& lexeme, uint32_t line, uint32_t column);
+    Token(TokenType type, std::string lexeme);
+    Token(TokenType type, const char* lexeme);
+    Token(TokenType type, std::string lexeme, uint32_t line, uint32_t column);
+    Token(TokenType type, bool value);
     Token(TokenType type, int64_t value);
     Token(TokenType type, double value);
-    Token(TokenType type, const std::string& value, bool is_string);
+    Token(TokenType type, std::string value, bool is_string);
 
     ~Token() = default;
     Token(const Token& other) = default;
@@ -142,10 +148,10 @@ class Token {
     Token& operator=(Token&& other) noexcept = default;
 
     /* Accessors */
-    TokenType type() const { return type_; }
-    const std::string& lexeme() const { return lexeme_; }
-    uint32_t line() const { return line_; }
-    uint32_t column() const { return column_; }
+    [[nodiscard]] TokenType type() const { return type_; }
+    [[nodiscard]] const std::string& lexeme() const { return lexeme_; }
+    [[nodiscard]] uint32_t line() const { return line_; }
+    [[nodiscard]] uint32_t column() const { return column_; }
 
     void set_type(TokenType type) { type_ = type; }
     void set_position(uint32_t line, uint32_t column) {
@@ -154,37 +160,61 @@ class Token {
     }
 
     /* Value accessors */
-    bool as_bool() const { return std::get<bool>(value_); }
-    int64_t as_int64() const { return std::get<int64_t>(value_); }
-    double as_double() const { return std::get<double>(value_); }
-    const std::string& as_string() const {
+    [[nodiscard]] bool as_bool() const {
+        if (std::holds_alternative<bool>(value_)) {
+            return std::get<bool>(value_);
+        }
+        return false;
+    }
+    [[nodiscard]] int64_t as_int64() const {
+        if (std::holds_alternative<int64_t>(value_)) {
+            return std::get<int64_t>(value_);
+        }
+        return 0;
+    }
+    [[nodiscard]] double as_double() const {
+        if (std::holds_alternative<double>(value_)) {
+            return std::get<double>(value_);
+        }
+        if (std::holds_alternative<int64_t>(value_)) {
+            return static_cast<double>(std::get<int64_t>(value_));
+        }
+        return 0.0;
+    }
+    [[nodiscard]] const std::string& as_string() const {
         if (std::holds_alternative<std::string>(value_)) {
             return std::get<std::string>(value_);
         }
-        static std::string empty;
+        static const std::string empty;
         return empty;
     }
 
     /* Type queries */
-    bool is_keyword() const;
-    bool is_literal() const;
-    bool is_operator() const;
-    bool is_identifier() const;
+    [[nodiscard]] bool is_keyword() const;
+    [[nodiscard]] bool is_literal() const;
+    [[nodiscard]] bool is_operator() const;
+    [[nodiscard]] bool is_identifier() const;
 
-    std::string to_string() const;
+    [[nodiscard]] std::string to_string() const;
 };
 
 inline Token::Token()
-    : type_(TokenType::End), lexeme_(""), line_(0), column_(0), value_(std::monostate{}) {}
+    : type_(TokenType::End), line_(0), column_(0), value_(std::monostate{}) {}
 
 inline Token::Token(TokenType type)
-    : type_(type), lexeme_(""), line_(0), column_(0), value_(std::monostate{}) {}
+    : type_(type), line_(0), column_(0), value_(std::monostate{}) {}
 
-inline Token::Token(TokenType type, const std::string& lexeme)
+inline Token::Token(TokenType type, std::string lexeme)
+    : type_(type), lexeme_(std::move(lexeme)), line_(0), column_(0), value_(std::monostate{}) {}
+
+inline Token::Token(TokenType type, const char* lexeme)
     : type_(type), lexeme_(lexeme), line_(0), column_(0), value_(std::monostate{}) {}
 
-inline Token::Token(TokenType type, const std::string& lexeme, uint32_t line, uint32_t column)
-    : type_(type), lexeme_(lexeme), line_(line), column_(column), value_(std::monostate{}) {}
+inline Token::Token(TokenType type, std::string lexeme, uint32_t line, uint32_t column)
+    : type_(type), lexeme_(std::move(lexeme)), line_(line), column_(column), value_(std::monostate{}) {}
+
+inline Token::Token(TokenType type, bool value)
+    : type_(type), lexeme_(value ? "TRUE" : "FALSE"), line_(0), column_(0), value_(value) {}
 
 inline Token::Token(TokenType type, int64_t value)
     : type_(type), lexeme_(std::to_string(value)), line_(0), column_(0), value_(value) {}
@@ -192,16 +222,16 @@ inline Token::Token(TokenType type, int64_t value)
 inline Token::Token(TokenType type, double value)
     : type_(type), lexeme_(std::to_string(value)), line_(0), column_(0), value_(value) {}
 
-inline Token::Token(TokenType type, const std::string& value, bool is_string)
+inline Token::Token(TokenType type, std::string value, bool is_string)
     : type_(type),
       lexeme_(is_string ? "'" + value + "'" : value),
       line_(0),
       column_(0),
-      value_(is_string ? std::variant<std::monostate, bool, int64_t, double, std::string>(value)
+      value_(is_string ? std::variant<std::monostate, bool, int64_t, double, std::string>(std::move(value))
                        : std::monostate{}) {}
 
 inline bool Token::is_keyword() const {
-    return type_ >= TokenType::Select && type_ <= TokenType::Varchar;
+    return type_ >= TokenType::Select && type_ <= TokenType::TypeBool;
 }
 
 inline bool Token::is_literal() const {
@@ -220,7 +250,6 @@ inline std::string Token::to_string() const {
     return "Token(type=" + std::to_string(static_cast<int>(type_)) + ", lexeme='" + lexeme_ + "')";
 }
 
-}  // namespace parser
-}  // namespace cloudsql
+}  // namespace cloudsql::parser
 
 #endif  // CLOUDSQL_PARSER_TOKEN_HPP

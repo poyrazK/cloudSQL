@@ -13,19 +13,17 @@
 #include "common/value.hpp"
 #include "parser/token.hpp"
 
-namespace cloudsql {
-
 /* Forward declarations */
-namespace executor {
+namespace cloudsql::executor {
 class Tuple;
 class Schema;
-}  // namespace executor
+}  // namespace cloudsql::executor
 
-namespace parser {
+namespace cloudsql::parser {
 
 class Expression;
 
-enum class ExprType {
+enum class ExprType : uint8_t {
     Binary,
     Unary,
     Column,
@@ -43,19 +41,32 @@ enum class ExprType {
  */
 class Expression {
    public:
+    Expression() = default;
     virtual ~Expression() = default;
-    virtual ExprType type() const = 0;
+
+    // Disable copy for expressions
+    Expression(const Expression&) = delete;
+    Expression& operator=(const Expression&) = delete;
+
+    // Enable move
+    Expression(Expression&&) noexcept = default;
+    Expression& operator=(Expression&&) noexcept = default;
+
+    [[nodiscard]] virtual ExprType type() const = 0;
 
     /**
      * @brief Evaluate expression against an optional tuple context
      */
-    virtual common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                   const executor::Schema* schema = nullptr) const = 0;
+    [[nodiscard]] virtual common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                                 const executor::Schema* schema = nullptr) const = 0;
 
-    virtual std::string to_string() const = 0;
-    virtual std::unique_ptr<Expression> clone() const = 0;
+    [[nodiscard]] virtual std::string to_string() const = 0;
+    [[nodiscard]] virtual std::unique_ptr<Expression> clone() const = 0;
 };
 
+/**
+ * @brief Binary expression (e.g. a + b, x = y)
+ */
 class BinaryExpr : public Expression {
    private:
     std::unique_ptr<Expression> left_;
@@ -66,17 +77,20 @@ class BinaryExpr : public Expression {
     BinaryExpr(std::unique_ptr<Expression> left, TokenType op, std::unique_ptr<Expression> right)
         : left_(std::move(left)), op_(op), right_(std::move(right)) {}
 
-    ExprType type() const override { return ExprType::Binary; }
-    const Expression& left() const { return *left_; }
-    const Expression& right() const { return *right_; }
-    TokenType op() const { return op_; }
+    [[nodiscard]] ExprType type() const override { return ExprType::Binary; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] const Expression& left() const { return *left_; }
+    [[nodiscard]] const Expression& right() const { return *right_; }
+    [[nodiscard]] TokenType op() const { return op_; }
 };
 
+/**
+ * @brief Unary expression (e.g. -a, NOT x)
+ */
 class UnaryExpr : public Expression {
    private:
     TokenType op_;
@@ -85,54 +99,59 @@ class UnaryExpr : public Expression {
    public:
     UnaryExpr(TokenType op, std::unique_ptr<Expression> expr) : op_(op), expr_(std::move(expr)) {}
 
-    ExprType type() const override { return ExprType::Unary; }
-    TokenType op() const { return op_; }
-    const Expression& expr() const { return *expr_; }
-
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] ExprType type() const override { return ExprType::Unary; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 };
 
+/**
+ * @brief Column reference expression
+ */
 class ColumnExpr : public Expression {
    private:
-    std::string name_;
     std::string table_name_;
+    std::string name_;
 
    public:
-    explicit ColumnExpr(std::string name) : name_(std::move(name)), table_name_() {}
-
+    explicit ColumnExpr(std::string name) : name_(std::move(name)) {}
     ColumnExpr(std::string table, std::string name)
-        : name_(std::move(name)), table_name_(std::move(table)) {}
+        : table_name_(std::move(table)), name_(std::move(name)) {}
 
-    ExprType type() const override { return ExprType::Column; }
-    const std::string& name() const { return name_; }
-    const std::string& table() const { return table_name_; }
-    bool has_table() const { return !table_name_.empty(); }
+    [[nodiscard]] ExprType type() const override { return ExprType::Column; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] const std::string& name() const { return name_; }
+    [[nodiscard]] const std::string& table_name() const { return table_name_; }
+    [[nodiscard]] bool has_table() const { return !table_name_.empty(); }
 };
 
+/**
+ * @brief Literal constant expression
+ */
 class ConstantExpr : public Expression {
    private:
     common::Value value_;
 
    public:
-    explicit ConstantExpr(common::Value value) : value_(std::move(value)) {}
+    explicit ConstantExpr(common::Value val) : value_(std::move(val)) {}
 
-    ExprType type() const override { return ExprType::Constant; }
-    const common::Value& value() const { return value_; }
+    [[nodiscard]] ExprType type() const override { return ExprType::Constant; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] const common::Value& value() const { return value_; }
 };
 
+/**
+ * @brief Scalar function or aggregate expression
+ */
 class FunctionExpr : public Expression {
    private:
     std::string func_name_;
@@ -142,20 +161,22 @@ class FunctionExpr : public Expression {
    public:
     explicit FunctionExpr(std::string name) : func_name_(std::move(name)) {}
 
-    ExprType type() const override { return ExprType::Function; }
-    const std::string& name() const { return func_name_; }
+    [[nodiscard]] ExprType type() const override { return ExprType::Function; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
+
     void add_arg(std::unique_ptr<Expression> arg) { args_.push_back(std::move(arg)); }
-    const auto& args() const { return args_; }
-
-    bool distinct() const { return distinct_; }
-    void set_distinct(bool distinct) { distinct_ = distinct; }
-
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] const std::string& name() const { return func_name_; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& args() const { return args_; }
+    void set_distinct(bool d) { distinct_ = d; }
+    [[nodiscard]] bool distinct() const { return distinct_; }
 };
 
+/**
+ * @brief IN expression
+ */
 class InExpr : public Expression {
    private:
     std::unique_ptr<Expression> column_;
@@ -163,41 +184,36 @@ class InExpr : public Expression {
     bool not_flag_;
 
    public:
-    InExpr(std::unique_ptr<Expression> column, std::vector<std::unique_ptr<Expression>> values,
-           bool not_flag = false)
-        : column_(std::move(column)), values_(std::move(values)), not_flag_(not_flag) {}
+    InExpr(std::unique_ptr<Expression> col, std::vector<std::unique_ptr<Expression>> vals,
+           bool is_not = false)
+        : column_(std::move(col)), values_(std::move(vals)), not_flag_(is_not) {}
 
-    ExprType type() const override { return ExprType::In; }
-    const Expression& column() const { return *column_; }
-    const auto& values() const { return values_; }
-    bool is_not() const { return not_flag_; }
-
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] ExprType type() const override { return ExprType::In; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 };
 
+/**
+ * @brief IS NULL expression
+ */
 class IsNullExpr : public Expression {
    private:
     std::unique_ptr<Expression> expr_;
     bool not_flag_;
 
    public:
-    IsNullExpr(std::unique_ptr<Expression> expr, bool not_flag = false)
+    explicit IsNullExpr(std::unique_ptr<Expression> expr, bool not_flag = false)
         : expr_(std::move(expr)), not_flag_(not_flag) {}
 
-    ExprType type() const override { return ExprType::IsNull; }
-    const Expression& expr() const { return *expr_; }
-    bool is_not() const { return not_flag_; }
-
-    common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                           const executor::Schema* schema = nullptr) const override;
-    std::string to_string() const override;
-    std::unique_ptr<Expression> clone() const override;
+    [[nodiscard]] ExprType type() const override { return ExprType::IsNull; }
+    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
+                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 };
 
-}  // namespace parser
-}  // namespace cloudsql
+}  // namespace cloudsql::parser
 
 #endif  // CLOUDSQL_PARSER_EXPRESSION_HPP

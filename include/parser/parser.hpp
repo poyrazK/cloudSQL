@@ -7,8 +7,7 @@
 #include "parser/lexer.hpp"
 #include "parser/statement.hpp"
 
-namespace cloudsql {
-namespace parser {
+namespace cloudsql::parser {
 
 class Parser {
    public:
@@ -42,7 +41,8 @@ class Parser {
     std::unique_ptr<Expression> parse_primary();
 };
 
-}  // namespace parser
-}  // namespace cloudsql
+
+
+}  // namespace cloudsql::parser
 
 #endif  // CLOUDSQL_PARSER_PARSER_HPP

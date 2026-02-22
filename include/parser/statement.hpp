@@ -12,13 +12,12 @@
 
 #include "parser/expression.hpp"
 
-namespace cloudsql {
-namespace parser {
+namespace cloudsql::parser {
 
 /**
  * @brief Statement types
  */
-enum class StmtType {
+enum class StmtType : uint8_t {
     Select,
     Insert,
     Update,
@@ -40,8 +39,17 @@ enum class StmtType {
 class Statement {
    public:
     virtual ~Statement() = default;
-    virtual StmtType type() const = 0;
-    virtual std::string to_string() const = 0;
+    
+    // Disable copy/move for base statement
+    Statement(const Statement&) = delete;
+    Statement& operator=(const Statement&) = delete;
+    Statement(Statement&&) = delete;
+    Statement& operator=(Statement&&) = delete;
+    
+    Statement() = default;
+
+    [[nodiscard]] virtual StmtType type() const = 0;
+    [[nodiscard]] virtual std::string to_string() const = 0;
 };
 
 /**
@@ -49,10 +57,10 @@ class Statement {
  */
 class SelectStatement : public Statement {
    public:
-    enum class JoinType { Inner, Left, Right, Full };
+    enum class JoinType : uint8_t { Inner, Left, Right, Full };
 
     struct JoinInfo {
-        JoinType type;
+        JoinType type = JoinType::Inner;
         std::unique_ptr<Expression> table;
         std::unique_ptr<Expression> condition;
     };
@@ -72,7 +80,7 @@ class SelectStatement : public Statement {
    public:
     SelectStatement() = default;
 
-    StmtType type() const override { return StmtType::Select; }
+    [[nodiscard]] StmtType type() const override { return StmtType::Select; }
 
     void add_column(std::unique_ptr<Expression> col) { columns_.push_back(std::move(col)); }
     void add_from(std::unique_ptr<Expression> table) { from_ = std::move(table); }
@@ -88,20 +96,20 @@ class SelectStatement : public Statement {
     void set_offset(int64_t offset) { offset_ = offset; }
     void set_distinct(bool distinct) { distinct_ = distinct; }
 
-    const auto& columns() const { return columns_; }
-    const Expression* from() const { return from_.get(); }
-    const std::vector<JoinInfo>& joins() const { return joins_; }
-    const Expression* where() const { return where_.get(); }
-    const auto& group_by() const { return group_by_; }
-    const Expression* having() const { return having_.get(); }
-    const auto& order_by() const { return order_by_; }
-    int64_t limit() const { return limit_; }
-    int64_t offset() const { return offset_; }
-    bool distinct() const { return distinct_; }
-    bool has_limit() const { return limit_ > 0; }
-    bool has_offset() const { return offset_ > 0; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& columns() const { return columns_; }
+    [[nodiscard]] const Expression* from() const { return from_.get(); }
+    [[nodiscard]] const std::vector<JoinInfo>& joins() const { return joins_; }
+    [[nodiscard]] const Expression* where() const { return where_.get(); }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& group_by() const { return group_by_; }
+    [[nodiscard]] const Expression* having() const { return having_.get(); }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& order_by() const { return order_by_; }
+    [[nodiscard]] int64_t limit() const { return limit_; }
+    [[nodiscard]] int64_t offset() const { return offset_; }
+    [[nodiscard]] bool distinct() const { return distinct_; }
+    [[nodiscard]] bool has_limit() const { return limit_ > 0; }
+    [[nodiscard]] bool has_offset() const { return offset_ > 0; }
 
-    std::string to_string() const override;
+    [[nodiscard]] std::string to_string() const override;
 };
 
 /**
@@ -114,9 +122,9 @@ class InsertStatement : public Statement {
     std::vector<std::vector<std::unique_ptr<Expression>>> values_;
 
    public:
-    explicit InsertStatement() = default;
+    InsertStatement() = default;
 
-    StmtType type() const override { return StmtType::Insert; }
+    [[nodiscard]] StmtType type() const override { return StmtType::Insert; }
 
     void set_table(std::unique_ptr<Expression> table) { table_ = std::move(table); }
     void add_column(std::unique_ptr<Expression> col) { columns_.push_back(std::move(col)); }
@@ -124,12 +132,12 @@ class InsertStatement : public Statement {
         values_.push_back(std::move(row));
     }
 
-    const Expression* table() const { return table_.get(); }
-    const auto& columns() const { return columns_; }
-    const auto& values() const { return values_; }
-    size_t value_count() const { return values_.size(); }
+    [[nodiscard]] const Expression* table() const { return table_.get(); }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& columns() const { return columns_; }
+    [[nodiscard]] const std::vector<std::vector<std::unique_ptr<Expression>>>& values() const { return values_; }
+    [[nodiscard]] size_t value_count() const { return values_.size(); }
 
-    std::string to_string() const override;
+    [[nodiscard]] std::string to_string() const override;
 };
 
 /**
@@ -142,21 +150,21 @@ class UpdateStatement : public Statement {
     std::unique_ptr<Expression> where_;
 
    public:
-    explicit UpdateStatement() = default;
+    UpdateStatement() = default;
 
-    StmtType type() const override { return StmtType::Update; }
+    [[nodiscard]] StmtType type() const override { return StmtType::Update; }
 
     void set_table(std::unique_ptr<Expression> table) { table_ = std::move(table); }
     void add_set(std::unique_ptr<Expression> col, std::unique_ptr<Expression> val) {
-        set_clauses_.push_back({std::move(col), std::move(val)});
+        set_clauses_.emplace_back(std::move(col), std::move(val));
     }
     void set_where(std::unique_ptr<Expression> where) { where_ = std::move(where); }
 
-    const Expression* table() const { return table_.get(); }
-    const auto& set_clauses() const { return set_clauses_; }
-    const Expression* where() const { return where_.get(); }
+    [[nodiscard]] const Expression* table() const { return table_.get(); }
+    [[nodiscard]] const std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>>& set_clauses() const { return set_clauses_; }
+    [[nodiscard]] const Expression* where() const { return where_.get(); }
 
-    std::string to_string() const override;
+    [[nodiscard]] std::string to_string() const override;
 };
 
 /**
@@ -168,55 +176,57 @@ class DeleteStatement : public Statement {
     std::unique_ptr<Expression> where_;
 
    public:
-    explicit DeleteStatement() = default;
+    DeleteStatement() = default;
 
-    StmtType type() const override { return StmtType::Delete; }
+    [[nodiscard]] StmtType type() const override { return StmtType::Delete; }
 
     void set_table(std::unique_ptr<Expression> table) { table_ = std::move(table); }
     void set_where(std::unique_ptr<Expression> where) { where_ = std::move(where); }
 
-    const Expression* table() const { return table_.get(); }
-    const Expression* where() const { return where_.get(); }
-    bool has_where() const { return where_ != nullptr; }
+    [[nodiscard]] const Expression* table() const { return table_.get(); }
+    [[nodiscard]] const Expression* where() const { return where_.get(); }
+    [[nodiscard]] bool has_where() const { return where_ != nullptr; }
 
-    std::string to_string() const override;
+    [[nodiscard]] std::string to_string() const override;
 };
 
 /**
  * @brief CREATE TABLE statement
  */
 class CreateTableStatement : public Statement {
-   private:
-    std::string table_name_;
+   public:
     struct ColumnDef {
         std::string name_;
         std::string type_;
         bool is_primary_key_ = false;
         bool is_not_null_ = false;
         bool is_unique_ = false;
-        std::unique_ptr<Expression> default_value_;
+        std::unique_ptr<Expression> default_value_ = nullptr;
     };
+
+   private:
+    std::string table_name_;
     std::vector<ColumnDef> columns_;
 
    public:
-    explicit CreateTableStatement() = default;
+    CreateTableStatement() = default;
 
-    StmtType type() const override { return StmtType::CreateTable; }
+    [[nodiscard]] StmtType type() const override { return StmtType::CreateTable; }
 
     void set_table_name(std::string name) { table_name_ = std::move(name); }
     void add_column(std::string name, std::string type) {
         columns_.push_back({std::move(name), std::move(type), false, false, false, nullptr});
     }
-    ColumnDef& get_last_column() { return columns_.back(); }
+    [[nodiscard]] ColumnDef& get_last_column() { return columns_.back(); }
 
-    const std::string& table_name() const { return table_name_; }
-    const auto& columns() const { return columns_; }
+    [[nodiscard]] const std::string& table_name() const { return table_name_; }
+    [[nodiscard]] const std::vector<ColumnDef>& columns() const { return columns_; }
 
-    std::string to_string() const override;
+    [[nodiscard]] std::string to_string() const override;
 };
 
 /**
- * @file DROP TABLE statement
+ * @brief DROP TABLE statement
  */
 class DropTableStatement : public Statement {
    private:
@@ -226,16 +236,16 @@ class DropTableStatement : public Statement {
    public:
     explicit DropTableStatement(std::string name, bool if_exists = false)
         : table_name_(std::move(name)), if_exists_(if_exists) {}
-    StmtType type() const override { return StmtType::DropTable; }
-    const std::string& table_name() const { return table_name_; }
-    bool if_exists() const { return if_exists_; }
-    std::string to_string() const override {
+    [[nodiscard]] StmtType type() const override { return StmtType::DropTable; }
+    [[nodiscard]] const std::string& table_name() const { return table_name_; }
+    [[nodiscard]] bool if_exists() const { return if_exists_; }
+    [[nodiscard]] std::string to_string() const override {
         return std::string("DROP TABLE ") + (if_exists_ ? "IF EXISTS " : "") + table_name_;
     }
 };
 
 /**
- * @file DROP INDEX statement
+ * @brief DROP INDEX statement
  */
 class DropIndexStatement : public Statement {
    private:
@@ -245,10 +255,10 @@ class DropIndexStatement : public Statement {
    public:
     explicit DropIndexStatement(std::string name, bool if_exists = false)
         : index_name_(std::move(name)), if_exists_(if_exists) {}
-    StmtType type() const override { return StmtType::DropIndex; }
-    const std::string& index_name() const { return index_name_; }
-    bool if_exists() const { return if_exists_; }
-    std::string to_string() const override {
+    [[nodiscard]] StmtType type() const override { return StmtType::DropIndex; }
+    [[nodiscard]] const std::string& index_name() const { return index_name_; }
+    [[nodiscard]] bool if_exists() const { return if_exists_; }
+    [[nodiscard]] std::string to_string() const override {
         return std::string("DROP INDEX ") + (if_exists_ ? "IF EXISTS " : "") + index_name_;
     }
 };
@@ -258,8 +268,8 @@ class DropIndexStatement : public Statement {
  */
 class TransactionBeginStatement : public Statement {
    public:
-    StmtType type() const override { return StmtType::TransactionBegin; }
-    std::string to_string() const override { return "BEGIN"; }
+    [[nodiscard]] StmtType type() const override { return StmtType::TransactionBegin; }
+    [[nodiscard]] std::string to_string() const override { return "BEGIN"; }
 };
 
 /**
@@ -267,8 +277,8 @@ class TransactionBeginStatement : public Statement {
  */
 class TransactionCommitStatement : public Statement {
    public:
-    StmtType type() const override { return StmtType::TransactionCommit; }
-    std::string to_string() const override { return "COMMIT"; }
+    [[nodiscard]] StmtType type() const override { return StmtType::TransactionCommit; }
+    [[nodiscard]] std::string to_string() const override { return "COMMIT"; }
 };
 
 /**
@@ -276,11 +286,10 @@ class TransactionCommitStatement : public Statement {
  */
 class TransactionRollbackStatement : public Statement {
    public:
-    StmtType type() const override { return StmtType::TransactionRollback; }
-    std::string to_string() const override { return "ROLLBACK"; }
+    [[nodiscard]] StmtType type() const override { return StmtType::TransactionRollback; }
+    [[nodiscard]] std::string to_string() const override { return "ROLLBACK"; }
 };
 
-}  // namespace parser
-}  // namespace cloudsql
+}  // namespace cloudsql::parser
 
 #endif  // CLOUDSQL_PARSER_STATEMENT_HPP
