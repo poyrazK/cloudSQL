@@ -15,8 +15,7 @@
 #include "executor/types.hpp"
 #include "storage/heap_table.hpp"
 
-namespace cloudsql {
-namespace recovery {
+namespace cloudsql::recovery {
 
 using lsn_t = int32_t;
 using txn_id_t = uint64_t;
@@ -24,7 +23,7 @@ using txn_id_t = uint64_t;
 /**
  * @brief Types of log records
  */
-enum class LogRecordType {
+enum class LogRecordType : uint8_t {
     INVALID = 0,
     INSERT,
     MARK_DELETE,
@@ -41,11 +40,11 @@ enum class LogRecordType {
  * @brief Header of a log record
  */
 struct LogRecordHeader {
-    uint32_t size;       // Total size of the record including header
-    lsn_t lsn;           // Log Sequence Number
-    lsn_t prev_lsn;      // LSN of the previous record for this transaction
-    txn_id_t txn_id;     // Transaction ID
-    LogRecordType type;  // Record type
+    uint32_t size = 0;                           // Total size of the record including header
+    lsn_t lsn = 0;                               // Log Sequence Number
+    lsn_t prev_lsn = 0;                          // LSN of the previous record for this transaction
+    txn_id_t txn_id = 0;                         // Transaction ID
+    LogRecordType type = LogRecordType::INVALID;  // Record type
 };
 
 /**
@@ -53,6 +52,12 @@ struct LogRecordHeader {
  */
 class LogRecord {
    public:
+    // Header size (approximate for C++ struct, actual serialization might vary padding)
+    static constexpr uint32_t HEADER_SIZE = sizeof(uint32_t) +      // size
+                                            (sizeof(lsn_t) * 2) +   // lsn, prev_lsn
+                                            sizeof(txn_id_t) +      // txn_id
+                                            sizeof(LogRecordType);  // type
+
     // Header
     uint32_t size_ = 0;
     lsn_t lsn_ = 0;
@@ -79,55 +84,49 @@ class LogRecord {
      * @brief Constructor for transaction control records (BEGIN, COMMIT, ABORT)
      */
     LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type)
-        : prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type) {
-        size_ = HEADER_SIZE;
-    }
+        : size_(HEADER_SIZE), prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type) {}
 
     /**
      * @brief Constructor for single-tuple operations (INSERT, DELETE variants)
      */
-    LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type, const std::string& table_name,
-              const storage::HeapTable::TupleId& rid, const executor::Tuple& tuple_data)
-        : prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type), table_name_(table_name), rid_(rid) {
+    LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type, std::string table_name,
+              const storage::HeapTable::TupleId& rid, executor::Tuple tuple_data)
+        : prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type), table_name_(std::move(table_name)), rid_(rid) {
         if (type == LogRecordType::INSERT) {
-            tuple_ = tuple_data;
+            tuple_ = std::move(tuple_data);
         } else {
-            old_tuple_ = tuple_data;
+            old_tuple_ = std::move(tuple_data);
         }
     }
 
     /**
      * @brief Constructor for UPDATE
      */
-    LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type, const std::string& table_name,
-              const storage::HeapTable::TupleId& rid, const executor::Tuple& old_tuple,
-              const executor::Tuple& new_tuple)
+    LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type, std::string table_name,
+              const storage::HeapTable::TupleId& rid, executor::Tuple old_tuple,
+              executor::Tuple new_tuple)
         : prev_lsn_(prev_lsn),
           txn_id_(txn_id),
           type_(type),
-          table_name_(table_name),
+          table_name_(std::move(table_name)),
           rid_(rid),
-          tuple_(new_tuple),
-          old_tuple_(old_tuple) {}
+          tuple_(std::move(new_tuple)),
+          old_tuple_(std::move(old_tuple)) {}
 
     /**
      * @brief Constructor for NEW_PAGE
      */
     LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type, uint32_t page_id)
-        : prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type), page_id_(page_id) {
-        size_ = HEADER_SIZE + sizeof(uint32_t);
-    }
-
-    // Header size (approximate for C++ struct, actual serialization might vary padding)
-    static const uint32_t HEADER_SIZE = sizeof(uint32_t) +      // size
-                                        sizeof(lsn_t) * 2 +     // lsn, prev_lsn
-                                        sizeof(txn_id_t) +      // txn_id
-                                        sizeof(LogRecordType);  // type
+        : size_(HEADER_SIZE + sizeof(uint32_t)),
+          prev_lsn_(prev_lsn),
+          txn_id_(txn_id),
+          type_(type),
+          page_id_(page_id) {}
 
     /**
      * @return The string representation of the record type
      */
-    std::string type_to_string() const {
+    [[nodiscard]] std::string type_to_string() const {
         switch (type_) {
             case LogRecordType::INVALID:
                 return "INVALID";
@@ -182,15 +181,14 @@ class LogRecord {
      * @param buffer Input buffer
      * @return Deserialized LogRecord
      */
-    static LogRecord deserialize(const char* buffer);
+    [[nodiscard]] static LogRecord deserialize(const char* buffer);
 
     /**
      * @brief Get serialized size
      */
-    uint32_t get_size() const;
+    [[nodiscard]] uint32_t get_size() const;
 };
 
-}  // namespace recovery
-}  // namespace cloudsql
+}  // namespace cloudsql::recovery
 
 #endif  // CLOUDSQL_RECOVERY_LOG_RECORD_HPP
