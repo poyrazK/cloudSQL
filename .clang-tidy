@@ -8,23 +8,19 @@ Checks: 'clang-diagnostic-*,
          cppcoreguidelines-*,
          hicpp-*,
          misc-*,
+         concurrency-*,
          -modernize-use-trailing-return-type,
          -readability-braces-around-statements,
          -readability-implicit-bool-conversion,
          -readability-redundant-declaration,
          -cppcoreguidelines-pro-type-vararg,
-         -cppcoreguidelines-pro-type-member-init,
          -hicpp-no-assembler,
          -hicpp-vararg,
-         -modernize-use-nodiscard,
-         -misc-const-correctness,
          -readability-identifier-length,
          -readability-function-cognitive-complexity,
          -cppcoreguidelines-avoid-const-or-ref-data-members,
          -misc-non-private-member-variables-in-classes,
-         -bugprone-easily-swappable-parameters,
-         -bugprone-unchecked-optional-access,
-         -modernize-use-default-member-init'
+         -bugprone-easily-swappable-parameters'
 WarningsAsErrors: ''
 HeaderFilterRegex: 'include/.*'
 FormatStyle: none
@@ -32,5 +28,9 @@ CheckOptions:
   - key:             modernize-use-auto.MinTypeNameLength
     value:           '5'
   - key:             modernize-use-default-member-init.UseAssignment
+    value:           'true'
+  - key:             misc-const-correctness.AnalyzeValues
+    value:           'true'
+  - key:             misc-const-correctness.WarnPointersAsValues
     value:           'true'
 ...

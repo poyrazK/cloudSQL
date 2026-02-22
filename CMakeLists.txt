@@ -13,32 +13,44 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(BUILD_COVERAGE "Build with coverage instrumentation" OFF)
-set(USE_SANITIZER "address" CACHE STRING "Sanitizer to use: address, thread, or none")
+option(STRICT_LINT "Treat all warnings as errors" ON)
+set(USE_SANITIZER "address" CACHE STRING "Sanitizer to use: address, thread, undefined, or 'address,undefined'")
 
 # Configure Sanitizers
 if(NOT USE_SANITIZER STREQUAL "none")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        if (USE_SANITIZER STREQUAL "address")
-            set(SAN_FLAGS "-fsanitize=address" "-fno-omit-frame-pointer")
-        elseif (USE_SANITIZER STREQUAL "thread")
-            set(SAN_FLAGS "-fsanitize=thread")
-        endif()
+        string(REPLACE "," ";" SAN_LIST ${USE_SANITIZER})
+        foreach(SAN ${SAN_LIST})
+            list(APPEND SAN_FLAGS "-fsanitize=${SAN}")
+        endforeach()
+        list(APPEND SAN_FLAGS "-fno-omit-frame-pointer")
         
         if (SAN_FLAGS)
             add_compile_options(${SAN_FLAGS})
             add_link_options(${SAN_FLAGS})
-            message(STATUS "Enabled sanitizer: ${USE_SANITIZER}")
+            message(STATUS "Enabled sanitizers: ${USE_SANITIZER}")
         endif()
     endif()
 endif()
 
 # Enable compiler warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
+    # Base warnings
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Wshadow -Woverloaded-virtual -Wold-style-cast -Wnon-virtual-dtor")
+    
+    # Advanced safety warnings
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wformat=2")
+    
+    if(STRICT_LINT)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+    endif()
 endif()
 
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
+    if(STRICT_LINT)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /WX")
+    endif()
 endif()
 
 # Clang-Tidy integration
@@ -52,6 +64,28 @@ if(CLANG_TIDY_BIN)
     set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_BIN}")
 else()
     message(WARNING "clang-tidy not found")
+endif()
+
+# Clang-Format target
+find_program(CLANG_FORMAT_BIN
+    NAMES clang-format
+    PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin /usr/bin /usr/local/bin
+)
+
+if(CLANG_FORMAT_BIN)
+    file(GLOB_RECURSE ALL_CXX_FILES 
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp" 
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
+    )
+    add_custom_target(format
+        COMMAND ${CLANG_FORMAT_BIN} -i ${ALL_CXX_FILES}
+        COMMENT "Formatting all source files with clang-format"
+    )
+    add_custom_target(check-format
+        COMMAND ${CLANG_FORMAT_BIN} --dry-run --Werror ${ALL_CXX_FILES}
+        COMMENT "Checking code formatting compliance"
+    )
 endif()
 
 if(BUILD_COVERAGE)
@@ -144,4 +178,5 @@ message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")
 message(STATUS "  Sanitizer: ${USE_SANITIZER}")
+message(STATUS "  Strict Lint: ${STRICT_LINT}")
 message(STATUS "=============================================")
