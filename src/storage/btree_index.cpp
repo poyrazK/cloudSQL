@@ -17,15 +17,15 @@
 
 #include "common/value.hpp"
 #include "storage/heap_table.hpp"
-#include "storage/storage_manager.hpp"
+#include "storage/buffer_pool_manager.hpp"
 
 namespace cloudsql::storage {
 
-BTreeIndex::BTreeIndex(std::string index_name, StorageManager& storage_manager,
+BTreeIndex::BTreeIndex(std::string index_name, BufferPoolManager& bpm,
                        common::ValueType key_type)
     : index_name_(std::move(index_name)),
       filename_(index_name_ + ".idx"),
-      storage_manager_(storage_manager),
+      bpm_(bpm),
       key_type_(key_type) {}
 
 /**
@@ -36,7 +36,7 @@ BTreeIndex::Iterator::Iterator(BTreeIndex& index, uint32_t page, uint16_t slot)
 
 bool BTreeIndex::Iterator::next(Entry& out_entry) {
     while (!eof_) {
-        std::array<char, StorageManager::PAGE_SIZE> buffer{};
+        std::array<char, Page::PAGE_SIZE> buffer{};
         if (!index_.read_page(current_page_, buffer.data())) {
             eof_ = true;
             return false;
@@ -104,12 +104,12 @@ bool BTreeIndex::Iterator::next(Entry& out_entry) {
  */
 
 bool BTreeIndex::create() {
-    if (!storage_manager_.open_file(filename_)) {
+    if (!bpm_.open_file(filename_)) {
         return false;
     }
 
     /* Initialize root page */
-    std::array<char, StorageManager::PAGE_SIZE> buffer{};
+    std::array<char, Page::PAGE_SIZE> buffer{};
     NodeHeader header{};
     header.type = NodeType::Leaf;
     header.num_keys = 0;
@@ -121,20 +121,20 @@ bool BTreeIndex::create() {
 }
 
 bool BTreeIndex::open() {
-    return storage_manager_.open_file(filename_);
+    return bpm_.open_file(filename_);
 }
 
 void BTreeIndex::close() {
-    storage_manager_.close_file(filename_);
+    bpm_.close_file(filename_);
 }
 
 bool BTreeIndex::drop() {
-    return storage_manager_.close_file(filename_);
+    return bpm_.close_file(filename_);
 }
 
 bool BTreeIndex::insert(const common::Value& key, HeapTable::TupleId tuple_id) {
     const uint32_t leaf_page = find_leaf(key);
-    std::array<char, StorageManager::PAGE_SIZE> buffer{};
+    std::array<char, Page::PAGE_SIZE> buffer{};
     if (!read_page(leaf_page, buffer.data())) {
         return false;
     }
@@ -150,7 +150,7 @@ bool BTreeIndex::insert(const common::Value& key, HeapTable::TupleId tuple_id) {
     /* Check space (very crude) */
     char* const data_area = std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
     const size_t existing_len = std::strlen(data_area);
-    if (existing_len + entry_data.size() + 1 > StorageManager::PAGE_SIZE - sizeof(NodeHeader)) {
+    if (existing_len + entry_data.size() + 1 > Page::PAGE_SIZE - sizeof(NodeHeader)) {
         /* TODO: split_leaf(leaf_page, buffer); */
         return false;
     }
@@ -171,7 +171,7 @@ bool BTreeIndex::remove(const common::Value& key, HeapTable::TupleId tuple_id) {
 
 std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
     const uint32_t leaf_page = find_leaf(key);
-    std::array<char, StorageManager::PAGE_SIZE> buffer{};
+    std::array<char, Page::PAGE_SIZE> buffer{};
     if (!read_page(leaf_page, buffer.data())) {
         return {};
     }
@@ -206,11 +206,26 @@ uint32_t BTreeIndex::find_leaf(const common::Value& key) const {
 }
 
 bool BTreeIndex::read_page(uint32_t page_num, char* buffer) const {
-    return storage_manager_.read_page(filename_, page_num, buffer);
+    Page* page = bpm_.fetch_page(filename_, page_num);
+    if (!page) {
+        return false;
+    }
+    std::memcpy(buffer, page->get_data(), Page::PAGE_SIZE);
+    bpm_.unpin_page(filename_, page_num, false);
+    return true;
 }
 
 bool BTreeIndex::write_page(uint32_t page_num, const char* buffer) {
-    return storage_manager_.write_page(filename_, page_num, buffer);
+    Page* page = bpm_.fetch_page(filename_, page_num);
+    if (!page) {
+        page = bpm_.new_page(filename_, &page_num);
+        if (!page) {
+            return false;
+        }
+    }
+    std::memcpy(page->get_data(), buffer, Page::PAGE_SIZE);
+    bpm_.unpin_page(filename_, page_num, true);
+    return true;
 }
 
 }  // namespace cloudsql::storage
