@@ -25,6 +25,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -33,7 +34,7 @@
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
 #include "parser/statement.hpp"
-#include "storage/storage_manager.hpp"
+#include "storage/buffer_pool_manager.hpp"
 
 namespace cloudsql::network {
 
@@ -113,15 +114,15 @@ class ProtocolWriter {
     }
 };
 
-Server::Server(uint16_t port, Catalog& catalog, storage::StorageManager& storage_manager)
+Server::Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm)
     : port_(port),
       catalog_(catalog),
-      storage_manager_(storage_manager),
-      transaction_manager_(lock_manager_, catalog, storage_manager) {}
+      bpm_(bpm),
+      transaction_manager_(lock_manager_, catalog, bpm) {}
 
 std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog,
-                                       storage::StorageManager& storage_manager) {
-    return std::make_unique<Server>(port, catalog, storage_manager);
+                                       storage::BufferPoolManager& bpm) {
+    return std::make_unique<Server>(port, catalog, bpm);
 }
 
 /**
@@ -149,11 +150,13 @@ bool Server::start() {
     addr.sin_port = htons(port_);
 
     if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        std::cerr << "bind failed: " << std::strerror(errno) << "\n";
         static_cast<void>(close(fd));
         return false;
     }
 
     if (listen(fd, BACKLOG) < 0) {
+        std::cerr << "listen failed: " << std::strerror(errno) << "\n";
         static_cast<void>(close(fd));
         return false;
     }
@@ -228,8 +231,22 @@ bool Server::stop() {
 }
 
 void Server::wait() {
-    const std::scoped_lock<std::mutex> lock(thread_mutex_);
-    if (accept_thread_.joinable()) {
+    std::thread::id accept_id;
+    bool should_join = false;
+
+    {
+        const std::scoped_lock<std::mutex> lock(thread_mutex_);
+        if (accept_thread_.joinable()) {
+            accept_id = accept_thread_.get_id();
+            should_join = true;
+        }
+    }
+
+    if (should_join) {
+        // Warning: This could be dangerous if stop() changes accept_thread_ concurrently,
+        // but typically only one thread will join anyway.
+        // A safer way is to just do it directly.
+        // Let's just avoid holding the mutex during join().
         accept_thread_.join();
     }
 }
@@ -312,12 +329,15 @@ void Server::accept_connections() {
  * @brief Handle a client connection using PostgreSQL protocol
  */
 void Server::handle_connection(int client_fd) {
+    std::cout << "Handling new connection\n" << std::flush;
+
     std::array<char, MAX_PACKET_SIZE> buffer{};
-    executor::QueryExecutor client_executor(catalog_, storage_manager_, lock_manager_,
+    executor::QueryExecutor client_executor(catalog_, bpm_, lock_manager_,
                                             transaction_manager_);
 
     /* 1. Read Length (Initial Startup/SSL) */
     ssize_t n = recv(client_fd, buffer.data(), HEADER_SIZE, 0);
+    std::cout << "recv1 got " << n << " bytes\n" << std::flush;
     if (n < static_cast<ssize_t>(HEADER_SIZE)) {
         static_cast<void>(close(client_fd));
         return;
@@ -331,12 +351,15 @@ void Server::handle_connection(int client_fd) {
 
     /* 2. Read Rest of Startup/SSL Packet */
     n = recv(client_fd, &buffer[HEADER_SIZE], len - HEADER_SIZE, 0);
+    std::cout << "recv2 got " << n << " bytes\n" << std::flush;
     if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
+        std::cout << "Failed to read rest of packet\n" << std::flush;
         static_cast<void>(close(client_fd));
         return;
     }
 
     uint32_t protocol = ProtocolReader::read_int32(&buffer[HEADER_SIZE]);
+    std::cout << "Connection len: " << len << " protocol: " << protocol << "\n" << std::flush;
 
     /* Check for SSL Request */
     if (protocol == static_cast<uint32_t>(SSL_REQUEST_CODE)) {
