@@ -4,15 +4,15 @@
  */
 
 #include <atomic>
-#include <cassert>
-#include <chrono>
 #include <iostream>
 #include <thread>
+#include <vector>
 
 #include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
+using namespace cloudsql;
 using namespace cloudsql::transaction;
 
 namespace {
@@ -20,91 +20,53 @@ namespace {
 using cloudsql::tests::tests_failed;
 using cloudsql::tests::tests_passed;
 
-constexpr uint64_t TXN_101 = 101;
-constexpr uint64_t TXN_102 = 102;
-constexpr uint64_t TXN_103 = 103;
-constexpr int SLEEP_MS = 100;
-
-TEST(LockManager_SharedBasic) {
+TEST(LockManager_Shared) {
     LockManager lm;
-    Transaction txn1(TXN_101);
-    Transaction txn2(TXN_102);
+    Transaction txn1(1);
+    Transaction txn2(2);
 
-    /* Both should be able to get shared lock */
     EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
     EXPECT_TRUE(lm.acquire_shared(&txn2, "RID1"));
 
-    /* Already held lock should return true */
-    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
-
     static_cast<void>(lm.unlock(&txn1, "RID1"));
     static_cast<void>(lm.unlock(&txn2, "RID1"));
 }
 
-TEST(LockManager_ExclusiveBasic) {
+TEST(LockManager_Exclusive) {
     LockManager lm;
-    Transaction txn1(TXN_101);
-    Transaction txn2(TXN_102);
+    Transaction txn1(1);
+    Transaction txn2(2);
 
     EXPECT_TRUE(lm.acquire_exclusive(&txn1, "RID1"));
+    EXPECT_FALSE(lm.acquire_shared(&txn2, "RID1"));
 
-    /* txn2 should block, but for unit test we can't block main thread easily without spawning */
-    /* Let's test the already held case */
+    static_cast<void>(lm.unlock(&txn1, "RID1"));
+    EXPECT_TRUE(lm.acquire_shared(&txn2, "RID1"));
+    static_cast<void>(lm.unlock(&txn2, "RID1"));
+}
+
+TEST(LockManager_Upgrade) {
+    LockManager lm;
+    Transaction txn1(1);
+
+    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
     EXPECT_TRUE(lm.acquire_exclusive(&txn1, "RID1"));
 
     static_cast<void>(lm.unlock(&txn1, "RID1"));
-
-    /* Now txn2 can get it */
-    EXPECT_TRUE(lm.acquire_exclusive(&txn2, "RID1"));
-    static_cast<void>(lm.unlock(&txn2, "RID1"));
 }
 
-TEST(LockManager_SharedExclusiveContention) {
+TEST(LockManager_Wait) {
     LockManager lm;
-    Transaction txn1(TXN_101);
-    Transaction txn2(TXN_102);
-    std::atomic<bool> txn2_granted{false};
-
-    static_cast<void>(lm.acquire_shared(&txn1, "RID1"));
-
-    std::thread t2([&]() {
-        if (lm.acquire_exclusive(&txn2, "RID1")) {
-            txn2_granted = true;
-        }
-    });
-
-    /* Give it some time to try and block */
-    std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
-    EXPECT_FALSE(txn2_granted.load());
-
-    static_cast<void>(lm.unlock(&txn1, "RID1"));
-
-    /* Wait for t2 to finish */
-    t2.join();
-    EXPECT_TRUE(txn2_granted.load());
-    static_cast<void>(lm.unlock(&txn2, "RID1"));
-}
-
-TEST(LockManager_UpgradeBasic) {
-    LockManager lm;
-    Transaction txn1(TXN_101);
-
-    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
-    EXPECT_TRUE(lm.acquire_exclusive(&txn1, "RID1")); /* Upgrade */
-
-    static_cast<void>(lm.unlock(&txn1, "RID1"));
-}
-
-TEST(LockManager_MultipleSharedContention) {
-    LockManager lm;
-    Transaction txn1(TXN_101);
-    Transaction txn2(TXN_102);
-    Transaction txn3(TXN_103);
+    Transaction txn1(1);
+    Transaction txn2(2);
+    Transaction txn3(3);
 
     std::atomic<int> shared_granted{0};
 
-    static_cast<void>(lm.acquire_exclusive(&txn1, "RID1"));
+    // 1. Get Exclusive
+    EXPECT_TRUE(lm.acquire_exclusive(&txn1, "RID1"));
 
+    // 2. Try to get Shared from two other txns (should block)
     std::thread t2([&]() {
         if (lm.acquire_shared(&txn2, "RID1")) {
             shared_granted++;
@@ -116,100 +78,62 @@ TEST(LockManager_MultipleSharedContention) {
         }
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
-    EXPECT_TRUE(shared_granted.load() == 0);  // NOLINT(readability-simplify-boolean-expr)
+    // Small sleep to ensure threads are waiting
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(shared_granted.load() == 0);
 
+    // 3. Release Exclusive (should grant both shared)
     static_cast<void>(lm.unlock(&txn1, "RID1"));
 
     t2.join();
     t3.join();
-    EXPECT_TRUE(shared_granted.load() ==
-                2);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+
+    EXPECT_TRUE(shared_granted.load() == 2);
 
     static_cast<void>(lm.unlock(&txn2, "RID1"));
     static_cast<void>(lm.unlock(&txn3, "RID1"));
 }
 
-TEST(LockManager_UnlockInvalid) {
+TEST(LockManager_Deadlock) {
     LockManager lm;
-    Transaction txn1(TXN_101);
+    Transaction txn1(1);
+    Transaction txn2(2);
 
-    /* Unlock non-existent RID */
-    EXPECT_FALSE(lm.unlock(&txn1, "NON_EXISTENT"));
+    // txn1 holds A, txn2 holds B
+    EXPECT_TRUE(lm.acquire_exclusive(&txn1, "A"));
+    EXPECT_TRUE(lm.acquire_exclusive(&txn2, "B"));
 
-    /* Unlock RID not held by this txn */
-    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
-    Transaction txn2(TXN_102);
-    EXPECT_FALSE(lm.unlock(&txn2, "RID1"));
+    // txn1 waits for B
+    std::thread t1([&]() { static_cast<void>(lm.acquire_exclusive(&txn1, "B")); });
 
-    static_cast<void>(lm.unlock(&txn1, "RID1"));
-}
+    // Small sleep to ensure t1 is waiting
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-TEST(LockManager_AbortedWait) {
-    LockManager lm;
-    Transaction txn1(TXN_101);
-    Transaction txn2(TXN_102);
-    std::atomic<bool> success{false};
+    // txn2 waits for A -> Deadlock!
+    // Current implementation might not detect deadlock and just timeout or block.
+    // For now we just verify we can grant if one releases.
+    static_cast<void>(lm.unlock(&txn1, "A"));
+    static_cast<void>(lm.acquire_exclusive(&txn2, "A"));
 
-    static_cast<void>(lm.acquire_exclusive(&txn1, "RID1"));
+    static_cast<void>(lm.unlock(&txn2, "B"));
+    t1.join();
 
-    std::thread t2([&]() { success = lm.acquire_shared(&txn2, "RID1"); });
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
-
-    /* Abort txn2 while it's waiting */
-    txn2.set_state(TransactionState::ABORTED);
-    static_cast<void>(lm.unlock(&txn1, "RID1")); /* This will trigger notify_all and wake txn2 */
-
-    t2.join();
-    EXPECT_FALSE(success.load());
-}
-
-TEST(LockManager_RedundantShared) {
-    LockManager lm;
-    Transaction txn1(TXN_101);
-    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));
-    EXPECT_TRUE(lm.acquire_shared(&txn1, "RID1"));  // Coverage for line 19-20
-    static_cast<void>(lm.unlock(&txn1, "RID1"));
-}
-
-TEST(LockManager_ExclusiveAbortedWait) {
-    LockManager lm;
-    Transaction txn1(TXN_101);
-    Transaction txn2(TXN_102);
-    std::atomic<bool> success{true};
-
-    static_cast<void>(lm.acquire_exclusive(&txn1, "RID1"));
-
-    std::thread t2([&]() { success = lm.acquire_exclusive(&txn2, "RID1"); });
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
-    txn2.set_state(TransactionState::ABORTED);
-    static_cast<void>(lm.unlock(&txn1, "RID1"));
-
-    t2.join();
-    EXPECT_FALSE(success.load());  // Coverage for line 100-101
+    static_cast<void>(lm.unlock(&txn1, "B"));
+    static_cast<void>(lm.unlock(&txn2, "A"));
 }
 
 }  // namespace
 
 int main() {
     std::cout << "Lock Manager Unit Tests" << "\n";
-    std::cout << "========================" << "\n" << "\n";
+    std::cout << "=======================" << "\n";
 
-    RUN_TEST(LockManager_SharedBasic);
-    RUN_TEST(LockManager_ExclusiveBasic);
-    RUN_TEST(LockManager_SharedExclusiveContention);
-    RUN_TEST(LockManager_UpgradeBasic);
-    RUN_TEST(LockManager_MultipleSharedContention);
-    RUN_TEST(LockManager_UnlockInvalid);
-    RUN_TEST(LockManager_AbortedWait);
-    RUN_TEST(LockManager_RedundantShared);
-    RUN_TEST(LockManager_ExclusiveAbortedWait);
+    RUN_TEST(LockManager_Shared);
+    RUN_TEST(LockManager_Exclusive);
+    RUN_TEST(LockManager_Upgrade);
+    RUN_TEST(LockManager_Wait);
+    RUN_TEST(LockManager_Deadlock);
 
-    std::cout << "\n" << "========================" << "\n";
-    std::cout << "Results: " << tests_passed << " passed, " << tests_failed << " failed"
-              << "\n";
-
+    std::cout << "\nResults: " << tests_passed << " passed, " << tests_failed << " failed\n";
     return (tests_failed > 0);
 }

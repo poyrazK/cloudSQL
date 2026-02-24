@@ -150,8 +150,8 @@ bool Server::start() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
 
-    if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
-        0) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
         static_cast<void>(close(fd));
         return false;
     }

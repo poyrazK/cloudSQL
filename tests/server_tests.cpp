@@ -1,3 +1,8 @@
+/**
+ * @file server_tests.cpp
+ * @brief Unit tests for Network Server and Protocol
+ */
+
 #include <arpa/inet.h>  // IWYU pragma: keep
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -27,32 +32,31 @@
 
 using namespace cloudsql;
 using namespace cloudsql::network;
-using namespace cloudsql::tests;
+using namespace cloudsql::common;
 
 namespace {
 
-constexpr uint16_t PORT_STATUS = 5440;
-constexpr uint16_t PORT_SIMPLE = 5441;
-constexpr uint16_t PORT_INVALID = 5442;
-constexpr uint16_t PORT_TERM = 5443;
-constexpr uint16_t PORT_HANDSHAKE = 5444;
-constexpr uint16_t PORT_MULTI = 5445;
+using cloudsql::tests::tests_failed;
+using cloudsql::tests::tests_passed;
 
-constexpr int CONN_RETRIES = 5;
-constexpr int RETRY_MS = 200;
-constexpr int NUM_CLIENTS = 5;
+constexpr uint16_t PORT_STATUS = 54321;
+constexpr uint16_t PORT_SIMPLE = 54322;
+constexpr uint16_t PORT_INVALID = 54323;
+constexpr uint16_t PORT_TERM = 54324;
+constexpr uint16_t PORT_HANDSHAKE = 54325;
+constexpr uint16_t PORT_MULTI = 54326;
 
-constexpr int PG_SSL_CODE = 80877103;
+constexpr int CONN_RETRIES = 10;
+constexpr int RETRY_DELAY_MS = 100;
+constexpr int STARTUP_PKT_LEN = 8;
 constexpr int PG_STARTUP_CODE = 196608;
-
-constexpr size_t BUF_SIZE = 1024;
-constexpr size_t STARTUP_PKT_LEN = 8;
-constexpr size_t AUTH_OK_LEN = 9;
-constexpr size_t READY_LEN = 6;
-constexpr uint32_t Q_LEN_BASE = 5;
+constexpr int PG_SSL_CODE = 80877103;
+constexpr int BUF_SIZE = 1024;
+constexpr int AUTH_OK_LEN = 9;
+constexpr int READY_LEN = 6;
 
 void test_Server_StatusStrings() {
-    auto catalog = std::make_unique<Catalog>();
+    auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(128, disk_manager);
     Server s(PORT_STATUS, *catalog, sm);
@@ -65,7 +69,7 @@ void test_Server_StatusStrings() {
 }
 
 void test_Server_SimpleQuery() {
-    auto catalog = std::make_unique<Catalog>();
+    auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(128, disk_manager);
     const uint16_t port = PORT_SIMPLE;
@@ -102,7 +106,7 @@ void test_Server_SimpleQuery() {
             static_cast<void>(close(sock));
             sock = -1;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_MS));
+        std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
     }
 
     if (sock >= 0) {
@@ -116,7 +120,7 @@ void test_Server_SimpleQuery() {
 
         const std::string sql = "SELECT id FROM dual";
         const char q_type = 'Q';
-        const uint32_t q_len = htonl(static_cast<uint32_t>(Q_LEN_BASE - 1 + sql.size() + 1));
+        const uint32_t q_len = htonl(static_cast<uint32_t>(sql.size() + 4 + 1));
         static_cast<void>(send(sock, &q_type, 1, 0));
         static_cast<void>(send(sock, &q_len, 4, 0));
         static_cast<void>(send(sock, sql.c_str(), sql.size() + 1, 0));
@@ -162,7 +166,7 @@ void test_Server_SimpleQuery() {
 }
 
 void test_Server_InvalidProtocol() {
-    auto catalog = std::make_unique<Catalog>();
+    auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(128, disk_manager);
     const uint16_t port = PORT_INVALID;
@@ -188,11 +192,12 @@ void test_Server_InvalidProtocol() {
         }
         static_cast<void>(close(sock));
     }
+
     static_cast<void>(server->stop());
 }
 
 void test_Server_Terminate() {
-    auto catalog = std::make_unique<Catalog>();
+    auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(128, disk_manager);
     const uint16_t port = PORT_TERM;
@@ -226,14 +231,15 @@ void test_Server_Terminate() {
         }
         static_cast<void>(close(sock));
     }
+
     static_cast<void>(server->stop());
 }
 
 void test_Server_Handshake() {
-    const uint16_t port = PORT_HANDSHAKE;
+    auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(128, disk_manager);
-    auto catalog = std::make_unique<Catalog>();
+    const uint16_t port = PORT_HANDSHAKE;
     auto server = Server::create(port, *catalog, sm);
     static_cast<void>(server->start());
 
@@ -260,31 +266,32 @@ void test_Server_Handshake() {
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
             char type{};
             static_cast<void>(recv(sock, &type, 1, 0));
-            EXPECT_EQ(static_cast<int>(type), static_cast<int>('R'));
+            EXPECT_EQ(type, 'R');
         }
         static_cast<void>(close(sock));
     }
+
     static_cast<void>(server->stop());
 }
 
 void test_Server_MultiClient() {
-    const uint16_t port = PORT_MULTI;
+    auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(128, disk_manager);
-    auto catalog = std::make_unique<Catalog>();
+    const uint16_t port = PORT_MULTI;
     auto server = Server::create(port, *catalog, sm);
     static_cast<void>(server->start());
 
+    const int NUM_CLIENTS = 5;
     std::vector<std::thread> clients;
-    clients.reserve(NUM_CLIENTS);
     std::atomic<int> success_count{0};
 
     for (int i = 0; i < NUM_CLIENTS; ++i) {
-        clients.emplace_back([&success_count]() {
+        clients.emplace_back([port, &success_count]() {
             struct sockaddr_in client_addr{};
             client_addr.sin_family = AF_INET;
-            client_addr.sin_port = htons(PORT_MULTI);
-            static_cast<void>(inet_pton(AF_INET, "127.0.0.1", &client_addr.sin_addr));
+            client_addr.sin_port = htons(port);
+            inet_pton(AF_INET, "127.0.0.1", &client_addr.sin_addr);
 
             const int sock = socket(AF_INET, SOCK_STREAM, 0);
             if (sock >= 0) {
@@ -317,20 +324,15 @@ void test_Server_MultiClient() {
 
 int main() {
     std::cout << "Server Unit Tests\n";
-    std::cout << "========================\n";
+    std::cout << "=================\n";
 
-    RUN_TEST(Server_StatusStrings);
-    RUN_TEST(Server_SimpleQuery);
-    RUN_TEST(Server_InvalidProtocol);
-    RUN_TEST(Server_Terminate);
-    RUN_TEST(Server_Handshake);
-    RUN_TEST(Server_MultiClient);
+    RUN_TEST(test_Server_StatusStrings);
+    RUN_TEST(test_Server_SimpleQuery);
+    RUN_TEST(test_Server_InvalidProtocol);
+    RUN_TEST(test_Server_Terminate);
+    RUN_TEST(test_Server_Handshake);
+    RUN_TEST(test_Server_MultiClient);
 
-    std::cout << "========================\n";
-    std::cout << "All tests passed: " << tests_passed << "\n";
-    if (tests_failed > 0) {
-        std::cout << "Tests failed: " << tests_failed << "\n";
-        return 1;
-    }
-    return 0;
+    std::cout << "\nResults: " << tests_passed << " passed, " << tests_failed << " failed\n";
+    return (tests_failed > 0);
 }
