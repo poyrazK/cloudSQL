@@ -11,7 +11,7 @@
 #include "executor/types.hpp"
 #include "parser/statement.hpp"
 #include "recovery/log_manager.hpp"
-#include "storage/storage_manager.hpp"
+#include "storage/buffer_pool_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
@@ -21,7 +21,7 @@ namespace cloudsql::executor {
  */
 class QueryExecutor {
    public:
-    QueryExecutor(Catalog& catalog, storage::StorageManager& storage_manager,
+    QueryExecutor(Catalog& catalog, storage::BufferPoolManager& bpm,
                   transaction::LockManager& lock_manager,
                   transaction::TransactionManager& transaction_manager,
                   recovery::LogManager* log_manager = nullptr);
@@ -40,7 +40,7 @@ class QueryExecutor {
 
    private:
     Catalog& catalog_;
-    storage::StorageManager& storage_manager_;
+    storage::BufferPoolManager& bpm_;
     transaction::LockManager& lock_manager_;
     transaction::TransactionManager& transaction_manager_;
     recovery::LogManager* log_manager_;

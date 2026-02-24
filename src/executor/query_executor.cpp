@@ -28,19 +28,19 @@
 #include "recovery/log_record.hpp"
 #include "storage/btree_index.hpp"
 #include "storage/heap_table.hpp"
-#include "storage/storage_manager.hpp"
+#include "storage/buffer_pool_manager.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
 
-QueryExecutor::QueryExecutor(Catalog& catalog, storage::StorageManager& storage_manager,
+QueryExecutor::QueryExecutor(Catalog& catalog, storage::BufferPoolManager& bpm,
                              transaction::LockManager& lock_manager,
                              transaction::TransactionManager& transaction_manager,
                              recovery::LogManager* log_manager)
     : catalog_(catalog),
-      storage_manager_(storage_manager),
+      bpm_(bpm),
       lock_manager_(lock_manager),
       transaction_manager_(transaction_manager),
       log_manager_(log_manager) {}
@@ -209,7 +209,7 @@ QueryResult QueryExecutor::execute_create_table(const parser::CreateTableStateme
         return result;
     }
     const auto* table_info = table_info_opt.value();
-    storage::HeapTable table(table_info->name, storage_manager_, executor::Schema());
+    storage::HeapTable table(table_info->name, bpm_, executor::Schema());
     if (!table.create()) {
         static_cast<void>(catalog_.drop_table(table_id));
         result.set_error("Failed to create table file");
@@ -243,7 +243,7 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
         schema.add_column(col.name, col.type);
     }
 
-    storage::HeapTable table(table_name, storage_manager_, schema);
+    storage::HeapTable table(table_name, bpm_, schema);
 
     uint64_t rows_inserted = 0;
     const uint64_t xmin = (txn != nullptr) ? txn->get_id() : 0;
@@ -298,7 +298,7 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt,
         schema.add_column(col.name, col.type);
     }
 
-    storage::HeapTable table(table_name, storage_manager_, schema);
+    storage::HeapTable table(table_name, bpm_, schema);
     const uint64_t xmax = (txn != nullptr) ? txn->get_id() : 0;
     uint64_t rows_deleted = 0;
 
@@ -362,7 +362,7 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
         schema.add_column(col.name, col.type);
     }
 
-    storage::HeapTable table(table_name, storage_manager_, schema);
+    storage::HeapTable table(table_name, bpm_, schema);
     const uint64_t txn_id = (txn != nullptr) ? txn->get_id() : 0;
     uint64_t rows_updated = 0;
 
@@ -456,7 +456,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     }
 
     std::unique_ptr<Operator> current_root = std::make_unique<SeqScanOperator>(
-        std::make_unique<storage::HeapTable>(base_table_name, storage_manager_, base_schema), txn,
+        std::make_unique<storage::HeapTable>(base_table_name, bpm_, base_schema), txn,
         &lock_manager_);
 
     /* 2. Add JOINs */
@@ -474,7 +474,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         }
 
         auto join_scan = std::make_unique<SeqScanOperator>(
-            std::make_unique<storage::HeapTable>(join_table_name, storage_manager_, join_schema),
+            std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema),
             txn, &lock_manager_);
 
         /* For now, we use HashJoin if a condition exists, otherwise NestedLoop would be needed.
@@ -640,12 +640,12 @@ QueryResult QueryExecutor::execute_drop_table(const parser::DropTableStatement& 
     /* 1. Drop associated indexes from physical storage */
     const auto indexes = catalog_.get_table_indexes(table_id);
     for (const auto& idx_info : indexes) {
-        storage::BTreeIndex idx(idx_info->name, storage_manager_, common::ValueType::TYPE_NULL);
+        storage::BTreeIndex idx(idx_info->name, bpm_, common::ValueType::TYPE_NULL);
         static_cast<void>(idx.drop());
     }
 
     /* 2. Drop table physical file */
-    storage::HeapTable table(stmt.table_name(), storage_manager_, executor::Schema());
+    storage::HeapTable table(stmt.table_name(), bpm_, executor::Schema());
     static_cast<void>(table.drop());
 
     /* 3. Update catalog */
@@ -685,7 +685,7 @@ QueryResult QueryExecutor::execute_drop_index(const parser::DropIndexStatement& 
     }
 
     /* 1. Drop physical file */
-    storage::BTreeIndex idx(stmt.index_name(), storage_manager_, common::ValueType::TYPE_NULL);
+    storage::BTreeIndex idx(stmt.index_name(), bpm_, common::ValueType::TYPE_NULL);
     static_cast<void>(idx.drop());
 
     /* 2. Update catalog */
