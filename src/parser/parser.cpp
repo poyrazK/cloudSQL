@@ -27,7 +27,7 @@ namespace cloudsql::parser {
 /**
  * @brief Construct a new Parser
  */
-Parser::Parser(std::unique_ptr<Lexer> lexer) : lexer_(std::move(lexer)){}
+Parser::Parser(std::unique_ptr<Lexer> lexer) : lexer_(std::move(lexer)) {}
 
 /**
  * @brief Parse a single SQL statement

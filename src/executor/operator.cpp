@@ -659,7 +659,7 @@ LimitOperator::LimitOperator(std::unique_ptr<Operator> child, uint64_t limit, ui
     : Operator(OperatorType::Limit, child->get_txn(), child->get_lock_manager()),
       child_(std::move(child)),
       limit_(limit),
-      offset_(offset){}
+      offset_(offset) {}
 
 bool LimitOperator::init() {
     return child_->init();

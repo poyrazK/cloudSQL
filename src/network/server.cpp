@@ -89,14 +89,14 @@ class ProtocolWriter {
    public:
     static void append_int16(std::vector<char>& buf, uint16_t val) {
         const uint16_t nval = htons(val);
-        std::array<char, sizeof(uint16_t)> p{};
+        std::array<char, sizeof(uint16_t)> p {};
         std::memcpy(p.data(), &nval, sizeof(uint16_t));
         buf.insert(buf.end(), p.begin(), p.end());
     }
 
     static void append_int32(std::vector<char>& buf, uint32_t val) {
         const uint32_t nval = htonl(val);
-        std::array<char, sizeof(uint32_t)> p{};
+        std::array<char, sizeof(uint32_t)> p {};
         std::memcpy(p.data(), &nval, sizeof(uint32_t));
         buf.insert(buf.end(), p.begin(), p.end());
     }
@@ -119,7 +119,7 @@ Server::Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm)
     : port_(port),
       catalog_(catalog),
       bpm_(bpm),
-      transaction_manager_(lock_manager_, catalog, bpm){}
+      transaction_manager_(lock_manager_, catalog, bpm) {}
 
 std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog,
                                        storage::BufferPoolManager& bpm) {
@@ -145,7 +145,7 @@ bool Server::start() {
     const int opt = 1;
     static_cast<void>(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)));
 
-    struct sockaddr_in addr{};
+    struct sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
@@ -280,14 +280,14 @@ void Server::accept_connections() {
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(fd, &read_fds);
-        struct timeval timeout{0, SELECT_TIMEOUT_USEC};
+        struct timeval timeout {0, SELECT_TIMEOUT_USEC};
 
         const int res = select(fd + 1, &read_fds, nullptr, nullptr, &timeout);
         if (res <= 0) {
             continue; /* Timeout or error */
         }
 
-        struct sockaddr_in client_addr{};
+        struct sockaddr_in client_addr {};
         socklen_t client_len = sizeof(client_addr);
 
         const int client_fd =
@@ -317,7 +317,7 @@ void Server::accept_connections() {
  * @brief Handle a client connection using PostgreSQL protocol
  */
 void Server::handle_connection(int client_fd) {
-    std::array<char, MAX_PACKET_SIZE> buffer{};
+    std::array<char, MAX_PACKET_SIZE> buffer {};
     executor::QueryExecutor client_executor(catalog_, bpm_, lock_manager_, transaction_manager_);
 
     /* 1. Read Length (Initial Startup/SSL) */

@@ -34,7 +34,7 @@ class TransactionManager {
     explicit TransactionManager(LockManager& lock_manager, Catalog& catalog,
                                 storage::BufferPoolManager& bpm,
                                 recovery::LogManager* log_manager = nullptr)
-        : lock_manager_(lock_manager), catalog_(catalog), bpm_(bpm), log_manager_(log_manager){}
+        : lock_manager_(lock_manager), catalog_(catalog), bpm_(bpm), log_manager_(log_manager) {}
 
     Transaction* begin(IsolationLevel level = IsolationLevel::REPEATABLE_READ);
     void commit(Transaction* txn);
