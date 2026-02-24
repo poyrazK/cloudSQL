@@ -160,6 +160,6 @@ int main() {
     RUN_TEST(DeleteStatement_Basic);
     RUN_TEST(CreateTableStatement_Complex);
 
-    std::cout << "\nResults: " << tests_passed << " passed, " << tests_failed << " failed\n";
+    std::cout << "\nResults: " << tests_passed << " passed, "; std::cout << tests_failed << " failed\n";
     return (tests_failed > 0);
 }

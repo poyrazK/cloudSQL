@@ -374,7 +374,7 @@ TEST(NetworkTest_Handshake) {
     if (sock < 0) {
         throw std::runtime_error("Failed to create socket in NetworkTest_Handshake");
     }
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     static_cast<void>(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr));
@@ -382,13 +382,13 @@ TEST(NetworkTest_Handshake) {
     if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
         const uint32_t ssl_req[] = {htonl(8), htonl(80877103)};
         static_cast<void>(send(sock, ssl_req, 8, 0));
-        char response {};
+        char response{};
         static_cast<void>(recv(sock, &response, 1, 0));
         EXPECT_EQ(static_cast<int>(response), static_cast<int>('N'));
 
         const uint32_t startup[] = {htonl(8), htonl(196608)};
         static_cast<void>(send(sock, startup, 8, 0));
-        char type {};
+        char type{};
         static_cast<void>(recv(sock, &type, 1, 0));
         EXPECT_EQ(static_cast<int>(type), static_cast<int>('R'));
     }
@@ -418,7 +418,7 @@ TEST(NetworkTest_MultiClient) {
         clients.emplace_back([&success_count]() {
             const int sock = socket(AF_INET, SOCK_STREAM, 0);
             if (sock < 0) { return; }
-            struct sockaddr_in addr {};
+            struct sockaddr_in addr{};
             addr.sin_family = AF_INET;
             addr.sin_port = htons(5439);
             static_cast<void>(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr));
@@ -426,7 +426,7 @@ TEST(NetworkTest_MultiClient) {
             if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
                 const uint32_t startup[] = {htonl(8), htonl(196608)};
                 static_cast<void>(send(sock, startup, 8, 0));
-                char type {};
+                char type{};
                 if (recv(sock, &type, 1, 0) > 0 && type == 'R') {
                     success_count++;
                 }

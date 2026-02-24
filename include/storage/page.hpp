@@ -58,7 +58,7 @@ class Page {
 
     void reset_memory() { data_.fill(0); }
 
-    std::array<char, PAGE_SIZE> data_ {};  // Fixed size page array
+    std::array<char, PAGE_SIZE> data_{};  // Fixed size page array
     uint32_t page_id_ = 0;                // The logical page id within the file
     std::string file_name_;               // File this page belongs to
 

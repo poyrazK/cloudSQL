@@ -40,7 +40,7 @@ struct ColumnInfo {
     ColumnInfo() = default;
 
     ColumnInfo(std::string name, common::ValueType type, uint16_t pos)
-        : name(std::move(name)), type(type), position(pos) {}
+        : name(std::move(name)), type(type), position(pos){}
 };
 
 /**

@@ -90,7 +90,7 @@ void test_Server_SimpleQuery() {
 
     static_cast<void>(server->start());
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
@@ -114,7 +114,7 @@ void test_Server_SimpleQuery() {
                                                  htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
         static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
 
-        std::array<char, BUF_SIZE> buffer {};
+        std::array<char, BUF_SIZE> buffer{};
         static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));  // AuthOK
         static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));    // ReadyForQuery
 
@@ -173,7 +173,7 @@ void test_Server_InvalidProtocol() {
     auto server = Server::create(port, *catalog, sm);
     static_cast<void>(server->start());
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
@@ -186,7 +186,7 @@ void test_Server_InvalidProtocol() {
                                                      htonl(12345)};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
 
-            std::array<char, 1> buffer {};
+            std::array<char, 1> buffer{};
             const ssize_t n = recv(sock, buffer.data(), 1, 0);
             EXPECT_EQ(n, 0);
         }
@@ -204,7 +204,7 @@ void test_Server_Terminate() {
     auto server = Server::create(port, *catalog, sm);
     static_cast<void>(server->start());
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
@@ -217,7 +217,7 @@ void test_Server_Terminate() {
                                                      htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
 
-            std::array<char, BUF_SIZE> buffer {};
+            std::array<char, BUF_SIZE> buffer{};
             static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));  // AuthOK
             static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));    // ReadyForQuery
 
@@ -243,7 +243,7 @@ void test_Server_Handshake() {
     auto server = Server::create(port, *catalog, sm);
     static_cast<void>(server->start());
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
@@ -256,7 +256,7 @@ void test_Server_Handshake() {
             const std::array<uint32_t, 2> ssl_req = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(static_cast<uint32_t>(PG_SSL_CODE))};
             static_cast<void>(send(sock, ssl_req.data(), STARTUP_PKT_LEN, 0));
-            char response {};
+            char response{};
             static_cast<void>(recv(sock, &response, 1, 0));
             EXPECT_EQ(static_cast<int>(response), static_cast<int>('N'));
 
@@ -264,7 +264,7 @@ void test_Server_Handshake() {
             const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
-            char type {};
+            char type{};
             static_cast<void>(recv(sock, &type, 1, 0));
             EXPECT_EQ(type, 'R');
         }
@@ -288,7 +288,7 @@ void test_Server_MultiClient() {
 
     for (int i = 0; i < NUM_CLIENTS; ++i) {
         clients.emplace_back([port, &success_count]() {
-            struct sockaddr_in client_addr {};
+            struct sockaddr_in client_addr{};
             client_addr.sin_family = AF_INET;
             client_addr.sin_port = htons(port);
             inet_pton(AF_INET, "127.0.0.1", &client_addr.sin_addr);
@@ -302,7 +302,7 @@ void test_Server_MultiClient() {
                         htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                         htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
                     static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
-                    char type {};
+                    char type{};
                     if (recv(sock, &type, 1, 0) > 0 && type == 'R') {
                         success_count++;
                     }
@@ -333,6 +333,6 @@ int main() {
     RUN_TEST(test_Server_Handshake);
     RUN_TEST(test_Server_MultiClient);
 
-    std::cout << "\nResults: " << tests_passed << " passed, " << tests_failed << " failed\n";
+    std::cout << "\nResults: " << tests_passed << " passed, "; std::cout << tests_failed << " failed\n";
     return (tests_failed > 0);
 }

@@ -111,9 +111,9 @@ class Value {
 };
 
 // Constructors
-inline Value::Value() : type_(ValueType::TYPE_NULL), data_(std::monostate {}) {}
+inline Value::Value() : type_(ValueType::TYPE_NULL), data_(std::monostate{}){}
 
-inline Value::Value(ValueType type) : type_(type), data_(std::monostate {}) {
+inline Value::Value(ValueType type) : type_(type), data_(std::monostate{}) {
     if (type != ValueType::TYPE_NULL) {
         /* Initialize with default values based on type */
         switch (type) {
@@ -141,27 +141,27 @@ inline Value::Value(ValueType type) : type_(type), data_(std::monostate {}) {
     }
 }
 
-inline Value::Value(bool v) : type_(ValueType::TYPE_BOOL), data_(v) {}
+inline Value::Value(bool v) : type_(ValueType::TYPE_BOOL), data_(v){}
 
-inline Value::Value(int8_t v) : type_(ValueType::TYPE_INT8), data_(static_cast<int64_t>(v)) {}
+inline Value::Value(int8_t v) : type_(ValueType::TYPE_INT8), data_(static_cast<int64_t>(v)){}
 
-inline Value::Value(int16_t v) : type_(ValueType::TYPE_INT16), data_(static_cast<int64_t>(v)) {}
+inline Value::Value(int16_t v) : type_(ValueType::TYPE_INT16), data_(static_cast<int64_t>(v)){}
 
-inline Value::Value(int32_t v) : type_(ValueType::TYPE_INT32), data_(static_cast<int64_t>(v)) {}
+inline Value::Value(int32_t v) : type_(ValueType::TYPE_INT32), data_(static_cast<int64_t>(v)){}
 
-inline Value::Value(int64_t v) : type_(ValueType::TYPE_INT64), data_(v) {}
+inline Value::Value(int64_t v) : type_(ValueType::TYPE_INT64), data_(v){}
 
-inline Value::Value(float v) : type_(ValueType::TYPE_FLOAT32), data_(static_cast<double>(v)) {}
+inline Value::Value(float v) : type_(ValueType::TYPE_FLOAT32), data_(static_cast<double>(v)){}
 
-inline Value::Value(double v) : type_(ValueType::TYPE_FLOAT64), data_(v) {}
+inline Value::Value(double v) : type_(ValueType::TYPE_FLOAT64), data_(v){}
 
-inline Value::Value(const std::string& v) : type_(ValueType::TYPE_TEXT), data_(v) {}
+inline Value::Value(const std::string& v) : type_(ValueType::TYPE_TEXT), data_(v){}
 
-inline Value::Value(const char* v) : type_(ValueType::TYPE_TEXT), data_(std::string(v)) {}
+inline Value::Value(const char* v) : type_(ValueType::TYPE_TEXT), data_(std::string(v)){}
 
 // Factory methods
 inline Value Value::make_null() {
-    return {};
+    return{};
 }
 inline Value Value::make_bool(bool v) {
     return Value(v);
@@ -281,7 +281,7 @@ inline std::string Value::to_string() const {
     }
     if (std::holds_alternative<double>(data_)) {
         static constexpr int STRING_BUF_SIZE = 64;
-        std::array<char, STRING_BUF_SIZE> buf {};
+        std::array<char, STRING_BUF_SIZE> buf{};
         std::snprintf(buf.data(), buf.size(), "%.10g", std::get<double>(data_));
         return buf.data();
     }
@@ -318,7 +318,7 @@ inline std::string Value::to_debug_string() const {
 
 inline std::size_t Value::Hash::operator()(const Value& v) const noexcept {
     try {
-        std::size_t h = std::hash<int> {}(static_cast<int>(v.type_));
+        std::size_t h = std::hash<int>{}(static_cast<int>(v.type_));
         static constexpr std::size_t GOLDEN_RATIO = 0x9e3779b9U;
         static constexpr unsigned int SHIFT_L = 6;
         static constexpr unsigned int SHIFT_R = 2;
@@ -327,7 +327,7 @@ inline std::size_t Value::Hash::operator()(const Value& v) const noexcept {
             [&h](auto&& arg) {
                 using T = std::decay_t<decltype(arg)>;
                 if constexpr (!std::is_same_v<T, std::monostate>) {
-                    h ^= std::hash<T> {}(arg) + GOLDEN_RATIO + (h << SHIFT_L) + (h >> SHIFT_R);
+                    h ^= std::hash<T>{}(arg) + GOLDEN_RATIO + (h << SHIFT_L) + (h >> SHIFT_R);
                 }
             },
             v.data_);

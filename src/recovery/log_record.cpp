@@ -104,7 +104,7 @@ common::Value deserialize_value(const char*& ptr) {
     ptr = std::next(ptr, static_cast<std::ptrdiff_t>(sizeof(common::ValueType)));
 
     if (type == common::ValueType::TYPE_NULL) {
-        return {};
+        return{};
     }
 
     switch (type) {
@@ -161,7 +161,7 @@ common::Value deserialize_value(const char*& ptr) {
             return common::Value::make_text(s);
         }
         default:
-            return {};
+            return{};
     }
 }
 

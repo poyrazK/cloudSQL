@@ -249,7 +249,7 @@ class DropTableStatement : public Statement {
 
    public:
     explicit DropTableStatement(std::string name, bool if_exists = false)
-        : table_name_(std::move(name)), if_exists_(if_exists) {}
+        : table_name_(std::move(name)), if_exists_(if_exists){}
     [[nodiscard]] StmtType type() const override { return StmtType::DropTable; }
     [[nodiscard]] const std::string& table_name() const { return table_name_; }
     [[nodiscard]] bool if_exists() const { return if_exists_; }
@@ -268,7 +268,7 @@ class DropIndexStatement : public Statement {
 
    public:
     explicit DropIndexStatement(std::string name, bool if_exists = false)
-        : index_name_(std::move(name)), if_exists_(if_exists) {}
+        : index_name_(std::move(name)), if_exists_(if_exists){}
     [[nodiscard]] StmtType type() const override { return StmtType::DropIndex; }
     [[nodiscard]] const std::string& index_name() const { return index_name_; }
     [[nodiscard]] bool if_exists() const { return if_exists_; }

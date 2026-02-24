@@ -45,7 +45,7 @@ class BTreeIndex {
         HeapTable::TupleId tuple_id;
 
         Entry() = default;
-        Entry(common::Value k, HeapTable::TupleId tid) : key(std::move(k)), tuple_id(tid) {}
+        Entry(common::Value k, HeapTable::TupleId tid) : key(std::move(k)), tuple_id(tid){}
     };
 
     /**

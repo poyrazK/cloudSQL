@@ -75,7 +75,7 @@ class BinaryExpr : public Expression {
 
    public:
     BinaryExpr(std::unique_ptr<Expression> left, TokenType op, std::unique_ptr<Expression> right)
-        : left_(std::move(left)), op_(op), right_(std::move(right)) {}
+        : left_(std::move(left)), op_(op), right_(std::move(right)){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Binary; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
@@ -97,7 +97,7 @@ class UnaryExpr : public Expression {
     std::unique_ptr<Expression> expr_;
 
    public:
-    UnaryExpr(TokenType op, std::unique_ptr<Expression> expr) : op_(op), expr_(std::move(expr)) {}
+    UnaryExpr(TokenType op, std::unique_ptr<Expression> expr) : op_(op), expr_(std::move(expr)){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Unary; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
@@ -115,9 +115,9 @@ class ColumnExpr : public Expression {
     std::string name_;
 
    public:
-    explicit ColumnExpr(std::string name) : name_(std::move(name)) {}
+    explicit ColumnExpr(std::string name) : name_(std::move(name)){}
     ColumnExpr(std::string table, std::string name)
-        : table_name_(std::move(table)), name_(std::move(name)) {}
+        : table_name_(std::move(table)), name_(std::move(name)){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Column; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
@@ -138,7 +138,7 @@ class ConstantExpr : public Expression {
     common::Value value_;
 
    public:
-    explicit ConstantExpr(common::Value val) : value_(std::move(val)) {}
+    explicit ConstantExpr(common::Value val) : value_(std::move(val)){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Constant; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
@@ -159,7 +159,7 @@ class FunctionExpr : public Expression {
     bool distinct_ = false;
 
    public:
-    explicit FunctionExpr(std::string name) : func_name_(std::move(name)) {}
+    explicit FunctionExpr(std::string name) : func_name_(std::move(name)){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Function; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
@@ -186,7 +186,7 @@ class InExpr : public Expression {
    public:
     InExpr(std::unique_ptr<Expression> col, std::vector<std::unique_ptr<Expression>> vals,
            bool is_not = false)
-        : column_(std::move(col)), values_(std::move(vals)), not_flag_(is_not) {}
+        : column_(std::move(col)), values_(std::move(vals)), not_flag_(is_not){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::In; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
@@ -205,7 +205,7 @@ class IsNullExpr : public Expression {
 
    public:
     explicit IsNullExpr(std::unique_ptr<Expression> expr, bool not_flag = false)
-        : expr_(std::move(expr)), not_flag_(not_flag) {}
+        : expr_(std::move(expr)), not_flag_(not_flag){}
 
     [[nodiscard]] ExprType type() const override { return ExprType::IsNull; }
     [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,

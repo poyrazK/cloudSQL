@@ -43,7 +43,7 @@ QueryExecutor::QueryExecutor(Catalog& catalog, storage::BufferPoolManager& bpm,
       bpm_(bpm),
       lock_manager_(lock_manager),
       transaction_manager_(transaction_manager),
-      log_manager_(log_manager) {}
+      log_manager_(log_manager){}
 
 QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     const auto start = std::chrono::high_resolution_clock::now();

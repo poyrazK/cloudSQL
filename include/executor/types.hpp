@@ -24,7 +24,7 @@ class Tuple {
 
    public:
     Tuple() = default;
-    explicit Tuple(std::vector<common::Value> values) : values_(std::move(values)) {}
+    explicit Tuple(std::vector<common::Value> values) : values_(std::move(values)){}
 
     Tuple(const Tuple& other) = default;
     Tuple(Tuple&& other) noexcept = default;
@@ -61,7 +61,7 @@ class ColumnMeta {
    public:
     ColumnMeta() = default;
     ColumnMeta(std::string name, common::ValueType type, bool nullable = true)
-        : name_(std::move(name)), type_(type), nullable_(nullable) {}
+        : name_(std::move(name)), type_(type), nullable_(nullable){}
 
     [[nodiscard]] const std::string& name() const { return name_; }
     [[nodiscard]] common::ValueType type() const { return type_; }
@@ -86,7 +86,7 @@ class Schema {
 
    public:
     Schema() = default;
-    explicit Schema(std::vector<ColumnMeta> columns) : columns_(std::move(columns)) {}
+    explicit Schema(std::vector<ColumnMeta> columns) : columns_(std::move(columns)){}
 
     void add_column(const ColumnMeta& col) { columns_.push_back(col); }
     void add_column(std::string name, common::ValueType type, bool nullable = true) {
