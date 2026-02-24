@@ -25,23 +25,23 @@ BTreeIndex::BTreeIndex(std::string index_name, BufferPoolManager& bpm, common::V
     : index_name_(std::move(index_name)),
       filename_(index_name_ + ".idx"),
       bpm_(bpm),
-      key_type_(key_type){}
+      key_type_(key_type) {}
 
 /**
  * @brief Iterator implementation
  */
 BTreeIndex::Iterator::Iterator(BTreeIndex& index, uint32_t page, uint16_t slot)
-    : index_(index), current_page_(page), current_slot_(slot){}
+    : index_(index), current_page_(page), current_slot_(slot) {}
 
 bool BTreeIndex::Iterator::next(Entry& out_entry) {
     while (!eof_) {
-        std::array<char, Page::PAGE_SIZE> buffer{};
+        std::array<char, Page::PAGE_SIZE> buffer {};
         if (!index_.read_page(current_page_, buffer.data())) {
             eof_ = true;
             return false;
         }
 
-        NodeHeader header{};
+        NodeHeader header {};
         std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
 
         if (current_slot_ >= header.num_keys) {
@@ -109,8 +109,8 @@ bool BTreeIndex::create() {
     }
 
     /* Initialize root page */
-    std::array<char, Page::PAGE_SIZE> buffer{};
-    NodeHeader header{};
+    std::array<char, Page::PAGE_SIZE> buffer {};
+    NodeHeader header {};
     header.type = NodeType::Leaf;
     header.num_keys = 0;
     header.parent_page = 0;
@@ -134,12 +134,12 @@ bool BTreeIndex::drop() {
 
 bool BTreeIndex::insert(const common::Value& key, HeapTable::TupleId tuple_id) {
     const uint32_t leaf_page = find_leaf(key);
-    std::array<char, Page::PAGE_SIZE> buffer{};
+    std::array<char, Page::PAGE_SIZE> buffer {};
     if (!read_page(leaf_page, buffer.data())) {
         return false;
     }
 
-    NodeHeader header{};
+    NodeHeader header {};
     std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
 
     /* Simple append-style serialization for this phase */
@@ -173,9 +173,9 @@ bool BTreeIndex::remove(const common::Value& key, HeapTable::TupleId tuple_id) {
 
 std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
     const uint32_t leaf_page = find_leaf(key);
-    std::array<char, Page::PAGE_SIZE> buffer{};
+    std::array<char, Page::PAGE_SIZE> buffer {};
     if (!read_page(leaf_page, buffer.data())) {
-        return{};
+        return {};
     }
 
     std::vector<HeapTable::TupleId> results;

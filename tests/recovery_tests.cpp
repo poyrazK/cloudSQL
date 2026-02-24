@@ -155,6 +155,7 @@ int main() {
     RUN_TEST(LogRecordAllTypes);
     RUN_TEST(LogManagerBasic);
 
-    std::cout << "\nResults: " << tests_passed << " passed, "; std::cout << tests_failed << " failed\n";
+        std::cout << "\nResults: " << tests_passed << " passed, ";
+    std::cout << tests_failed << " failed\n";
     return (tests_failed > 0);
 }

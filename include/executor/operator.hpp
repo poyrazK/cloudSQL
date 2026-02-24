@@ -60,7 +60,7 @@ class Operator {
    public:
     explicit Operator(OperatorType type, Transaction* txn = nullptr,
                       LockManager* lock_manager = nullptr)
-        : type_(type), txn_(txn), lock_manager_(lock_manager){}
+        : type_(type), txn_(txn), lock_manager_(lock_manager) {}
     virtual ~Operator() = default;
 
     // Disable copy/move for base operator
@@ -82,7 +82,7 @@ class Operator {
         state_ = ExecState::Done;
         return false;
     }
-    virtual void close(){}
+    virtual void close() {}
 
     [[nodiscard]] virtual Schema& output_schema() = 0;
 
