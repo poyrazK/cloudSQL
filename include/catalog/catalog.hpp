@@ -246,8 +246,6 @@ class Catalog {
     [[nodiscard]] static uint64_t get_current_time();
 };
 
-
-
 }  // namespace cloudsql
 
 #endif  // SQL_ENGINE_CATALOG_CATALOG_HPP

@@ -16,13 +16,12 @@
 #include <vector>
 
 #include "common/value.hpp"
-#include "storage/heap_table.hpp"
 #include "storage/buffer_pool_manager.hpp"
+#include "storage/heap_table.hpp"
 
 namespace cloudsql::storage {
 
-BTreeIndex::BTreeIndex(std::string index_name, BufferPoolManager& bpm,
-                       common::ValueType key_type)
+BTreeIndex::BTreeIndex(std::string index_name, BufferPoolManager& bpm, common::ValueType key_type)
     : index_name_(std::move(index_name)),
       filename_(index_name_ + ".idx"),
       bpm_(bpm),
@@ -57,7 +56,8 @@ bool BTreeIndex::Iterator::next(Entry& out_entry) {
         }
 
         /* Deserialize entry (crude implementation) */
-        const char* const data_start = std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
+        const char* const data_start =
+            std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
         /* Find the N-th pipe-delimited segment */
         const std::string s(data_start);
         std::stringstream ss(s);
@@ -87,7 +87,7 @@ bool BTreeIndex::Iterator::next(Entry& out_entry) {
             }
 
             out_entry = Entry(std::move(val),
-                              HeapTable::TupleId(static_cast<uint32_t>(std::stoul(page_str)), 
+                              HeapTable::TupleId(static_cast<uint32_t>(std::stoul(page_str)),
                                                  static_cast<uint16_t>(std::stoi(slot_str))));
             current_slot_++;
             return true;
@@ -143,19 +143,21 @@ bool BTreeIndex::insert(const common::Value& key, HeapTable::TupleId tuple_id) {
     std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
 
     /* Simple append-style serialization for this phase */
-    const std::string entry_data = std::to_string(static_cast<int>(key.type())) + "|" + key.to_string() +
-                                   "|" + std::to_string(tuple_id.page_num) + "|" +
+    const std::string entry_data = std::to_string(static_cast<int>(key.type())) + "|" +
+                                   key.to_string() + "|" + std::to_string(tuple_id.page_num) + "|" +
                                    std::to_string(tuple_id.slot_num) + "|";
 
     /* Check space (very crude) */
-    char* const data_area = std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
+    char* const data_area =
+        std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
     const size_t existing_len = std::strlen(data_area);
     if (existing_len + entry_data.size() + 1 > Page::PAGE_SIZE - sizeof(NodeHeader)) {
         /* TODO: split_leaf(leaf_page, buffer); */
         return false;
     }
 
-    std::memcpy(std::next(data_area, static_cast<std::ptrdiff_t>(existing_len)), entry_data.c_str(), entry_data.size() + 1);
+    std::memcpy(std::next(data_area, static_cast<std::ptrdiff_t>(existing_len)), entry_data.c_str(),
+                entry_data.size() + 1);
     header.num_keys++;
 
     std::memcpy(buffer.data(), &header, sizeof(NodeHeader));
@@ -178,7 +180,8 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
 
     std::vector<HeapTable::TupleId> results;
 
-    const char* const data = std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
+    const char* const data =
+        std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(NodeHeader)));
     const std::string s(data);
     std::stringstream ss(s);
     std::string type_s;
@@ -189,7 +192,8 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
     while (std::getline(ss, type_s, '|') && std::getline(ss, val_s, '|') &&
            std::getline(ss, page_s, '|') && std::getline(ss, slot_s, '|')) {
         if (val_s == key.to_string()) {
-            results.emplace_back(static_cast<uint32_t>(std::stoul(page_s)), static_cast<uint16_t>(std::stoi(slot_s)));
+            results.emplace_back(static_cast<uint32_t>(std::stoul(page_s)),
+                                 static_cast<uint16_t>(std::stoi(slot_s)));
         }
     }
 

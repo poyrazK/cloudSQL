@@ -141,8 +141,6 @@ class Lexer {
     [[nodiscard]] Token make_error(const std::string& message) const;
 };
 
-
-
 }  // namespace cloudsql::parser
 
 #endif  // CLOUDSQL_PARSER_LEXER_HPP

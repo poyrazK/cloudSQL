@@ -20,7 +20,12 @@ using txn_id_t = uint64_t;
 
 enum class TransactionState : uint8_t { RUNNING, COMMITTED, ABORTED };
 
-enum class IsolationLevel : uint8_t { READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE };
+enum class IsolationLevel : uint8_t {
+    READ_UNCOMMITTED,
+    READ_COMMITTED,
+    REPEATABLE_READ,
+    SERIALIZABLE
+};
 
 /**
  * @brief Represents a snapshot of the system state for MVCC

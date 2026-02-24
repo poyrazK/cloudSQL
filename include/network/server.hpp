@@ -16,10 +16,10 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-#include <mutex>
 
 #include "catalog/catalog.hpp"
 #include "executor/query_executor.hpp"
@@ -66,7 +66,7 @@ class Server {
         try {
             static_cast<void>(stop());
         } catch (...) {
-            static_cast<void>(0); // Destructors should not throw
+            static_cast<void>(0);  // Destructors should not throw
         }
         if (listen_fd_ >= 0) {
             static_cast<void>(close(listen_fd_));

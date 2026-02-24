@@ -24,8 +24,7 @@ constexpr std::chrono::milliseconds FLUSH_TIMEOUT(30);
 }  // anonymous namespace
 
 LogManager::LogManager(std::string log_file_path)
-    : log_file_path_(std::move(log_file_path)),
-      log_buffer_(new char[log_buffer_size_]) {
+    : log_file_path_(std::move(log_file_path)), log_buffer_(new char[log_buffer_size_]) {
     // Open log file in binary append mode
     log_stream_.open(log_file_path_, std::ios::binary | std::ios::app | std::ios::out);
     if (!log_stream_.is_open()) {
@@ -79,7 +78,8 @@ lsn_t LogManager::append_log_record(LogRecord& log_record) {
     log_record.lsn_ = lsn;
 
     // Serialize to buffer
-    static_cast<void>(log_record.serialize(std::next(log_buffer_, static_cast<std::ptrdiff_t>(log_buffer_offset_))));
+    static_cast<void>(log_record.serialize(
+        std::next(log_buffer_, static_cast<std::ptrdiff_t>(log_buffer_offset_))));
     log_buffer_offset_ += record_size;
 
     return lsn;

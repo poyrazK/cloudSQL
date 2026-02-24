@@ -41,8 +41,6 @@ class Parser {
     std::unique_ptr<Expression> parse_primary();
 };
 
-
-
 }  // namespace cloudsql::parser
 
 #endif  // CLOUDSQL_PARSER_PARSER_HPP

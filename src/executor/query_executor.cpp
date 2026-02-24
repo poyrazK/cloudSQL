@@ -27,8 +27,8 @@
 #include "recovery/log_manager.hpp"
 #include "recovery/log_record.hpp"
 #include "storage/btree_index.hpp"
-#include "storage/heap_table.hpp"
 #include "storage/buffer_pool_manager.hpp"
+#include "storage/heap_table.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 #include "transaction/transaction_manager.hpp"
@@ -474,8 +474,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         }
 
         auto join_scan = std::make_unique<SeqScanOperator>(
-            std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema),
-            txn, &lock_manager_);
+            std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema), txn,
+            &lock_manager_);
 
         /* For now, we use HashJoin if a condition exists, otherwise NestedLoop would be needed.
          * Note: HashJoin requires equality condition. We'll assume equality for now or default to
@@ -546,8 +546,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 continue;
             }
             std::string name = func->name();
-            std::transform(name.begin(), name.end(), name.begin(), 
-                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
             if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" ||
                 name == "AVG") {

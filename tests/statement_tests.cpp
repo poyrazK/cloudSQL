@@ -20,8 +20,8 @@ using namespace cloudsql::common;
 
 namespace {
 
-using cloudsql::tests::tests_passed;
 using cloudsql::tests::tests_failed;
+using cloudsql::tests::tests_passed;
 
 constexpr int64_t VAL_18 = 18;
 constexpr int64_t VAL_5 = 5;
@@ -148,7 +148,7 @@ TEST(CreateTableStatement_Complex) {
                  "CREATE TABLE complex_table (id INT PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
 }
 
-} // namespace
+}  // namespace
 
 int main() {
     std::cout << "Statement Serialization Tests" << "\n";

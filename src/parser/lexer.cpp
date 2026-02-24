@@ -92,7 +92,8 @@ Token Lexer::next_token() {
             return {TokenType::End, ""};
         }
 
-        if (current_char_ == '-' && position_ + 1 < input_.length() && input_[position_ + 1] == '-') {
+        if (current_char_ == '-' && position_ + 1 < input_.length() &&
+            input_[position_ + 1] == '-') {
             skip_comment();
             continue;
         }

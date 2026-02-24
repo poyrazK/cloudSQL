@@ -57,8 +57,8 @@ class Expression {
     /**
      * @brief Evaluate expression against an optional tuple context
      */
-    [[nodiscard]] virtual common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                                 const executor::Schema* schema = nullptr) const = 0;
+    [[nodiscard]] virtual common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr) const = 0;
 
     [[nodiscard]] virtual std::string to_string() const = 0;
     [[nodiscard]] virtual std::unique_ptr<Expression> clone() const = 0;

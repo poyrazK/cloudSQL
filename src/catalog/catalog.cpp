@@ -222,9 +222,8 @@ bool Catalog::table_exists(oid_t table_id) const {
  * @brief Check if table exists by name
  */
 bool Catalog::table_exists_by_name(const std::string& table_name) const {
-    return std::any_of(tables_.begin(), tables_.end(), [&table_name](const auto& pair) {
-        return pair.second->name == table_name;
-    });
+    return std::any_of(tables_.begin(), tables_.end(),
+                       [&table_name](const auto& pair) { return pair.second->name == table_name; });
 }
 
 /**
@@ -248,7 +247,6 @@ void Catalog::print() const {
 uint64_t Catalog::get_current_time() {
     return static_cast<uint64_t>(std::time(nullptr));
 }
-
 
 /** @} */ /* catalog */
 }  // namespace cloudsql

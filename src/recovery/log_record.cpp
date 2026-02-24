@@ -191,7 +191,8 @@ uint32_t get_value_size(const common::Value& val) {
         case common::ValueType::TYPE_TEXT:
         case common::ValueType::TYPE_VARCHAR:
         case common::ValueType::TYPE_CHAR:
-            return size + static_cast<uint32_t>(sizeof(uint32_t)) + static_cast<uint32_t>(val.as_text().length());
+            return size + static_cast<uint32_t>(sizeof(uint32_t)) +
+                   static_cast<uint32_t>(val.as_text().length());
         default:
             return size;
     }
@@ -227,7 +228,8 @@ uint32_t LogRecord::serialize(char* buffer) const {
 
         // RID
         std::memcpy(buffer, &rid_, sizeof(storage::HeapTable::TupleId));
-        buffer = std::next(buffer, static_cast<std::ptrdiff_t>(sizeof(storage::HeapTable::TupleId)));
+        buffer =
+            std::next(buffer, static_cast<std::ptrdiff_t>(sizeof(storage::HeapTable::TupleId)));
 
         // Tuple(s)
         if (type_ == LogRecordType::INSERT) {
@@ -355,7 +357,8 @@ uint32_t LogRecord::get_size() const {
     }
 
     // Header size (sum of fields)
-    auto s = static_cast<uint32_t>(sizeof(uint32_t) + (sizeof(lsn_t) * 2) + sizeof(txn_id_t) + sizeof(LogRecordType));
+    auto s = static_cast<uint32_t>(sizeof(uint32_t) + (sizeof(lsn_t) * 2) + sizeof(txn_id_t) +
+                                   sizeof(LogRecordType));
 
     if (type_ == LogRecordType::INSERT || type_ == LogRecordType::MARK_DELETE ||
         type_ == LogRecordType::APPLY_DELETE || type_ == LogRecordType::ROLLBACK_DELETE ||

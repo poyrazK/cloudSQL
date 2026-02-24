@@ -502,7 +502,8 @@ bool AggregateOperator::open() {
                     break;
                 case AggregateType::Avg:
                     if (state.counts[i] > 0) {
-                        row.push_back(common::Value::make_float64(state.sums[i] / static_cast<double>(state.counts[i])));
+                        row.push_back(common::Value::make_float64(
+                            state.sums[i] / static_cast<double>(state.counts[i])));
                     } else {
                         row.push_back(common::Value::make_null());
                     }

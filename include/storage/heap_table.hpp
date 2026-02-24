@@ -208,8 +208,6 @@ class HeapTable {
     bool write_page(uint32_t page_num, const char* buffer);
 };
 
-
-
 }  // namespace cloudsql::storage
 
 #endif  // CLOUDSQL_STORAGE_HEAP_TABLE_HPP

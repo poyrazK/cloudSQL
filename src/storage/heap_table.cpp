@@ -29,8 +29,7 @@ namespace {
 constexpr uint16_t DEFAULT_SLOT_COUNT = 64;
 }  // anonymous namespace
 
-HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm,
-                     executor::Schema schema)
+HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::Schema schema)
     : table_name_(std::move(table_name)),
       filename_(table_name_ + ".heap"),
       bpm_(bpm),
@@ -38,8 +37,7 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm,
 
 /* --- Iterator Implementation --- */
 
-HeapTable::Iterator::Iterator(HeapTable& table)
-    : table_(table), next_id_(0, 0), last_id_(0, 0) {}
+HeapTable::Iterator::Iterator(HeapTable& table) : table_(table), next_id_(0, 0), last_id_(0, 0) {}
 
 bool HeapTable::Iterator::next(executor::Tuple& out_tuple) {
     TupleMeta meta;
@@ -113,7 +111,8 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
         if (!read_page(page_num, buffer.data())) {
             std::memset(buffer.data(), 0, Page::PAGE_SIZE);
             PageHeader header{};
-            header.free_space_offset = static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
+            header.free_space_offset =
+                static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
             header.num_slots = 0;
             std::memcpy(buffer.data(), &header, sizeof(PageHeader));
             static_cast<void>(write_page(page_num, buffer.data()));
@@ -122,7 +121,8 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
         PageHeader header{};
         std::memcpy(&header, buffer.data(), sizeof(PageHeader));
         if (header.free_space_offset == 0) {
-            header.free_space_offset = static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
+            header.free_space_offset =
+                static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
             header.num_slots = 0;
         }
 
@@ -133,16 +133,21 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
         }
 
         const auto required = static_cast<uint16_t>(data_str.size() + 1);
-        const auto slot_array_end = static_cast<uint16_t>(sizeof(PageHeader) + ((header.num_slots + 1) * sizeof(uint16_t)));
+        const auto slot_array_end =
+            static_cast<uint16_t>(sizeof(PageHeader) + ((header.num_slots + 1) * sizeof(uint16_t)));
 
         /* Check for sufficient free space in the current page */
         if (header.free_space_offset + required < Page::PAGE_SIZE &&
             slot_array_end < header.free_space_offset) {
             const uint16_t offset = header.free_space_offset;
-            std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)), data_str.c_str(), data_str.size() + 1);
+            std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)),
+                        data_str.c_str(), data_str.size() + 1);
 
             /* Update slot directory */
-            std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))), &offset, sizeof(uint16_t));
+            std::memcpy(std::next(buffer.data(),
+                                  static_cast<std::ptrdiff_t>(
+                                      sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))),
+                        &offset, sizeof(uint16_t));
 
             TupleId tid(page_num, header.num_slots);
             header.num_slots++;
@@ -177,7 +182,11 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
     }
 
     uint16_t offset = 0;
-    std::memcpy(&offset, std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))), sizeof(uint16_t));
+    std::memcpy(
+        &offset,
+        std::next(buffer.data(), static_cast<std::ptrdiff_t>(
+                                     sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))),
+        sizeof(uint16_t));
     if (offset == 0) {
         return false;
     }
@@ -209,7 +218,8 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
     const auto new_len = new_data.size() + 1;
 
     if (new_len <= old_len) {
-        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)), new_data.c_str(), new_len);
+        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)), new_data.c_str(),
+                    new_len);
         return write_page(tuple_id.page_num, buffer.data());
     }
 
@@ -217,7 +227,10 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
     std::vector<std::string> all_tuples;
     for (uint16_t i = 0; i < header.num_slots; ++i) {
         uint16_t slot_off = 0;
-        std::memcpy(&slot_off, std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (i * sizeof(uint16_t)))), sizeof(uint16_t));
+        std::memcpy(&slot_off,
+                    std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) +
+                                                                         (i * sizeof(uint16_t)))),
+                    sizeof(uint16_t));
         if (slot_off == 0) {
             all_tuples.emplace_back("");
             continue;
@@ -225,18 +238,23 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
         if (i == tuple_id.slot_num) {
             all_tuples.push_back(new_data);
         } else {
-            all_tuples.emplace_back(std::next(buffer.data(), static_cast<std::ptrdiff_t>(slot_off)));
+            all_tuples.emplace_back(
+                std::next(buffer.data(), static_cast<std::ptrdiff_t>(slot_off)));
         }
     }
 
     std::memset(buffer.data(), 0, Page::PAGE_SIZE);
-    header.free_space_offset = static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
+    header.free_space_offset =
+        static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
     header.num_slots = 0;
 
     for (const auto& t_data : all_tuples) {
         if (t_data.empty()) {
             const uint16_t zero = 0;
-            std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))), &zero, sizeof(uint16_t));
+            std::memcpy(std::next(buffer.data(),
+                                  static_cast<std::ptrdiff_t>(
+                                      sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))),
+                        &zero, sizeof(uint16_t));
             header.num_slots++;
             continue;
         }
@@ -247,8 +265,12 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
         }
 
         const uint16_t off = header.free_space_offset;
-        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(off)), t_data.c_str(), req);
-        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))), &off, sizeof(uint16_t));
+        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(off)), t_data.c_str(),
+                    req);
+        std::memcpy(std::next(buffer.data(),
+                              static_cast<std::ptrdiff_t>(sizeof(PageHeader) +
+                                                          (header.num_slots * sizeof(uint16_t)))),
+                    &off, sizeof(uint16_t));
         header.num_slots++;
         header.free_space_offset += req;
     }
@@ -276,7 +298,10 @@ bool HeapTable::physical_remove(const TupleId& tuple_id) {
     }
 
     const uint16_t zero = 0;
-    std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))), &zero, sizeof(uint16_t));
+    std::memcpy(
+        std::next(buffer.data(), static_cast<std::ptrdiff_t>(
+                                     sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))),
+        &zero, sizeof(uint16_t));
 
     return write_page(tuple_id.page_num, buffer.data());
 }
@@ -305,7 +330,11 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
     }
 
     uint16_t offset = 0;
-    std::memcpy(&offset, std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))), sizeof(uint16_t));
+    std::memcpy(
+        &offset,
+        std::next(buffer.data(), static_cast<std::ptrdiff_t>(
+                                     sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))),
+        sizeof(uint16_t));
     if (offset == 0) {
         return false;
     }
@@ -412,7 +441,8 @@ bool HeapTable::create() {
     std::array<char, Page::PAGE_SIZE> buffer{};
     std::memset(buffer.data(), 0, Page::PAGE_SIZE);
     PageHeader header{};
-    header.free_space_offset = static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
+    header.free_space_offset =
+        static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
     header.num_slots = 0;
     std::memcpy(buffer.data(), &header, sizeof(PageHeader));
 
@@ -445,6 +475,5 @@ bool HeapTable::write_page(uint32_t page_num, const char* buffer) {
     bpm_.unpin_page(filename_, page_num, true);
     return true;
 }
-
 
 }  // namespace cloudsql::storage

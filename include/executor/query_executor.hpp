@@ -64,8 +64,6 @@ class QueryExecutor {
                                          transaction::Transaction* txn);
 };
 
-
-
 }  // namespace cloudsql::executor
 
 #endif  // CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP

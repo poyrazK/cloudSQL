@@ -58,7 +58,8 @@ class Operator {
     LockManager* lock_manager_;
 
    public:
-    explicit Operator(OperatorType type, Transaction* txn = nullptr, LockManager* lock_manager = nullptr)
+    explicit Operator(OperatorType type, Transaction* txn = nullptr,
+                      LockManager* lock_manager = nullptr)
         : type_(type), txn_(txn), lock_manager_(lock_manager) {}
     virtual ~Operator() = default;
 
@@ -96,7 +97,7 @@ class Operator {
 
    protected:
     void set_state(ExecState s) { state_ = s; }
-    void set_error(std::string msg) { 
+    void set_error(std::string msg) {
         error_message_ = std::move(msg);
         state_ = ExecState::Error;
     }

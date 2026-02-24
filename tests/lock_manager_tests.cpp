@@ -9,16 +9,16 @@
 #include <iostream>
 #include <thread>
 
+#include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
-#include "test_utils.hpp"
 
 using namespace cloudsql::transaction;
 
 namespace {
 
-using cloudsql::tests::tests_passed;
 using cloudsql::tests::tests_failed;
+using cloudsql::tests::tests_passed;
 
 constexpr uint64_t TXN_101 = 101;
 constexpr uint64_t TXN_102 = 102;
@@ -106,20 +106,25 @@ TEST(LockManager_MultipleSharedContention) {
     static_cast<void>(lm.acquire_exclusive(&txn1, "RID1"));
 
     std::thread t2([&]() {
-        if (lm.acquire_shared(&txn2, "RID1")) { shared_granted++; }
+        if (lm.acquire_shared(&txn2, "RID1")) {
+            shared_granted++;
+        }
     });
     std::thread t3([&]() {
-        if (lm.acquire_shared(&txn3, "RID1")) { shared_granted++; }
+        if (lm.acquire_shared(&txn3, "RID1")) {
+            shared_granted++;
+        }
     });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
-    EXPECT_TRUE(shared_granted.load() == 0); // NOLINT(readability-simplify-boolean-expr)
+    EXPECT_TRUE(shared_granted.load() == 0);  // NOLINT(readability-simplify-boolean-expr)
 
     static_cast<void>(lm.unlock(&txn1, "RID1"));
 
     t2.join();
     t3.join();
-    EXPECT_TRUE(shared_granted.load() == 2); // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+    EXPECT_TRUE(shared_granted.load() ==
+                2);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 
     static_cast<void>(lm.unlock(&txn2, "RID1"));
     static_cast<void>(lm.unlock(&txn3, "RID1"));
@@ -186,7 +191,7 @@ TEST(LockManager_ExclusiveAbortedWait) {
     EXPECT_FALSE(success.load());  // Coverage for line 100-101
 }
 
-} // namespace
+}  // namespace
 
 int main() {
     std::cout << "Lock Manager Unit Tests" << "\n";

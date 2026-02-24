@@ -12,8 +12,8 @@
 #include <vector>
 
 #include "common/value.hpp"
-#include "storage/heap_table.hpp"
 #include "storage/buffer_pool_manager.hpp"
+#include "storage/heap_table.hpp"
 
 namespace cloudsql::storage {
 
@@ -110,8 +110,6 @@ class BTreeIndex {
     bool write_page(uint32_t page_num, const char* buffer);
     [[nodiscard]] uint32_t allocate_page();
 };
-
-
 
 }  // namespace cloudsql::storage
 

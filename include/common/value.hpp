@@ -178,8 +178,8 @@ inline Value Value::make_text(const std::string& v) {
 
 // Type queries
 inline bool Value::is_numeric() const {
-    return type_ == ValueType::TYPE_INT8 || type_ == ValueType::TYPE_INT16 || 
-           type_ == ValueType::TYPE_INT32 || type_ == ValueType::TYPE_INT64 || 
+    return type_ == ValueType::TYPE_INT8 || type_ == ValueType::TYPE_INT16 ||
+           type_ == ValueType::TYPE_INT32 || type_ == ValueType::TYPE_INT64 ||
            type_ == ValueType::TYPE_FLOAT32 || type_ == ValueType::TYPE_FLOAT64 ||
            type_ == ValueType::TYPE_DECIMAL;
 }
@@ -235,7 +235,8 @@ inline double Value::as_float64() const {
 }
 
 inline const std::string& Value::as_text() const {
-    if (type_ != ValueType::TYPE_TEXT && type_ != ValueType::TYPE_VARCHAR && type_ != ValueType::TYPE_CHAR) {
+    if (type_ != ValueType::TYPE_TEXT && type_ != ValueType::TYPE_VARCHAR &&
+        type_ != ValueType::TYPE_CHAR) {
         throw std::runtime_error("Value is not text-based");
     }
     return std::get<std::string>(data_);

@@ -518,11 +518,11 @@ std::unique_ptr<Statement> Parser::parse_delete() {
 /**
  * @brief Parse expression (Precedence Climbing)
  */
-std::unique_ptr<Expression> Parser::parse_expression() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_expression() {  // NOLINT(misc-no-recursion)
     return parse_or();
 }
 
-std::unique_ptr<Expression> Parser::parse_or() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_or() {  // NOLINT(misc-no-recursion)
     auto left = parse_and();
     if (!left) {
         return nullptr;
@@ -538,7 +538,7 @@ std::unique_ptr<Expression> Parser::parse_or() { // NOLINT(misc-no-recursion)
     return left;
 }
 
-std::unique_ptr<Expression> Parser::parse_and() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_and() {  // NOLINT(misc-no-recursion)
     auto left = parse_not();
     if (!left) {
         return nullptr;
@@ -554,7 +554,7 @@ std::unique_ptr<Expression> Parser::parse_and() { // NOLINT(misc-no-recursion)
     return left;
 }
 
-std::unique_ptr<Expression> Parser::parse_not() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_not() {  // NOLINT(misc-no-recursion)
     if (peek_token().type() == TokenType::Not) {
         static_cast<void>(consume(TokenType::Not));
         auto inner = parse_not();
@@ -566,7 +566,7 @@ std::unique_ptr<Expression> Parser::parse_not() { // NOLINT(misc-no-recursion)
     return parse_compare();
 }
 
-std::unique_ptr<Expression> Parser::parse_compare() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_compare() {  // NOLINT(misc-no-recursion)
     auto left = parse_add_sub();
     if (!left) {
         return nullptr;
@@ -615,8 +615,8 @@ std::unique_ptr<Expression> Parser::parse_compare() { // NOLINT(misc-no-recursio
             return nullptr;
         }
         return std::make_unique<InExpr>(std::move(left), std::move(values), not_flag);
-    } 
-    
+    }
+
     if (not_flag) {
         /* NOT was consumed but not followed by IN - this shouldn't happen here normally as
            parse_not handles it, but if we are here it might be a syntax error or a future
@@ -627,7 +627,7 @@ std::unique_ptr<Expression> Parser::parse_compare() { // NOLINT(misc-no-recursio
     return left;
 }
 
-std::unique_ptr<Expression> Parser::parse_add_sub() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_add_sub() {  // NOLINT(misc-no-recursion)
     auto left = parse_mul_div();
     if (!left) {
         return nullptr;
@@ -643,7 +643,7 @@ std::unique_ptr<Expression> Parser::parse_add_sub() { // NOLINT(misc-no-recursio
     return left;
 }
 
-std::unique_ptr<Expression> Parser::parse_mul_div() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_mul_div() {  // NOLINT(misc-no-recursion)
     auto left = parse_unary();
     if (!left) {
         return nullptr;
@@ -659,7 +659,7 @@ std::unique_ptr<Expression> Parser::parse_mul_div() { // NOLINT(misc-no-recursio
     return left;
 }
 
-std::unique_ptr<Expression> Parser::parse_unary() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_unary() {  // NOLINT(misc-no-recursion)
     if (peek_token().type() == TokenType::Minus || peek_token().type() == TokenType::Plus) {
         const Token op = next_token();
         auto inner = parse_unary();
@@ -671,7 +671,7 @@ std::unique_ptr<Expression> Parser::parse_unary() { // NOLINT(misc-no-recursion)
     return parse_primary();
 }
 
-std::unique_ptr<Expression> Parser::parse_primary() { // NOLINT(misc-no-recursion)
+std::unique_ptr<Expression> Parser::parse_primary() {  // NOLINT(misc-no-recursion)
     const Token tok = peek_token();
 
     if (tok.type() == TokenType::Number) {
@@ -680,13 +680,13 @@ std::unique_ptr<Expression> Parser::parse_primary() { // NOLINT(misc-no-recursio
             return std::make_unique<ConstantExpr>(common::Value::make_float64(tok.as_double()));
         }
         return std::make_unique<ConstantExpr>(common::Value::make_int64(tok.as_int64()));
-    } 
-    
+    }
+
     if (tok.type() == TokenType::String) {
         static_cast<void>(next_token());
         return std::make_unique<ConstantExpr>(common::Value::make_text(tok.as_string()));
-    } 
-    
+    }
+
     if (tok.type() == TokenType::Identifier || tok.is_keyword()) {
         const Token id = next_token();
 
@@ -701,8 +701,8 @@ std::unique_ptr<Expression> Parser::parse_primary() { // NOLINT(misc-no-recursio
 
             /* Normalize function name to uppercase for consistency */
             std::string func_name = id.lexeme();
-            std::transform(func_name.begin(), func_name.end(), func_name.begin(), 
-                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            std::transform(func_name.begin(), func_name.end(), func_name.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
             auto func = std::make_unique<FunctionExpr>(func_name);
 
@@ -743,8 +743,8 @@ std::unique_ptr<Expression> Parser::parse_primary() { // NOLINT(misc-no-recursio
         }
 
         return std::make_unique<ColumnExpr>(id.lexeme());
-    } 
-    
+    }
+
     if (consume(TokenType::LParen)) {
         auto expr = parse_expression();
         if (!expr) {
@@ -782,8 +782,8 @@ std::unique_ptr<Statement> Parser::parse_drop() {
             return nullptr;
         }
         return std::make_unique<DropTableStatement>(name.lexeme(), if_exists);
-    } 
-    
+    }
+
     if (peek_token().type() == TokenType::Index) {
         static_cast<void>(consume(TokenType::Index));
         if (consume(TokenType::If)) {
@@ -835,6 +835,5 @@ bool Parser::consume(TokenType type) {
     }
     return false;
 }
-
 
 }  // namespace cloudsql::parser

@@ -40,10 +40,10 @@ enum class LogRecordType : uint8_t {
  * @brief Header of a log record
  */
 struct LogRecordHeader {
-    uint32_t size = 0;                           // Total size of the record including header
-    lsn_t lsn = 0;                               // Log Sequence Number
-    lsn_t prev_lsn = 0;                          // LSN of the previous record for this transaction
-    txn_id_t txn_id = 0;                         // Transaction ID
+    uint32_t size = 0;                            // Total size of the record including header
+    lsn_t lsn = 0;                                // Log Sequence Number
+    lsn_t prev_lsn = 0;                           // LSN of the previous record for this transaction
+    txn_id_t txn_id = 0;                          // Transaction ID
     LogRecordType type = LogRecordType::INVALID;  // Record type
 };
 
@@ -91,7 +91,11 @@ class LogRecord {
      */
     LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type, std::string table_name,
               const storage::HeapTable::TupleId& rid, executor::Tuple tuple_data)
-        : prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type), table_name_(std::move(table_name)), rid_(rid) {
+        : prev_lsn_(prev_lsn),
+          txn_id_(txn_id),
+          type_(type),
+          table_name_(std::move(table_name)),
+          rid_(rid) {
         if (type == LogRecordType::INSERT) {
             tuple_ = std::move(tuple_data);
         } else {

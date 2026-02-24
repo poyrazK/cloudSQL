@@ -6,10 +6,10 @@
 #ifndef CLOUDSQL_STORAGE_PAGE_HPP
 #define CLOUDSQL_STORAGE_PAGE_HPP
 
+#include <array>
 #include <cstring>
 #include <shared_mutex>
 #include <string>
-#include <array>
 
 namespace cloudsql::storage {
 
@@ -47,9 +47,9 @@ class Page {
     void w_unlock() { rwlatch_.unlock(); }
 
     // Get Page LSN (for recovery/WAL)
-    // Assuming page layout reserves first 8 bytes (or 4 bytes) for PageLSN depending on implementation
-    // We will store LSN explicitly here to avoid parsing the header if not strictly needed, 
-    // but typically it's written in the first 4 bytes of data_.
+    // Assuming page layout reserves first 8 bytes (or 4 bytes) for PageLSN depending on
+    // implementation We will store LSN explicitly here to avoid parsing the header if not strictly
+    // needed, but typically it's written in the first 4 bytes of data_.
     [[nodiscard]] int32_t get_lsn() const { return lsn_; }
     void set_lsn(int32_t lsn) { lsn_ = lsn; }
 
@@ -58,13 +58,13 @@ class Page {
 
     void reset_memory() { data_.fill(0); }
 
-    std::array<char, PAGE_SIZE> data_{}; // Fixed size page array
-    uint32_t page_id_ = 0;   // The logical page id within the file
-    std::string file_name_;  // File this page belongs to
-    
+    std::array<char, PAGE_SIZE> data_{};  // Fixed size page array
+    uint32_t page_id_ = 0;                // The logical page id within the file
+    std::string file_name_;               // File this page belongs to
+
     int pin_count_ = 0;      // Number of concurrent accesses
     bool is_dirty_ = false;  // Whether page has been modified
-    int32_t lsn_ = -1; // Page LSN, last modified operation
+    int32_t lsn_ = -1;       // Page LSN, last modified operation
 
     std::shared_mutex rwlatch_;
 };

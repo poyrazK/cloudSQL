@@ -19,16 +19,17 @@
 #include "catalog/catalog.hpp"
 #include "common/config.hpp"
 #include "network/server.hpp"
-#include "parser/lexer.hpp" // Added by user instruction
-#include "recovery/log_manager.hpp" // Added by user instruction
-#include "recovery/recovery_manager.hpp" // Added by user instruction
+#include "parser/lexer.hpp"               // Added by user instruction
+#include "recovery/log_manager.hpp"       // Added by user instruction
+#include "recovery/recovery_manager.hpp"  // Added by user instruction
 #include "storage/buffer_pool_manager.hpp"
-#include "storage/storage_manager.hpp" // Added by user instruction
+#include "storage/storage_manager.hpp"  // Added by user instruction
 
 namespace {
 
 /* Global server instance for signal handling */
-std::unique_ptr<cloudsql::network::Server> g_server = nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+std::unique_ptr<cloudsql::network::Server> g_server =
+    nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 /**
  * Signal handler for graceful shutdown
@@ -69,7 +70,7 @@ void print_version() {
 /**
  * Main entry point
  */
-int main(int argc, char* argv[]) { // NOLINT(bugprone-exception-escape)
+int main(int argc, char* argv[]) {  // NOLINT(bugprone-exception-escape)
     cloudsql::config::Config config;
 
     /* Convert argv to vector of strings for safer parsing */
@@ -132,8 +133,9 @@ int main(int argc, char* argv[]) { // NOLINT(bugprone-exception-escape)
         }
 
         /* Initialize log manager & run recovery */
-        auto log_manager = std::make_unique<cloudsql::recovery::LogManager>(config.data_dir + "/wal.log");
-        
+        auto log_manager =
+            std::make_unique<cloudsql::recovery::LogManager>(config.data_dir + "/wal.log");
+
         std::cout << "Running Crash Recovery..." << std::endl;
         cloudsql::recovery::RecoveryManager rm(*bpm, *catalog, *log_manager);
         if (!rm.recover()) {

@@ -39,13 +39,13 @@ enum class StmtType : uint8_t {
 class Statement {
    public:
     virtual ~Statement() = default;
-    
+
     // Disable copy/move for base statement
     Statement(const Statement&) = delete;
     Statement& operator=(const Statement&) = delete;
     Statement(Statement&&) = delete;
     Statement& operator=(Statement&&) = delete;
-    
+
     Statement() = default;
 
     [[nodiscard]] virtual StmtType type() const = 0;
@@ -96,13 +96,19 @@ class SelectStatement : public Statement {
     void set_offset(int64_t offset) { offset_ = offset; }
     void set_distinct(bool distinct) { distinct_ = distinct; }
 
-    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& columns() const { return columns_; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& columns() const {
+        return columns_;
+    }
     [[nodiscard]] const Expression* from() const { return from_.get(); }
     [[nodiscard]] const std::vector<JoinInfo>& joins() const { return joins_; }
     [[nodiscard]] const Expression* where() const { return where_.get(); }
-    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& group_by() const { return group_by_; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& group_by() const {
+        return group_by_;
+    }
     [[nodiscard]] const Expression* having() const { return having_.get(); }
-    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& order_by() const { return order_by_; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& order_by() const {
+        return order_by_;
+    }
     [[nodiscard]] int64_t limit() const { return limit_; }
     [[nodiscard]] int64_t offset() const { return offset_; }
     [[nodiscard]] bool distinct() const { return distinct_; }
@@ -133,8 +139,12 @@ class InsertStatement : public Statement {
     }
 
     [[nodiscard]] const Expression* table() const { return table_.get(); }
-    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& columns() const { return columns_; }
-    [[nodiscard]] const std::vector<std::vector<std::unique_ptr<Expression>>>& values() const { return values_; }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expression>>& columns() const {
+        return columns_;
+    }
+    [[nodiscard]] const std::vector<std::vector<std::unique_ptr<Expression>>>& values() const {
+        return values_;
+    }
     [[nodiscard]] size_t value_count() const { return values_.size(); }
 
     [[nodiscard]] std::string to_string() const override;
@@ -161,7 +171,11 @@ class UpdateStatement : public Statement {
     void set_where(std::unique_ptr<Expression> where) { where_ = std::move(where); }
 
     [[nodiscard]] const Expression* table() const { return table_.get(); }
-    [[nodiscard]] const std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>>& set_clauses() const { return set_clauses_; }
+    [[nodiscard]] const std::vector<
+        std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>>&
+    set_clauses() const {
+        return set_clauses_;
+    }
     [[nodiscard]] const Expression* where() const { return where_.get(); }
 
     [[nodiscard]] std::string to_string() const override;
