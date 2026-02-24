@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "executor/types.hpp"
-#include "storage/storage_manager.hpp"
+#include "storage/buffer_pool_manager.hpp"
 
 namespace cloudsql::storage {
 
@@ -120,17 +120,17 @@ class HeapTable {
    private:
     std::string table_name_;
     std::string filename_;
-    StorageManager& storage_manager_;
+    BufferPoolManager& bpm_;
     executor::Schema schema_;
 
    public:
     /**
      * @brief Constructor
      * @param table_name Logical name of the table
-     * @param storage_manager Reference to the global storage manager
+     * @param bpm Reference to the global buffer pool manager
      * @param schema Table schema definition
      */
-    HeapTable(std::string table_name, StorageManager& storage_manager, executor::Schema schema);
+    HeapTable(std::string table_name, BufferPoolManager& bpm, executor::Schema schema);
 
     ~HeapTable() = default;
 
