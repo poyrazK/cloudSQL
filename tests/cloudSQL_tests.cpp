@@ -117,7 +117,9 @@ TEST(ExpressionTest_Complex) {
         auto lexer = std::make_unique<Lexer>("SELECT (1 > 0 AND 5 <= 2) OR NOT (1 = 1) FROM dual");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        if (!stmt) throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 1");
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 1");
+        }
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
         const auto val = select->columns()[0]->evaluate();
         EXPECT_FALSE(val.as_bool());
@@ -126,7 +128,9 @@ TEST(ExpressionTest_Complex) {
         auto lexer = std::make_unique<Lexer>("SELECT -10 + 20, 5 * (2 + 3) FROM dual");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        if (!stmt) throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 2");
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 2");
+        }
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
         EXPECT_EQ(select->columns()[0]->evaluate().to_int64(), VAL_10);
         EXPECT_EQ(select->columns()[1]->evaluate().to_int64(), VAL_25);
@@ -135,7 +139,9 @@ TEST(ExpressionTest_Complex) {
         auto lexer = std::make_unique<Lexer>("SELECT 5.5 FROM dual");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        if (!stmt) throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3a");
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3a");
+        }
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
         EXPECT_TRUE(
             select->columns()[0]->evaluate().to_float64() ==
@@ -145,7 +151,9 @@ TEST(ExpressionTest_Complex) {
         auto lexer = std::make_unique<Lexer>("SELECT 10 / 2 FROM dual");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        if (!stmt) throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3b");
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3b");
+        }
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
         EXPECT_TRUE(
             select->columns()[0]->evaluate().to_float64() ==
@@ -201,10 +209,14 @@ TEST(CatalogTest_FullLifecycle) {
 
     auto table = catalog->get_table(table_id);
     EXPECT_TRUE(table.has_value());
-    if (table.has_value()) EXPECT_STREQ(table.value()->name, "test_table");
+    if (table.has_value()) {
+        EXPECT_STREQ(table.value()->name, "test_table");
+    }
 
     catalog->update_table_stats(table_id, STATS_100);
-    EXPECT_EQ(table.value()->num_rows, STATS_100);
+    if (table.has_value()) {
+        EXPECT_EQ(table.value()->num_rows, STATS_100);
+    }
 
     const oid_t idx_id = catalog->create_index("test_idx", table_id, {0}, IndexType::BTree, true);
     EXPECT_TRUE(idx_id > 0);
@@ -212,7 +224,9 @@ TEST(CatalogTest_FullLifecycle) {
 
     auto idx_pair = catalog->get_index(idx_id);
     EXPECT_TRUE(idx_pair.has_value());
-    if (idx_pair.has_value()) EXPECT_STREQ(idx_pair.value().second->name, "test_idx");
+    if (idx_pair.has_value()) {
+        EXPECT_STREQ(idx_pair.value().second->name, "test_idx");
+    }
 
     EXPECT_TRUE(catalog->drop_index(idx_id));
     EXPECT_EQ(catalog->get_table_indexes(table_id).size(), static_cast<size_t>(0));
@@ -373,20 +387,26 @@ TEST(ExecutionTest_EndToEnd) {
         auto lexer = std::make_unique<Lexer>("CREATE TABLE users (id BIGINT, age BIGINT)");
         auto stmt = Parser(std::move(lexer)).parse_statement();
         const auto res = exec.execute(*stmt);
-        if (!res.success()) throw std::runtime_error("CREATE failed: " + res.error());
+        if (!res.success()) {
+            throw std::runtime_error("CREATE failed: " + res.error());
+        }
     }
     {
         auto lexer =
             std::make_unique<Lexer>("INSERT INTO users (id, age) VALUES (1, 20), (2, 30), (3, 40)");
         auto stmt = Parser(std::move(lexer)).parse_statement();
         const auto res = exec.execute(*stmt);
-        if (!res.success()) throw std::runtime_error("INSERT failed: " + res.error());
+        if (!res.success()) {
+            throw std::runtime_error("INSERT failed: " + res.error());
+        }
     }
     {
         auto lexer = std::make_unique<Lexer>("SELECT id FROM users WHERE age > 25");
         auto stmt = Parser(std::move(lexer)).parse_statement();
         const auto res = exec.execute(*stmt);
-        if (!res.success()) throw std::runtime_error("SELECT failed: " + res.error());
+        if (!res.success()) {
+            throw std::runtime_error("SELECT failed: " + res.error());
+        }
         EXPECT_EQ(res.row_count(), static_cast<size_t>(2));
     }
 }
@@ -435,10 +455,14 @@ TEST(ExecutionTest_Aggregate) {
     auto lex =
         std::make_unique<Lexer>("SELECT cat, COUNT(val), SUM(val) FROM agg_test GROUP BY cat");
     auto stmt = Parser(std::move(lex)).parse_statement();
-    if (!stmt) throw std::runtime_error("Parser failed for aggregate query");
+    if (!stmt) {
+        throw std::runtime_error("Parser failed for aggregate query");
+    }
 
     const auto res = exec.execute(*stmt);
-    if (!res.success()) throw std::runtime_error("Execution failed: " + res.error());
+    if (!res.success()) {
+        throw std::runtime_error("Execution failed: " + res.error());
+    }
 
     EXPECT_EQ(res.row_count(), static_cast<size_t>(2));
     /* Row 0: 'A', 2, 30 */
@@ -465,7 +489,9 @@ TEST(ExecutionTest_AggregateAdvanced) {
     const auto res = exec.execute(
         *Parser(std::make_unique<Lexer>("SELECT MIN(val), MAX(val), AVG(val) FROM adv_agg"))
              .parse_statement());
-    if (!res.success()) throw std::runtime_error("Execution failed: " + res.error());
+    if (!res.success()) {
+        throw std::runtime_error("Execution failed: " + res.error());
+    }
 
     EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
     EXPECT_STREQ(res.rows()[0].get(0).to_string(), "10");
@@ -493,7 +519,9 @@ TEST(ExecutionTest_AggregateDistinct) {
         exec.execute(*Parser(std::make_unique<Lexer>(
                                  "SELECT COUNT(DISTINCT val), SUM(DISTINCT val) FROM dist_agg"))
                           .parse_statement());
-    if (!res.success()) throw std::runtime_error("Execution failed: " + res.error());
+    if (!res.success()) {
+        throw std::runtime_error("Execution failed: " + res.error());
+    }
 
     EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
     EXPECT_STREQ(res.rows()[0].get(0).to_string(), "3");
@@ -710,7 +738,8 @@ TEST(ExecutionTest_DDL) {
     // Note: Our system doesn't have a direct "CREATE INDEX" statement parsing yet,
     // but the catalog supports it. For now we just test that DROP INDEX works if index exists.
     auto table_opt = catalog->get_table_by_name("ddl_test");
-    if (table_opt) const oid_t tid = (*table_opt)->table_id;
+    oid_t tid = 0;
+    if (table_opt) tid = (*table_opt)->table_id;
     static_cast<void>(catalog->create_index("idx_ddl", tid, {0}, IndexType::BTree, true));
 
     const auto res_drop_idx =
@@ -760,10 +789,7 @@ TEST(ExecutionTest_Expressions) {
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE val IS NULL"))
                  .parse_statement());
         EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
-        EXPECT_EQ(
-            res.rows()[0].get(0).to_int64(),
-            static_cast<int64_t>(
-                2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_EQ(res.rows()[0].get(0).to_int64(), static_cast<int64_t>(2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 
         const auto res2 = exec.execute(
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE val IS NOT NULL"))
@@ -782,10 +808,7 @@ TEST(ExecutionTest_Expressions) {
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE str NOT IN ('A', 'C')"))
                  .parse_statement());
         EXPECT_EQ(res2.row_count(), static_cast<size_t>(1));
-        EXPECT_EQ(
-            res2.rows()[0].get(0).to_int64(),
-            static_cast<int64_t>(
-                2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_EQ(res2.rows()[0].get(0).to_int64(), static_cast<int64_t>(2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 
     /* 3. Test Arithmetic and Complex Binary */
@@ -794,15 +817,9 @@ TEST(ExecutionTest_Expressions) {
             *Parser(std::make_unique<Lexer>(
                         "SELECT id, val * 2 + 10, val / 2, val - 5 FROM expr_test WHERE id = 1"))
                  .parse_statement());
-        EXPECT_DOUBLE_EQ(
-            res.rows()[0].get(1).to_float64(),
-            31.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-        EXPECT_DOUBLE_EQ(
-            res.rows()[0].get(2).to_float64(),
-            5.25);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-        EXPECT_DOUBLE_EQ(
-            res.rows()[0].get(3).to_float64(),
-            5.5);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(res.rows()[0].get(1).to_float64(), 31.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(res.rows()[0].get(2).to_float64(), 5.25);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(res.rows()[0].get(3).to_float64(), 5.5);   // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 }
 
@@ -831,7 +848,9 @@ TEST(CatalogTest_Errors) {
     /* Duplicate table */
     try {
         static_cast<void>(catalog->create_table("fail_test", cols));
-    } catch (const std::exception& e) static_cast<void>(e.what());
+    } catch (const std::exception& e) {
+        static_cast<void>(e.what());
+    }
 
     /* Missing table */
     EXPECT_FALSE(catalog->table_exists(TABLE_9999));
@@ -843,7 +862,9 @@ TEST(CatalogTest_Errors) {
     static_cast<void>(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true));
     try {
         static_cast<void>(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true));
-    } catch (const std::exception& e) static_cast<void>(e.what());
+    } catch (const std::exception& e) {
+        static_cast<void>(e.what());
+    }
 
     /* Missing index */
     EXPECT_FALSE(catalog->get_index(INDEX_8888).has_value());
@@ -857,7 +878,9 @@ TEST(CatalogTest_Stats) {
 
     EXPECT_TRUE(catalog->update_table_stats(tid, STATS_500));
     auto tinfo = catalog->get_table(tid);
-    if (tinfo) EXPECT_EQ((*tinfo)->num_rows, STATS_500);
+    if (tinfo) {
+        EXPECT_EQ((*tinfo)->num_rows, STATS_500);
+    }
 
     /* Cover print() */
     catalog->print();
