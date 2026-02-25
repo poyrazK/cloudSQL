@@ -447,12 +447,12 @@ void Server::handle_connection(int client_fd) {
                                 ProtocolWriter::append_int16(data,
                                                              static_cast<uint16_t>(row.size()));
 
-                                for (const auto& val : row.values()) {
-                                    const std::string s = val.to_string();
-                                    ProtocolWriter::append_int32(data,
-                                                                 static_cast<uint32_t>(s.size()));
-                                    data.insert(data.end(), s.begin(), s.end());
-                                }
+                                                                for (const auto& val : row.values()) {
+                                                                    const std::string s = val.to_string();
+                                                                    ProtocolWriter::append_int32(data,
+                                                                                                 static_cast<uint32_t>(s.size()));
+                                                                    data.insert(data.end(), s.begin(), s.end());
+                                                                }
                                 ProtocolWriter::finish_message(data);
                                 static_cast<void>(send(client_fd, data.data(), data.size(), 0));
                             }

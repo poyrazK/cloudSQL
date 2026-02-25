@@ -57,33 +57,35 @@ inline void expect_double_eq(double a, double b, const char* expr_a, const char*
     const double diff = a - b;
     const double abs_diff = (diff < 0) ? -diff : diff;
     if (abs_diff > 1e-9) {
-        throw std::runtime_error(std::string("Double equality failed: ") + expr_a + " != " + expr_b);
+        throw std::runtime_error(std::string("Double equality failed: ") + expr_a +
+                                 " != " + expr_b);
     }
 }
 
 inline void expect_ptr_eq(const void* a, const void* b, const char* expr_a, const char* expr_b) {
     if (a != b) {
-        throw std::runtime_error(std::string("Pointer equality failed: ") + expr_a + " != " + expr_b);
+        throw std::runtime_error(std::string("Pointer equality failed: ") + expr_a +
+                                 " != " + expr_b);
     }
 }
 }  // namespace detail
 
 #define TEST(name) static void test_##name()
 
-#define RUN_TEST(name)                                                              \
-    {                                                                               \
-        std::cout << "  " << #name << "... ";                                       \
-        try {                                                                       \
-            test_##name();                                                          \
-            std::cout << "PASSED\n";                                                \
-            tests_passed++;                                                         \
-        } catch (const std::exception& e) {                                         \
-            std::cout << "FAILED (" << e.what() << ")\n";                           \
-            tests_failed++;                                                         \
-        } catch (...) {                                                             \
-            std::cout << "FAILED (unknown exception)\n";                            \
-            tests_failed++;                                                         \
-        }                                                                           \
+#define RUN_TEST(name)                                    \
+    {                                                     \
+        std::cout << "  " << #name << "... ";             \
+        try {                                             \
+            test_##name();                                \
+            std::cout << "PASSED\n";                      \
+            tests_passed++;                               \
+        } catch (const std::exception& e) {               \
+            std::cout << "FAILED (" << e.what() << ")\n"; \
+            tests_failed++;                               \
+        } catch (...) {                                   \
+            std::cout << "FAILED (unknown exception)\n";  \
+            tests_failed++;                               \
+        }                                                 \
     }
 
 #define EXPECT_TRUE(a) ::cloudsql::tests::detail::expect_true((a), #a)
@@ -101,8 +103,8 @@ inline void expect_ptr_eq(const void* a, const void* b, const char* expr_a, cons
 
 #define EXPECT_DOUBLE_EQ(a, b) ::cloudsql::tests::detail::expect_double_eq((a), (b), #a, #b)
 
-#define EXPECT_PTR_EQ(a, b)                                                               \
-    ::cloudsql::tests::detail::expect_ptr_eq(static_cast<const void*>(a),                 \
+#define EXPECT_PTR_EQ(a, b)                                               \
+    ::cloudsql::tests::detail::expect_ptr_eq(static_cast<const void*>(a), \
                                              static_cast<const void*>(b), #a, #b)
 
 }  // namespace cloudsql::tests
