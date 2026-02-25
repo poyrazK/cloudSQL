@@ -19,25 +19,30 @@
 #include "catalog/catalog.hpp"
 #include "common/config.hpp"
 #include "network/server.hpp"
-#include "parser/lexer.hpp"               // Added by user instruction
-#include "recovery/log_manager.hpp"       // Added by user instruction
-#include "recovery/recovery_manager.hpp"  // Added by user instruction
+#include "parser/lexer.hpp"
+#include "recovery/log_manager.hpp"
+#include "recovery/recovery_manager.hpp"
 #include "storage/buffer_pool_manager.hpp"
-#include "storage/storage_manager.hpp"  // Added by user instruction
+#include "storage/storage_manager.hpp"
 
 namespace {
 
-/* Global server instance for signal handling */
-std::unique_ptr<cloudsql::network::Server> g_server =
-    nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+/**
+ * @brief Thread-safe getter for the global server instance
+ */
+std::unique_ptr<cloudsql::network::Server>& get_server_instance() {
+    static std::unique_ptr<cloudsql::network::Server> instance = nullptr;
+    return instance;
+}
 
 /**
  * Signal handler for graceful shutdown
  */
 void signal_handler(int sig) {
     std::cout << "\nReceived signal " << sig << ", shutting down...\n";
-    if (g_server != nullptr) {
-        static_cast<void>(g_server->stop());
+    auto& server = get_server_instance();
+    if (server != nullptr) {
+        static_cast<void>(server->stop());
     }
 }
 
@@ -70,61 +75,62 @@ void print_version() {
 /**
  * Main entry point
  */
-int main(int argc, char* argv[]) {  // NOLINT(bugprone-exception-escape)
-    cloudsql::config::Config config;
-
-    /* Convert argv to vector of strings for safer parsing */
-    const std::vector<std::string> args(argv, argv + argc);
-
-    /* Parse command line arguments */
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "-h" || arg == "--help") {
-            print_usage(argv[0]);
-            return 0;
-        }
-        if (arg == "-v" || arg == "--version") {
-            print_version();
-            return 0;
-        }
-        if ((arg == "-p" || arg == "--port") && i + 1 < args.size()) {
-            config.port = static_cast<uint16_t>(std::stoi(args[++i]));
-        } else if ((arg == "-d" || arg == "--data") && i + 1 < args.size()) {
-            config.data_dir = args[++i];
-        } else if ((arg == "-c" || arg == "--config") && i + 1 < args.size()) {
-            config.config_file = args[++i];
-            static_cast<void>(config.load(config.config_file));
-        } else if ((arg == "-m" || arg == "--mode") && i + 1 < args.size()) {
-            const std::string& mode = args[++i];
-            if (mode == "distributed") {
-                config.mode = cloudsql::config::RunMode::Distributed;
-            } else {
-                config.mode = cloudsql::config::RunMode::Embedded;
-            }
-        } else {
-            std::cerr << "Unknown option: " << arg << "\n";
-            print_usage(argv[0]);
-            return 1;
-        }
-    }
-
-    std::cout << "=== SQL Engine ===\n";
-    std::cout << "Version: 0.2.0\n";
-    std::cout << "Mode: "
-              << (config.mode == cloudsql::config::RunMode::Distributed ? "distributed"
-                                                                        : "embedded")
-              << "\n";
-    std::cout << "Data directory: " << config.data_dir << "\n";
-    std::cout << "Port: " << config.port << "\n\n";
-
-    /* Set up signal handlers */
-    static_cast<void>(std::signal(SIGINT, signal_handler));
-    static_cast<void>(std::signal(SIGTERM, signal_handler));
-
+int main(int argc, char* argv[]) {
     try {
+        cloudsql::config::Config config;
+
+        /* Convert argv to vector of strings for safer parsing */
+        const std::vector<std::string> args(argv, argv + argc);
+
+        /* Parse command line arguments */
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string& arg = args[i];
+            if (arg == "-h" || arg == "--help") {
+                print_usage(argv[0]);
+                return 0;
+            }
+            if (arg == "-v" || arg == "--version") {
+                print_version();
+                return 0;
+            }
+            if ((arg == "-p" || arg == "--port") && i + 1 < args.size()) {
+                config.port = static_cast<uint16_t>(std::stoi(args[++i]));
+            } else if ((arg == "-d" || arg == "--data") && i + 1 < args.size()) {
+                config.data_dir = args[++i];
+            } else if ((arg == "-c" || arg == "--config") && i + 1 < args.size()) {
+                config.config_file = args[++i];
+                static_cast<void>(config.load(config.config_file));
+            } else if ((arg == "-m" || arg == "--mode") && i + 1 < args.size()) {
+                const std::string& mode = args[++i];
+                if (mode == "distributed") {
+                    config.mode = cloudsql::config::RunMode::Distributed;
+                } else {
+                    config.mode = cloudsql::config::RunMode::Embedded;
+                }
+            } else {
+                std::cerr << "Unknown option: " << arg << "\n";
+                print_usage(argv[0]);
+                return 1;
+            }
+        }
+
+        std::cout << "=== SQL Engine ===\n";
+        std::cout << "Version: 0.2.0\n";
+        std::cout << "Mode: "
+                  << (config.mode == cloudsql::config::RunMode::Distributed ? "distributed"
+                                                                            : "embedded")
+                  << "\n";
+        std::cout << "Data directory: " << config.data_dir << "\n";
+        std::cout << "Port: " << config.port << "\n\n";
+
+        /* Set up signal handlers */
+        static_cast<void>(std::signal(SIGINT, signal_handler));
+        static_cast<void>(std::signal(SIGTERM, signal_handler));
+
         /* Initialize storage manager & buffer pool */
         auto disk_manager = std::make_unique<cloudsql::storage::StorageManager>(config.data_dir);
-        auto bpm = std::make_unique<cloudsql::storage::BufferPoolManager>(128, *disk_manager);
+        auto bpm = std::make_unique<cloudsql::storage::BufferPoolManager>(
+            cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
         /* Initialize catalog */
         const auto catalog = cloudsql::Catalog::create();
         if (!catalog) {
@@ -136,7 +142,7 @@ int main(int argc, char* argv[]) {  // NOLINT(bugprone-exception-escape)
         auto log_manager =
             std::make_unique<cloudsql::recovery::LogManager>(config.data_dir + "/wal.log");
 
-        std::cout << "Running Crash Recovery..." << std::endl;
+        std::cout << "Running Crash Recovery...\n";
         cloudsql::recovery::RecoveryManager rm(*bpm, *catalog, *log_manager);
         if (!rm.recover()) {
             std::cerr << "Crash recovery failed. Restarting anyway.\n";
@@ -144,26 +150,27 @@ int main(int argc, char* argv[]) {  // NOLINT(bugprone-exception-escape)
         log_manager->run_flush_thread();
 
         /* Initialize server */
-        g_server = cloudsql::network::Server::create(config.port, *catalog, *bpm);
-        if (!g_server) {
+        auto& server = get_server_instance();
+        server = cloudsql::network::Server::create(config.port, *catalog, *bpm);
+        if (!server) {
             std::cerr << "Failed to create server\n";
             return 1;
         }
 
         /* Start server */
         std::cout << "Starting server...\n";
-        if (!g_server->start()) {
+        if (!server->start()) {
             std::cerr << "Failed to start server\n";
             return 1;
         }
 
         std::cout << "Server running. Press Ctrl+C to stop.\n";
-        g_server->wait();
+        server->wait();
 
         /* Cleanup */
         std::cout << "Shutting down...\n";
-        static_cast<void>(g_server->stop());
-        g_server.reset();
+        static_cast<void>(server->stop());
+        server.reset();
 
         std::cout << "Goodbye!\n";
     } catch (const std::exception& e) {
