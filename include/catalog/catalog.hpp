@@ -39,8 +39,8 @@ struct ColumnInfo {
 
     ColumnInfo() = default;
 
-    ColumnInfo(std::string name, common::ValueType type, uint16_t pos)
-        : name(std::move(name)), type(type), position(pos) {}
+    ColumnInfo(std::string col_name, common::ValueType col_type, uint16_t col_pos)
+        : name(std::move(col_name)), type(col_type), position(col_pos) {}
 };
 
 /**

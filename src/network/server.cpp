@@ -307,7 +307,7 @@ void Server::accept_connections() {
             handle_connection(client_fd);
             static_cast<void>(stats_.connections_active.fetch_sub(1));
 
-            const std::scoped_lock<std::mutex> lock(thread_mutex_);
+            const std::scoped_lock<std::mutex> thread_lock(thread_mutex_);
             auto it = std::remove(client_fds_.begin(), client_fds_.end(), client_fd);
             client_fds_.erase(it, client_fds_.end());
         });
