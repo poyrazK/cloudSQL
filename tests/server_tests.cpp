@@ -58,7 +58,7 @@ constexpr int BUF_SIZE = 1024;
 constexpr int AUTH_OK_LEN = 9;
 constexpr int READY_LEN = 6;
 
-void test_Server_StatusStrings() {
+TEST(Server_StatusStrings) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -71,7 +71,7 @@ void test_Server_StatusStrings() {
     EXPECT_EQ(s.get_status_string(), std::string("Stopped"));
 }
 
-void test_Server_SimpleQuery() {
+TEST(Server_SimpleQuery) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -102,10 +102,10 @@ void test_Server_SimpleQuery() {
     std::memcpy(&sa, &addr, sizeof(addr));
 
     int sock = -1;
-    for (int i = 0; i < CONN_RETRIES; ++i) {
+    for (int i = 0; i < CONN_RETRIES; ++i)
         sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock >= 0) {
-            if (connect(sock, &sa, sizeof(addr)) == 0) {
+        if (sock >= 0)
+            if (connect(sock, &sa, sizeof(addr)) == 0)
                 break;
             }
             static_cast<void>(close(sock));
@@ -114,7 +114,7 @@ void test_Server_SimpleQuery() {
         std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
     }
 
-    if (sock >= 0) {
+    if (sock >= 0)
         const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                  htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
         static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
@@ -170,7 +170,7 @@ void test_Server_SimpleQuery() {
     static_cast<void>(server->stop());
 }
 
-void test_Server_InvalidProtocol() {
+TEST(Server_InvalidProtocol) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -187,8 +187,8 @@ void test_Server_InvalidProtocol() {
     std::memcpy(&sa, &addr, sizeof(addr));
 
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock >= 0) {
-        if (connect(sock, &sa, sizeof(addr)) == 0) {
+    if (sock >= 0)
+        if (connect(sock, &sa, sizeof(addr)) == 0)
             const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(12345)};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
@@ -203,7 +203,7 @@ void test_Server_InvalidProtocol() {
     static_cast<void>(server->stop());
 }
 
-void test_Server_Terminate() {
+TEST(Server_Terminate) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -220,8 +220,8 @@ void test_Server_Terminate() {
     std::memcpy(&sa, &addr, sizeof(addr));
 
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock >= 0) {
-        if (connect(sock, &sa, sizeof(addr)) == 0) {
+    if (sock >= 0)
+        if (connect(sock, &sa, sizeof(addr)) == 0)
             const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
@@ -244,7 +244,7 @@ void test_Server_Terminate() {
     static_cast<void>(server->stop());
 }
 
-void test_Server_Handshake() {
+TEST(Server_Handshake) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -261,8 +261,8 @@ void test_Server_Handshake() {
     std::memcpy(&sa, &addr, sizeof(addr));
 
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock >= 0) {
-        if (connect(sock, &sa, sizeof(addr)) == 0) {
+    if (sock >= 0)
+        if (connect(sock, &sa, sizeof(addr)) == 0)
             // 1. SSL Request
             const std::array<uint32_t, 2> ssl_req = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(static_cast<uint32_t>(PG_SSL_CODE))};
@@ -285,7 +285,7 @@ void test_Server_Handshake() {
     static_cast<void>(server->stop());
 }
 
-void test_Server_MultiClient() {
+TEST(Server_MultiClient) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -297,8 +297,8 @@ void test_Server_MultiClient() {
     std::vector<std::thread> clients;
     std::atomic<int> success_count{0};
 
-    for (int i = 0; i < NUM_CLIENTS; ++i) {
-        clients.emplace_back([&success_count]() {
+    for (int i = 0; i < NUM_CLIENTS; ++i)
+        clients.emplace_back([&success_count]) {
             struct sockaddr_in client_addr {};
             client_addr.sin_family = AF_INET;
             client_addr.sin_port = htons(PORT_MULTI);
@@ -308,14 +308,14 @@ void test_Server_MultiClient() {
             std::memcpy(&sa, &client_addr, sizeof(client_addr));
 
             const int sock = socket(AF_INET, SOCK_STREAM, 0);
-            if (sock >= 0) {
-                if (connect(sock, &sa, sizeof(client_addr)) == 0) {
+            if (sock >= 0)
+                if (connect(sock, &sa, sizeof(client_addr)) == 0)
                     const std::array<uint32_t, 2> startup = {
                         htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                         htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
                     static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
                     char type{};
-                    if (recv(sock, &type, 1, 0) > 0 && type == 'R') {
+                    if (recv(sock, &type, 1, 0) > 0 && type == 'R')
                         success_count++;
                     }
                 }
@@ -324,7 +324,7 @@ void test_Server_MultiClient() {
         });
     }
 
-    for (auto& t : clients) {
+    for (auto& t : clients)
         t.join();
     }
     EXPECT_EQ(success_count.load(), NUM_CLIENTS);
@@ -334,16 +334,16 @@ void test_Server_MultiClient() {
 
 }  // namespace
 
-int main() {
+int main) {
     std::cout << "Server Unit Tests\n";
     std::cout << "=================\n";
 
-    RUN_TEST(test_Server_StatusStrings);
-    RUN_TEST(test_Server_SimpleQuery);
-    RUN_TEST(test_Server_InvalidProtocol);
-    RUN_TEST(test_Server_Terminate);
-    RUN_TEST(test_Server_Handshake);
-    RUN_TEST(test_Server_MultiClient);
+    RUN_TEST(Server_StatusStrings);
+    RUN_TEST(Server_SimpleQuery);
+    RUN_TEST(Server_InvalidProtocol);
+    RUN_TEST(Server_Terminate);
+    RUN_TEST(Server_Handshake);
+    RUN_TEST(Server_MultiClient);
 
     std::cout << "\nResults: \n" << tests_passed << " passed, \n" << tests_failed << " failed\n";
     return (tests_failed > 0);

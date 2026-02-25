@@ -21,11 +21,25 @@ inline void expect_true(bool condition, const char* expr) {
     }
 }
 
+/**
+ * @brief String conversion helper for error messages
+ */
+template <typename T>
+std::string to_string_safe(const T& val) {
+    if constexpr (std::is_convertible_v<T, std::string>) {
+        return static_cast<std::string>(val);
+    } else if constexpr (std::is_arithmetic_v<T>) {
+        return std::to_string(val);
+    } else {
+        return "unknown_type";
+    }
+}
+
 template <typename T, typename U>
 void expect_eq(const T& a, const U& b, const char* expr_a, const char* expr_b) {
     if (a != b) {
         throw std::runtime_error(std::string("Equality failed: ") + expr_a + " (" +
-                                 std::to_string(a) + ") != " + expr_b + " (" + std::to_string(b) +
+                                 to_string_safe(a) + ") != " + expr_b + " (" + to_string_safe(b) +
                                  ")");
     }
 }
