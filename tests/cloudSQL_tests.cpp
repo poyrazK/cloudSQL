@@ -137,7 +137,9 @@ TEST(ExpressionTest_Complex) {
         auto stmt = parser.parse_statement();
         if (!stmt) throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3a");
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
-        EXPECT_TRUE(select->columns()[0]->evaluate().to_float64() == 5.5);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_TRUE(
+            select->columns()[0]->evaluate().to_float64() ==
+            5.5);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
     {
         auto lexer = std::make_unique<Lexer>("SELECT 10 / 2 FROM dual");
@@ -145,7 +147,9 @@ TEST(ExpressionTest_Complex) {
         auto stmt = parser.parse_statement();
         if (!stmt) throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3b");
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
-        EXPECT_TRUE(select->columns()[0]->evaluate().to_float64() == 5.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_TRUE(
+            select->columns()[0]->evaluate().to_float64() ==
+            5.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 }
 
@@ -157,7 +161,10 @@ TEST(ParserTest_SelectVariants) {
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
         EXPECT_TRUE(select->distinct());
         EXPECT_EQ(select->limit(), VAL_10);
-        EXPECT_EQ(select->offset(), static_cast<int64_t>(20));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_EQ(
+            select->offset(),
+            static_cast<int64_t>(
+                20));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
     {
         auto lexer =
@@ -753,7 +760,10 @@ TEST(ExecutionTest_Expressions) {
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE val IS NULL"))
                  .parse_statement());
         EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
-        EXPECT_EQ(res.rows()[0].get(0).to_int64(), static_cast<int64_t>(2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_EQ(
+            res.rows()[0].get(0).to_int64(),
+            static_cast<int64_t>(
+                2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 
         const auto res2 = exec.execute(
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE val IS NOT NULL"))
@@ -772,7 +782,10 @@ TEST(ExecutionTest_Expressions) {
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE str NOT IN ('A', 'C')"))
                  .parse_statement());
         EXPECT_EQ(res2.row_count(), static_cast<size_t>(1));
-        EXPECT_EQ(res2.rows()[0].get(0).to_int64(), static_cast<int64_t>(2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_EQ(
+            res2.rows()[0].get(0).to_int64(),
+            static_cast<int64_t>(
+                2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 
     /* 3. Test Arithmetic and Complex Binary */
@@ -781,9 +794,15 @@ TEST(ExecutionTest_Expressions) {
             *Parser(std::make_unique<Lexer>(
                         "SELECT id, val * 2 + 10, val / 2, val - 5 FROM expr_test WHERE id = 1"))
                  .parse_statement());
-        EXPECT_DOUBLE_EQ(res.rows()[0].get(1).to_float64(), 31.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-        EXPECT_DOUBLE_EQ(res.rows()[0].get(2).to_float64(), 5.25);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-        EXPECT_DOUBLE_EQ(res.rows()[0].get(3).to_float64(), 5.5);   // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(
+            res.rows()[0].get(1).to_float64(),
+            31.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(
+            res.rows()[0].get(2).to_float64(),
+            5.25);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(
+            res.rows()[0].get(3).to_float64(),
+            5.5);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 }
 
