@@ -130,7 +130,8 @@ bool StorageManager::read_page(const std::string& filename, uint32_t page_num, c
 /**
  * @brief Write a page to storage
  */
-bool StorageManager::write_page(const std::string& filename, uint32_t page_num, const char* buffer) {
+bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
+                                const char* buffer) {
     if (open_files_.find(filename) == open_files_.end()) {
         if (!open_file(filename)) {
             return false;
