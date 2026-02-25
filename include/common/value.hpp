@@ -111,7 +111,7 @@ class Value {
 };
 
 // Constructors
-inline Value::Value() : type_(ValueType::TYPE_NULL), data_(std::monostate{}){}
+inline Value::Value() : type_(ValueType::TYPE_NULL), data_(std::monostate{}) {}
 
 inline Value::Value(ValueType type) : type_(type), data_(std::monostate{}) {
     if (type != ValueType::TYPE_NULL) {
@@ -141,27 +141,27 @@ inline Value::Value(ValueType type) : type_(type), data_(std::monostate{}) {
     }
 }
 
-inline Value::Value(bool v) : type_(ValueType::TYPE_BOOL), data_(v){}
+inline Value::Value(bool v) : type_(ValueType::TYPE_BOOL), data_(v) {}
 
-inline Value::Value(int8_t v) : type_(ValueType::TYPE_INT8), data_(static_cast<int64_t>(v)){}
+inline Value::Value(int8_t v) : type_(ValueType::TYPE_INT8), data_(static_cast<int64_t>(v)) {}
 
-inline Value::Value(int16_t v) : type_(ValueType::TYPE_INT16), data_(static_cast<int64_t>(v)){}
+inline Value::Value(int16_t v) : type_(ValueType::TYPE_INT16), data_(static_cast<int64_t>(v)) {}
 
-inline Value::Value(int32_t v) : type_(ValueType::TYPE_INT32), data_(static_cast<int64_t>(v)){}
+inline Value::Value(int32_t v) : type_(ValueType::TYPE_INT32), data_(static_cast<int64_t>(v)) {}
 
-inline Value::Value(int64_t v) : type_(ValueType::TYPE_INT64), data_(v){}
+inline Value::Value(int64_t v) : type_(ValueType::TYPE_INT64), data_(v) {}
 
-inline Value::Value(float v) : type_(ValueType::TYPE_FLOAT32), data_(static_cast<double>(v)){}
+inline Value::Value(float v) : type_(ValueType::TYPE_FLOAT32), data_(static_cast<double>(v)) {}
 
-inline Value::Value(double v) : type_(ValueType::TYPE_FLOAT64), data_(v){}
+inline Value::Value(double v) : type_(ValueType::TYPE_FLOAT64), data_(v) {}
 
-inline Value::Value(const std::string& v) : type_(ValueType::TYPE_TEXT), data_(v){}
+inline Value::Value(const std::string& v) : type_(ValueType::TYPE_TEXT), data_(v) {}
 
-inline Value::Value(const char* v) : type_(ValueType::TYPE_TEXT), data_(std::string(v)){}
+inline Value::Value(const char* v) : type_(ValueType::TYPE_TEXT), data_(std::string(v)) {}
 
 // Factory methods
 inline Value Value::make_null() {
-    return{};
+    return {};
 }
 inline Value Value::make_bool(bool v) {
     return Value(v);
