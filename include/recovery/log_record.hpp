@@ -84,7 +84,7 @@ class LogRecord {
      * @brief Constructor for transaction control records (BEGIN, COMMIT, ABORT)
      */
     LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType type)
-        : size_(HEADER_SIZE), prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type) {}
+        : size_(HEADER_SIZE), prev_lsn_(prev_lsn), txn_id_(txn_id), type_(type){}
 
     /**
      * @brief Constructor for single-tuple operations (INSERT, DELETE variants)
@@ -115,7 +115,7 @@ class LogRecord {
           table_name_(std::move(table_name)),
           rid_(rid),
           tuple_(std::move(new_tuple)),
-          old_tuple_(std::move(old_tuple)) {}
+          old_tuple_(std::move(old_tuple)){}
 
     /**
      * @brief Constructor for NEW_PAGE
@@ -125,7 +125,7 @@ class LogRecord {
           prev_lsn_(prev_lsn),
           txn_id_(txn_id),
           type_(type),
-          page_id_(page_id) {}
+          page_id_(page_id){}
 
     /**
      * @return The string representation of the record type
