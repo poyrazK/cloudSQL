@@ -12,6 +12,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -34,6 +35,7 @@
 #include "storage/btree_index.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
+#include "storage/storage_manager.hpp"
 #include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction_manager.hpp"
@@ -50,6 +52,14 @@ namespace {
 // Using common test counters
 using cloudsql::tests::tests_failed;
 using cloudsql::tests::tests_passed;
+
+/**
+ * @brief Union to safely handle sockaddr casting for POSIX APIs in tests
+ */
+union GenericSockAddr {
+    struct sockaddr sa;
+    struct sockaddr_in sin;
+};
 
 constexpr int64_t VAL_42 = 42;
 constexpr double PI_LOWER = 3.14;
@@ -199,10 +209,12 @@ TEST(CatalogTest_FullLifecycle) {
 
     auto table = catalog->get_table(table_id);
     EXPECT_TRUE(table.has_value());
-    EXPECT_STREQ((*table)->name, "test_table");
+    if (table.has_value()) {
+        EXPECT_STREQ(table.value()->name, "test_table");
 
-    catalog->update_table_stats(table_id, STATS_100);
-    EXPECT_EQ((*table)->num_rows, STATS_100);
+        catalog->update_table_stats(table_id, STATS_100);
+        EXPECT_EQ(table.value()->num_rows, STATS_100);
+    }
 
     const oid_t idx_id = catalog->create_index("test_idx", table_id, {0}, IndexType::BTree, true);
     EXPECT_TRUE(idx_id > 0);
@@ -210,7 +222,9 @@ TEST(CatalogTest_FullLifecycle) {
 
     auto idx_pair = catalog->get_index(idx_id);
     EXPECT_TRUE(idx_pair.has_value());
-    EXPECT_STREQ(idx_pair->second->name, "test_idx");
+    if (idx_pair.has_value()) {
+        EXPECT_STREQ(idx_pair.value().second->name, "test_idx");
+    }
 
     EXPECT_TRUE(catalog->drop_index(idx_id));
     EXPECT_EQ(catalog->get_table_indexes(table_id).size(), static_cast<size_t>(0));
@@ -282,14 +296,14 @@ TEST(StorageTest_Persistence) {
     schema.add_column("data", ValueType::TYPE_TEXT);
     {
         StorageManager disk_manager("./test_data");
-        BufferPoolManager sm(128, disk_manager);
+        BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
         HeapTable table(filename, sm, schema);
         static_cast<void>(table.create());
         static_cast<void>(table.insert(Tuple({Value::make_text("Persistent data")})));
     }
     {
         StorageManager disk_manager("./test_data");
-        BufferPoolManager sm(128, disk_manager);
+        BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
         HeapTable table(filename, sm, schema);
         auto iter = table.scan();
         Tuple t;
@@ -302,7 +316,7 @@ TEST(StorageTest_Delete) {
     const std::string filename = "delete_test";
     static_cast<void>(std::remove("./test_data/delete_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     Schema schema;
     schema.add_column("id", ValueType::TYPE_INT64);
     HeapTable table(filename, sm, schema);
@@ -327,7 +341,7 @@ TEST(StorageTest_Delete) {
 TEST(IndexTest_BTreeBasic) {
     static_cast<void>(std::remove("./test_data/idx_test.idx"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     BTreeIndex idx("idx_test", sm, ValueType::TYPE_INT64);
     static_cast<void>(idx.create());
     static_cast<void>(idx.insert(Value::make_int64(BTREE_VAL_10), HeapTable::TupleId(1, 1)));
@@ -341,7 +355,7 @@ TEST(IndexTest_BTreeBasic) {
 TEST(IndexTest_Scan) {
     static_cast<void>(std::remove("./test_data/scan_test.idx"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     BTreeIndex idx("scan_test", sm, ValueType::TYPE_INT64);
     static_cast<void>(idx.create());
     static_cast<void>(idx.insert(Value::make_int64(1), HeapTable::TupleId(1, 1)));
@@ -356,99 +370,12 @@ TEST(IndexTest_Scan) {
     EXPECT_FALSE(iter.next(entry));
 }
 
-// ============= Network Tests =============
-
-#if 0
-TEST(NetworkTest_Handshake) {
-    const uint16_t port = 5438;
-    StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
-    auto catalog = Catalog::create();
-    auto server = network::Server::create(port, *catalog, sm);
-
-    std::thread server_thread([&]() { static_cast<void>(server->start()); });
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    const int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        throw std::runtime_error("Failed to create socket in NetworkTest_Handshake");
-    }
-    struct sockaddr_in addr {};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    static_cast<void>(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr));
-
-    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
-        const uint32_t ssl_req[] = {htonl(8), htonl(80877103)};
-        static_cast<void>(send(sock, ssl_req, 8, 0));
-        char response {};
-        static_cast<void>(recv(sock, &response, 1, 0));
-        EXPECT_EQ(static_cast<int>(response), static_cast<int>('N'));
-
-        const uint32_t startup[] = {htonl(8), htonl(196608)};
-        static_cast<void>(send(sock, startup, 8, 0));
-        char type {};
-        static_cast<void>(recv(sock, &type, 1, 0));
-        EXPECT_EQ(static_cast<int>(type), static_cast<int>('R'));
-    }
-
-    static_cast<void>(close(sock));
-    /* Ensure server finishes handling the connection before stopping */
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    static_cast<void>(server->stop());
-    if (server_thread.joinable()) { server_thread.join(); }
-}
-
-TEST(NetworkTest_MultiClient) {
-    const uint16_t port = 5439;
-    StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
-    auto catalog = Catalog::create();
-    auto server = network::Server::create(port, *catalog, sm);
-
-    std::thread server_thread([&]() { static_cast<void>(server->start()); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    const int num_clients = 5;
-    std::vector<std::thread> clients;
-    std::atomic<int> success_count{0};
-
-    for (int i = 0; i < num_clients; ++i) {
-        clients.emplace_back([&success_count]() {
-            const int sock = socket(AF_INET, SOCK_STREAM, 0);
-            if (sock < 0) { return; }
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(5439);
-            static_cast<void>(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr));
-
-            if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
-                const uint32_t startup[] = {htonl(8), htonl(196608)};
-                static_cast<void>(send(sock, startup, 8, 0));
-                char type {};
-                if (recv(sock, &type, 1, 0) > 0 && type == 'R') {
-                    success_count++;
-                }
-            }
-            static_cast<void>(close(sock));
-        });
-    }
-
-    for (auto& t : clients) { t.join(); }
-    EXPECT_EQ(success_count.load(), num_clients);
-
-    static_cast<void>(server->stop());
-    if (server_thread.joinable()) { server_thread.join(); }
-}
-#endif
-
 // ============= Execution Tests =============
 
 TEST(ExecutionTest_EndToEnd) {
     static_cast<void>(std::remove("./test_data/users.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -485,7 +412,7 @@ TEST(ExecutionTest_EndToEnd) {
 TEST(ExecutionTest_Sort) {
     static_cast<void>(std::remove("./test_data/sort_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -509,7 +436,7 @@ TEST(ExecutionTest_Sort) {
 TEST(ExecutionTest_Aggregate) {
     static_cast<void>(std::remove("./test_data/agg_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -545,7 +472,7 @@ TEST(ExecutionTest_Aggregate) {
 TEST(ExecutionTest_AggregateAdvanced) {
     static_cast<void>(std::remove("./test_data/adv_agg.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -573,7 +500,7 @@ TEST(ExecutionTest_AggregateAdvanced) {
 TEST(ExecutionTest_AggregateDistinct) {
     static_cast<void>(std::remove("./test_data/dist_agg.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -602,7 +529,7 @@ TEST(ExecutionTest_AggregateDistinct) {
 TEST(ExecutionTest_Transaction) {
     static_cast<void>(std::remove("./test_data/txn_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -633,7 +560,7 @@ TEST(ExecutionTest_Transaction) {
 TEST(ExecutionTest_Rollback) {
     static_cast<void>(std::remove("./test_data/rollback_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -662,7 +589,7 @@ TEST(ExecutionTest_Rollback) {
 TEST(ExecutionTest_UpdateDelete) {
     static_cast<void>(std::remove("./test_data/upd_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -700,7 +627,7 @@ TEST(ExecutionTest_UpdateDelete) {
 TEST(ExecutionTest_MVCC) {
     static_cast<void>(std::remove("./test_data/mvcc_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -743,7 +670,7 @@ TEST(ExecutionTest_Join) {
     static_cast<void>(std::remove("./test_data/users.heap"));
     static_cast<void>(std::remove("./test_data/orders.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -782,7 +709,7 @@ TEST(ExecutionTest_Join) {
 TEST(ExecutionTest_DDL) {
     static_cast<void>(std::remove("./test_data/ddl_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -841,7 +768,7 @@ TEST(LexerTest_Advanced) {
 TEST(ExecutionTest_Expressions) {
     static_cast<void>(std::remove("./test_data/expr_test.heap"));
     StorageManager disk_manager("./test_data");
-    BufferPoolManager sm(128, disk_manager);
+    BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, sm);
@@ -973,16 +900,40 @@ TEST(CatalogTest_Stats) {
 }  // namespace
 
 int main() {
-    std::cout << "Unit Tests
-";
-    std::cout << "==========
-";
+    std::cout << "Unit Tests\n";
+    std::cout << "==========\n";
 
-    
+    RUN_TEST(ValueTest_Basic);
+    RUN_TEST(ValueTest_TypeVariety);
+    RUN_TEST(ParserTest_Expressions);
+    RUN_TEST(ExpressionTest_Complex);
+    RUN_TEST(ParserTest_SelectVariants);
+    RUN_TEST(ParserTest_Errors);
+    RUN_TEST(CatalogTest_FullLifecycle);
+    RUN_TEST(ConfigTest_Basic);
+    RUN_TEST(StatementTest_ToString);
+    RUN_TEST(StatementTest_Serialization);
+    RUN_TEST(StorageTest_Persistence);
+    RUN_TEST(StorageTest_Delete);
+    RUN_TEST(IndexTest_BTreeBasic);
+    RUN_TEST(IndexTest_Scan);
+    RUN_TEST(ExecutionTest_EndToEnd);
+    RUN_TEST(ExecutionTest_Sort);
+    RUN_TEST(ExecutionTest_Aggregate);
+    RUN_TEST(ExecutionTest_AggregateAdvanced);
+    RUN_TEST(ExecutionTest_AggregateDistinct);
+    RUN_TEST(ExecutionTest_Transaction);
+    RUN_TEST(ExecutionTest_Rollback);
+    RUN_TEST(ExecutionTest_UpdateDelete);
+    RUN_TEST(ExecutionTest_MVCC);
+    RUN_TEST(ExecutionTest_Join);
+    RUN_TEST(ExecutionTest_DDL);
+    RUN_TEST(LexerTest_Advanced);
+    RUN_TEST(ExecutionTest_Expressions);
+    RUN_TEST(ExpressionTest_Types);
+    RUN_TEST(CatalogTest_Errors);
+    RUN_TEST(CatalogTest_Stats);
 
-    std::cout << "
-\nResults: \n" << tests_passed << " passed, \n" << tests_failed << " failed
-";
+    std::cout << "\nResults: \n" << tests_passed << " passed, \n" << tests_failed << " failed\n";
     return (tests_failed > 0);
 }
-
