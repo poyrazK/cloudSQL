@@ -78,7 +78,7 @@ class Transaction {
 
    public:
     explicit Transaction(txn_id_t txn_id, IsolationLevel level = IsolationLevel::REPEATABLE_READ)
-        : txn_id_(txn_id), state_(TransactionState::RUNNING), isolation_level_(level) {}
+        : txn_id_(txn_id), state_(TransactionState::RUNNING), isolation_level_(level){}
 
     ~Transaction() = default;
 
