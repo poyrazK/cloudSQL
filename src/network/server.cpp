@@ -6,23 +6,20 @@
  * @{
  */
 
-#include "network/server.hpp"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <unistd.h>
 
-#include <arpa/inet.h>   // IWYU pragma: keep
-#include <netinet/in.h>  // IWYU pragma: keep
-#include <sys/select.h>  // IWYU pragma: keep
-#include <sys/socket.h>  // IWYU pragma: keep
-#include <sys/time.h>    // IWYU pragma: keep
-#include <sys/types.h>   // IWYU pragma: keep
-#include <unistd.h>      // IWYU pragma: keep
+#include "network/server.hpp"
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
-#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -89,14 +86,14 @@ class ProtocolWriter {
    public:
     static void append_int16(std::vector<char>& buf, uint16_t val) {
         const uint16_t nval = htons(val);
-        std::array<char, sizeof(uint16_t)> p {};
+        std::array<char, sizeof(uint16_t)> p{};
         std::memcpy(p.data(), &nval, sizeof(uint16_t));
         buf.insert(buf.end(), p.begin(), p.end());
     }
 
     static void append_int32(std::vector<char>& buf, uint32_t val) {
         const uint32_t nval = htonl(val);
-        std::array<char, sizeof(uint32_t)> p {};
+        std::array<char, sizeof(uint32_t)> p{};
         std::memcpy(p.data(), &nval, sizeof(uint32_t));
         buf.insert(buf.end(), p.begin(), p.end());
     }
@@ -150,8 +147,10 @@ bool Server::start() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
 
-    if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    struct sockaddr sa {};
+    std::memcpy(&sa, &addr, sizeof(addr));
+
+    if (bind(fd, &sa, sizeof(addr)) < 0) {
         static_cast<void>(close(fd));
         return false;
     }
@@ -197,7 +196,7 @@ bool Server::stop() {
         const std::scoped_lock<std::mutex> lock(thread_mutex_);
         fds = client_fds_;
     }
-
+    
     for (const int fd : fds) {
         static_cast<void>(shutdown(fd, SHUT_RDWR));
     }
@@ -290,12 +289,12 @@ void Server::accept_connections() {
         struct sockaddr_in client_addr {};
         socklen_t client_len = sizeof(client_addr);
 
-        const int client_fd =
-            accept(fd, reinterpret_cast<struct sockaddr*>(&client_addr),
-                   &client_len);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+        struct sockaddr sa {};
+        const int client_fd = accept(fd, &sa, &client_len);
         if (client_fd < 0) {
             continue;
         }
+        std::memcpy(&client_addr, &sa, sizeof(client_addr));
 
         static_cast<void>(stats_.connections_accepted.fetch_add(1));
         static_cast<void>(stats_.connections_active.fetch_add(1));
@@ -305,7 +304,7 @@ void Server::accept_connections() {
         worker_threads_.emplace_back([this, client_fd]() {
             handle_connection(client_fd);
             static_cast<void>(stats_.connections_active.fetch_sub(1));
-
+            
             const std::scoped_lock<std::mutex> lock(thread_mutex_);
             auto it = std::remove(client_fds_.begin(), client_fds_.end(), client_fd);
             client_fds_.erase(it, client_fds_.end());
@@ -317,8 +316,9 @@ void Server::accept_connections() {
  * @brief Handle a client connection using PostgreSQL protocol
  */
 void Server::handle_connection(int client_fd) {
-    std::array<char, MAX_PACKET_SIZE> buffer {};
-    executor::QueryExecutor client_executor(catalog_, bpm_, lock_manager_, transaction_manager_);
+    std::array<char, MAX_PACKET_SIZE> buffer{};
+    executor::QueryExecutor client_executor(catalog_, bpm_, lock_manager_,
+                                            transaction_manager_);
 
     /* 1. Read Length (Initial Startup/SSL) */
     ssize_t n = recv(client_fd, buffer.data(), HEADER_SIZE, 0);
@@ -334,15 +334,13 @@ void Server::handle_connection(int client_fd) {
     }
 
     /* 2. Read Rest of Startup/SSL Packet */
-    n = recv(client_fd, std::next(buffer.data(), static_cast<ssize_t>(HEADER_SIZE)),
-             len - HEADER_SIZE, 0);
+    n = recv(client_fd, std::next(buffer.data(), HEADER_SIZE), len - HEADER_SIZE, 0);
     if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
         static_cast<void>(close(client_fd));
         return;
     }
 
-    uint32_t protocol =
-        ProtocolReader::read_int32(std::next(buffer.data(), static_cast<ssize_t>(HEADER_SIZE)));
+    uint32_t protocol = ProtocolReader::read_int32(std::next(buffer.data(), HEADER_SIZE));
 
     /* Check for SSL Request */
     if (protocol == static_cast<uint32_t>(SSL_REQUEST_CODE)) {
@@ -359,14 +357,12 @@ void Server::handle_connection(int client_fd) {
             static_cast<void>(close(client_fd));
             return;
         }
-        n = recv(client_fd, std::next(buffer.data(), static_cast<ssize_t>(HEADER_SIZE)),
-                 len - HEADER_SIZE, 0);
+        n = recv(client_fd, std::next(buffer.data(), HEADER_SIZE), len - HEADER_SIZE, 0);
         if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
             static_cast<void>(close(client_fd));
             return;
         }
-        protocol =
-            ProtocolReader::read_int32(std::next(buffer.data(), static_cast<ssize_t>(HEADER_SIZE)));
+        protocol = ProtocolReader::read_int32(std::next(buffer.data(), HEADER_SIZE));
     }
 
     if (protocol != static_cast<uint32_t>(PROTOCOL_VERSION_3)) {
@@ -375,13 +371,11 @@ void Server::handle_connection(int client_fd) {
     }
 
     /* Send AuthenticationOK ('R') */
-    const std::vector<char> auth_ok = {'R', 0, 0, 0, static_cast<char>(AUTH_OK_MSG_SIZE),
-                                       0,   0, 0, 0};
+    const std::vector<char> auth_ok = {'R', 0, 0, 0, static_cast<char>(AUTH_OK_MSG_SIZE), 0, 0, 0, 0};
     static_cast<void>(send(client_fd, auth_ok.data(), auth_ok.size(), 0));
 
     /* Send ReadyForQuery ('Z') */
-    const std::vector<char> ready = {'Z', 0, 0, 0, static_cast<char>(READY_FOR_QUERY_MSG_SIZE),
-                                     'I'};
+    const std::vector<char> ready = {'Z', 0, 0, 0, static_cast<char>(READY_FOR_QUERY_MSG_SIZE), 'I'};
     static_cast<void>(send(client_fd, ready.data(), ready.size(), 0));
 
     /* 5. Main Message Loop */
@@ -426,21 +420,17 @@ void Server::handle_connection(int client_fd) {
                         if (stmt->type() == parser::StmtType::Select) {
                             std::vector<char> desc = {'T'};
                             ProtocolWriter::append_int32(desc, 0);  // Length placeholder
-                            ProtocolWriter::append_int16(
-                                desc, static_cast<uint16_t>(result.schema().column_count()));
+                            ProtocolWriter::append_int16(desc, 
+                                static_cast<uint16_t>(result.schema().column_count()));
 
                             for (const auto& col : result.schema().columns()) {
                                 ProtocolWriter::append_string(desc, col.name());
-                                ProtocolWriter::append_int32(desc, 0);  // Table OID
-                                ProtocolWriter::append_int16(desc, 0);  // Attr index
-                                ProtocolWriter::append_int32(desc,
-                                                             static_cast<uint32_t>(TEXT_TYPE_OID));
-                                ProtocolWriter::append_int16(
-                                    desc, static_cast<uint16_t>(-1));  // Type size
-                                ProtocolWriter::append_int32(
-                                    desc, static_cast<uint32_t>(-1));  // Type modifier
-                                ProtocolWriter::append_int16(
-                                    desc, static_cast<uint16_t>(TEXT_FORMAT_CODE));
+                                ProtocolWriter::append_int32(desc, 0);   // Table OID
+                                ProtocolWriter::append_int16(desc, 0);   // Attr index
+                                ProtocolWriter::append_int32(desc, static_cast<uint32_t>(TEXT_TYPE_OID));
+                                ProtocolWriter::append_int16(desc, static_cast<uint16_t>(-1));  // Type size
+                                ProtocolWriter::append_int32(desc, static_cast<uint32_t>(-1));  // Type modifier
+                                ProtocolWriter::append_int16(desc, static_cast<uint16_t>(TEXT_FORMAT_CODE));
                             }
                             ProtocolWriter::finish_message(desc);
                             static_cast<void>(send(client_fd, desc.data(), desc.size(), 0));
@@ -449,13 +439,11 @@ void Server::handle_connection(int client_fd) {
                             for (const auto& row : result.rows()) {
                                 std::vector<char> data = {'D'};
                                 ProtocolWriter::append_int32(data, 0);  // Length
-                                ProtocolWriter::append_int16(data,
-                                                             static_cast<uint16_t>(row.size()));
+                                ProtocolWriter::append_int16(data, static_cast<uint16_t>(row.size()));
 
                                 for (const auto& val : row.values()) {
                                     const std::string s = val.to_string();
-                                    ProtocolWriter::append_int32(data,
-                                                                 static_cast<uint32_t>(s.size()));
+                                    ProtocolWriter::append_int32(data, static_cast<uint32_t>(s.size()));
                                     data.insert(data.end(), s.begin(), s.end());
                                 }
                                 ProtocolWriter::finish_message(data);
@@ -466,10 +454,10 @@ void Server::handle_connection(int client_fd) {
                         /* 3. Send CommandComplete ('C') */
                         std::vector<char> complete = {'C'};
                         const std::string msg = (stmt->type() == parser::StmtType::Select)
-                                                    ? "SELECT " + std::to_string(result.row_count())
-                                                    : "OK";
-                        ProtocolWriter::append_int32(complete,
-                                                     static_cast<uint32_t>(4 + msg.size() + 1));
+                                              ? "SELECT " + std::to_string(result.row_count())
+                                              : "OK";
+                        ProtocolWriter::append_int32(complete, 
+                            static_cast<uint32_t>(4 + msg.size() + 1));
                         ProtocolWriter::append_string(complete, msg);
                         static_cast<void>(send(client_fd, complete.data(), complete.size(), 0));
                     } else {
@@ -498,5 +486,3 @@ void Server::handle_connection(int client_fd) {
 }
 
 }  // namespace cloudsql::network
-
-/** @} */
