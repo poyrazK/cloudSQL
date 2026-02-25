@@ -25,13 +25,13 @@ BTreeIndex::BTreeIndex(std::string index_name, BufferPoolManager& bpm, common::V
     : index_name_(std::move(index_name)),
       filename_(index_name_ + ".idx"),
       bpm_(bpm),
-      key_type_(key_type){}
+      key_type_(key_type) {}
 
 /**
  * @brief Iterator implementation
  */
 BTreeIndex::Iterator::Iterator(BTreeIndex& index, uint32_t page, uint16_t slot)
-    : index_(index), current_page_(page), current_slot_(slot){}
+    : index_(index), current_page_(page), current_slot_(slot) {}
 
 bool BTreeIndex::Iterator::next(Entry& out_entry) {
     while (!eof_) {
@@ -175,7 +175,7 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
     const uint32_t leaf_page = find_leaf(key);
     std::array<char, Page::PAGE_SIZE> buffer{};
     if (!read_page(leaf_page, buffer.data())) {
-        return{};
+        return {};
     }
 
     std::vector<HeapTable::TupleId> results;

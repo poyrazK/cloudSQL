@@ -33,11 +33,11 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::S
     : table_name_(std::move(table_name)),
       filename_(table_name_ + ".heap"),
       bpm_(bpm),
-      schema_(std::move(schema)){}
+      schema_(std::move(schema)) {}
 
 /* --- Iterator Implementation --- */
 
-HeapTable::Iterator::Iterator(HeapTable& table) : table_(table), next_id_(0, 0), last_id_(0, 0){}
+HeapTable::Iterator::Iterator(HeapTable& table) : table_(table), next_id_(0, 0), last_id_(0, 0) {}
 
 bool HeapTable::Iterator::next(executor::Tuple& out_tuple) {
     TupleMeta meta;

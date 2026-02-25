@@ -7,7 +7,7 @@
 
 namespace cloudsql::storage {
 
-LRUReplacer::LRUReplacer(size_t num_pages) : capacity_(num_pages){}
+LRUReplacer::LRUReplacer(size_t num_pages) : capacity_(num_pages) {}
 
 bool LRUReplacer::victim(uint32_t* frame_id) {
     std::lock_guard<std::mutex> lock(latch_);
