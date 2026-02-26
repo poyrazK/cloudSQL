@@ -58,7 +58,8 @@ constexpr size_t HEADER_SIZE = 4;
 ssize_t recv_all(int fd, char* buf, size_t count) {
     size_t total = 0;
     while (total < count) {
-        const ssize_t n = recv(fd, std::next(buf, static_cast<std::ptrdiff_t>(total)), count - total, 0);
+        const ssize_t n =
+            recv(fd, std::next(buf, static_cast<std::ptrdiff_t>(total)), count - total, 0);
         if (n <= 0) {
             return n;
         }
