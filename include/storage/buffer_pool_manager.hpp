@@ -76,7 +76,7 @@ class BufferPoolManager {
      * @param[out] page_id Output param for the id of the created page
      * @return Pointer to the new Page, or nullptr if cannot be created
      */
-    Page* new_page(const std::string& file_name, uint32_t* page_id);
+    Page* new_page(const std::string& file_name, const uint32_t* page_id);
 
     /**
      * @brief Delete a page

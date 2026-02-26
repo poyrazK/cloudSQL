@@ -5,6 +5,7 @@
 
 #include "transaction/lock_manager.hpp"
 
+#include <chrono>
 #include <iterator>
 #include <mutex>
 #include <string>
@@ -31,7 +32,7 @@ bool LockManager::acquire_shared(Transaction* txn, const std::string& rid) {
 
     /* Wait loop with timeout to avoid permanent hangs */
     const auto timeout = std::chrono::milliseconds(1000);
-    bool success = queue.cv.wait_for(lock, timeout, [&]() {
+    const bool success = queue.cv.wait_for(lock, timeout, [&]() {
         /* Check if we are aborted */
         if (txn->get_state() == TransactionState::ABORTED) {
             return true;
@@ -93,7 +94,7 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
     const auto my_req = std::prev(queue.request_queue.end());
 
     const auto timeout = std::chrono::milliseconds(1000);
-    bool success = queue.cv.wait_for(lock, timeout, [&]() {
+    const bool success = queue.cv.wait_for(lock, timeout, [&]() {
         if (txn->get_state() == TransactionState::ABORTED) {
             return true;
         }
