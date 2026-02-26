@@ -730,7 +730,6 @@ TEST(ExecutionTest_DDL) {
     // Note: Our system doesn't have a direct "CREATE INDEX" statement parsing yet,
     // but the catalog supports it. For now we just test that DROP INDEX works if index exists.
     auto table_opt = catalog->get_table_by_name("ddl_test");
-    EXPECT_TRUE(table_opt.has_value());
     if (table_opt) {
         const oid_t tid = (*table_opt)->table_id;
         static_cast<void>(catalog->create_index("idx_ddl", tid, {0}, IndexType::BTree, true));

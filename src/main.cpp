@@ -10,13 +10,16 @@
  */
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "catalog/catalog.hpp"

@@ -45,7 +45,7 @@ Transaction* TransactionManager::begin(IsolationLevel level) {
 
     txn->set_snapshot(std::move(snapshot));
 
-    Transaction* txn_ptr = txn.get();
+    Transaction* const txn_ptr = txn.get();
     active_transactions_[txn_id] = std::move(txn);
 
     return txn_ptr;
