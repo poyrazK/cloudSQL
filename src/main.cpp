@@ -9,6 +9,7 @@
  * @date 2024
  */
 
+#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
@@ -29,6 +30,11 @@
 namespace {
 
 /**
+ * @brief Async-safe shutdown flag
+ */
+std::atomic<bool> shutdown_requested{false};
+
+/**
  * @brief Thread-safe getter for the global server instance
  */
 std::unique_ptr<cloudsql::network::Server>& get_server_instance() {
@@ -37,14 +43,11 @@ std::unique_ptr<cloudsql::network::Server>& get_server_instance() {
 }
 
 /**
- * Signal handler for graceful shutdown
+ * Signal handler for graceful shutdown - async-safe
  */
 void signal_handler(int sig) {
-    std::cout << "\nReceived signal " << sig << ", shutting down...\n";
-    auto& server = get_server_instance();
-    if (server != nullptr) {
-        static_cast<void>(server->stop());
-    }
+    (void)sig;
+    shutdown_requested.store(true);
 }
 
 /**
@@ -97,7 +100,17 @@ int main(int argc, char* argv[]) {
                 return 0;
             }
             if ((arg == "-p" || arg == "--port") && i + 1 < args.size()) {
-                config.port = static_cast<uint16_t>(std::stoi(args[++i]));
+                try {
+                    const std::string& port_str = args[++i];
+                    const unsigned long port_val = std::stoul(port_str);
+                    if (port_val > 65535) {
+                        throw std::out_of_range("Port out of range");
+                    }
+                    config.port = static_cast<uint16_t>(port_val);
+                } catch (const std::exception& e) {
+                    std::cerr << "Invalid port: " << args[i] << " (" << e.what() << ")\n";
+                    return 1;
+                }
             } else if ((arg == "-d" || arg == "--data") && i + 1 < args.size()) {
                 config.data_dir = args[++i];
             } else if ((arg == "-c" || arg == "--config") && i + 1 < args.size()) {
@@ -159,6 +172,7 @@ int main(int argc, char* argv[]) {
         server = cloudsql::network::Server::create(config.port, *catalog, *bpm);
         if (!server) {
             std::cerr << "Failed to create server\n";
+            log_manager->stop_flush_thread();
             return 1;
         }
 
@@ -166,16 +180,23 @@ int main(int argc, char* argv[]) {
         std::cout << "Starting server...\n";
         if (!server->start()) {
             std::cerr << "Failed to start server\n";
+            log_manager->stop_flush_thread();
             return 1;
         }
 
         std::cout << "Server running. Press Ctrl+C to stop.\n";
-        server->wait();
+
+        /* Monitor shutdown flag */
+        while (!shutdown_requested.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
 
         /* Cleanup */
-        std::cout << "Shutting down...\n";
+        std::cout << "\nShutting down...\n";
         static_cast<void>(server->stop());
         server.reset();
+
+        log_manager->stop_flush_thread();
 
         std::cout << "Goodbye!\n";
     } catch (const std::exception& e) {

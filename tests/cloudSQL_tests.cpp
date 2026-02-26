@@ -53,14 +53,6 @@ namespace {
 using cloudsql::tests::tests_failed;
 using cloudsql::tests::tests_passed;
 
-/**
- * @brief Union to safely handle sockaddr casting for POSIX APIs in tests
- */
-union GenericSockAddr {
-    struct sockaddr sa;
-    struct sockaddr_in sin;
-};
-
 constexpr int64_t VAL_42 = 42;
 constexpr double PI_LOWER = 3.14;
 constexpr double PI_UPPER = 3.15;
@@ -738,11 +730,11 @@ TEST(ExecutionTest_DDL) {
     // Note: Our system doesn't have a direct "CREATE INDEX" statement parsing yet,
     // but the catalog supports it. For now we just test that DROP INDEX works if index exists.
     auto table_opt = catalog->get_table_by_name("ddl_test");
-    oid_t tid = 0;
+    EXPECT_TRUE(table_opt.has_value());
     if (table_opt) {
-        tid = (*table_opt)->table_id;
+        const oid_t tid = (*table_opt)->table_id;
+        static_cast<void>(catalog->create_index("idx_ddl", tid, {0}, IndexType::BTree, true));
     }
-    static_cast<void>(catalog->create_index("idx_ddl", tid, {0}, IndexType::BTree, true));
 
     const auto res_drop_idx =
         exec.execute(*Parser(std::make_unique<Lexer>("DROP INDEX idx_ddl")).parse_statement());
@@ -860,11 +852,7 @@ TEST(CatalogTest_Errors) {
 
     static_cast<void>(catalog->create_table("fail_test", cols));
     /* Duplicate table */
-    try {
-        static_cast<void>(catalog->create_table("fail_test", cols));
-    } catch (const std::exception& e) {
-        static_cast<void>(e.what());
-    }
+    EXPECT_THROW(catalog->create_table("fail_test", cols), std::exception);
 
     /* Missing table */
     EXPECT_FALSE(catalog->table_exists(TABLE_9999));
@@ -874,11 +862,8 @@ TEST(CatalogTest_Errors) {
     /* Duplicate index */
     const oid_t tid = catalog->create_table("idx_fail", cols);
     static_cast<void>(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true));
-    try {
-        static_cast<void>(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true));
-    } catch (const std::exception& e) {
-        static_cast<void>(e.what());
-    }
+    EXPECT_THROW(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true),
+                 std::exception);
 
     /* Missing index */
     EXPECT_FALSE(catalog->get_index(INDEX_8888).has_value());

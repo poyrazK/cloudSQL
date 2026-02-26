@@ -50,6 +50,22 @@ constexpr int SELECT_TIMEOUT_USEC = 100000;
 constexpr int ERROR_MSG_LEN = 9;
 constexpr size_t MIN_MSG_SIZE = 5;
 constexpr size_t HEADER_SIZE = 4;
+
+/**
+ * @brief Helper to receive exactly count bytes
+ * @return count on success, 0 on EOF, -1 on error
+ */
+ssize_t recv_all(int fd, char* buf, size_t count) {
+    size_t total = 0;
+    while (total < count) {
+        const ssize_t n = recv(fd, std::next(buf, static_cast<std::ptrdiff_t>(total)), count - total, 0);
+        if (n <= 0) {
+            return n;
+        }
+        total += static_cast<size_t>(n);
+    }
+    return static_cast<ssize_t>(total);
+}
 }  // anonymous namespace
 
 /**
@@ -149,10 +165,10 @@ bool Server::start() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
 
-    struct sockaddr sa {};
-    std::memcpy(&sa, &addr, sizeof(addr));
+    struct sockaddr_storage storage {};
+    std::memcpy(&storage, &addr, sizeof(addr));
 
-    if (bind(fd, &sa, sizeof(addr)) < 0) {
+    if (bind(fd, reinterpret_cast<struct sockaddr*>(&storage), sizeof(addr)) < 0) {
         static_cast<void>(close(fd));
         return false;
     }
@@ -204,8 +220,15 @@ bool Server::stop() {
     }
 
     // 2. Join the accept thread
-    if (accept_thread_.joinable()) {
-        accept_thread_.join();
+    std::thread a_thread;
+    {
+        const std::scoped_lock<std::mutex> lock(thread_mutex_);
+        if (accept_thread_.joinable()) {
+            a_thread = std::move(accept_thread_);
+        }
+    }
+    if (a_thread.joinable()) {
+        a_thread.join();
     }
 
     // 3. Join all connection worker threads
@@ -218,6 +241,11 @@ bool Server::stop() {
         if (t.joinable()) {
             t.join();
         }
+    }
+
+    // Now close the fds
+    for (const int fd : fds) {
+        static_cast<void>(close(fd));
     }
 
     if (fd_to_close >= 0) {
@@ -299,12 +327,12 @@ void Server::accept_connections() {
         struct sockaddr_in client_addr {};
         socklen_t client_len = sizeof(client_addr);
 
-        struct sockaddr sa {};
-        const int client_fd = accept(fd, &sa, &client_len);
+        struct sockaddr_storage storage {};
+        const int client_fd = accept(fd, reinterpret_cast<struct sockaddr*>(&storage), &client_len);
         if (client_fd < 0) {
             continue;
         }
-        std::memcpy(&client_addr, &sa, sizeof(client_addr));
+        std::memcpy(&client_addr, &storage, sizeof(client_addr));
 
         static_cast<void>(stats_.connections_accepted.fetch_add(1));
         static_cast<void>(stats_.connections_active.fetch_add(1));
@@ -330,23 +358,20 @@ void Server::handle_connection(int client_fd) {
     executor::QueryExecutor client_executor(catalog_, bpm_, lock_manager_, transaction_manager_);
 
     /* 1. Read Length (Initial Startup/SSL) */
-    ssize_t n = recv(client_fd, buffer.data(), HEADER_SIZE, 0);
+    ssize_t n = recv_all(client_fd, buffer.data(), HEADER_SIZE);
     if (n < static_cast<ssize_t>(HEADER_SIZE)) {
-        static_cast<void>(close(client_fd));
         return;
     }
 
     uint32_t len = ProtocolReader::read_int32(buffer.data());
     if (len > buffer.size() || len < HEADER_SIZE) {
-        static_cast<void>(close(client_fd));
         return;
     }
 
     /* 2. Read Rest of Startup/SSL Packet */
-    n = recv(client_fd, std::next(buffer.data(), static_cast<std::ptrdiff_t>(HEADER_SIZE)),
-             len - HEADER_SIZE, 0);
+    n = recv_all(client_fd, std::next(buffer.data(), static_cast<std::ptrdiff_t>(HEADER_SIZE)),
+             len - HEADER_SIZE);
     if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
-        static_cast<void>(close(client_fd));
         return;
     }
 
@@ -358,20 +383,17 @@ void Server::handle_connection(int client_fd) {
         const char ssl_deny = 'N';
         static_cast<void>(send(client_fd, &ssl_deny, 1, 0));
 
-        n = recv(client_fd, buffer.data(), HEADER_SIZE, 0);
+        n = recv_all(client_fd, buffer.data(), HEADER_SIZE);
         if (n < static_cast<ssize_t>(HEADER_SIZE)) {
-            static_cast<void>(close(client_fd));
             return;
         }
         len = ProtocolReader::read_int32(buffer.data());
         if (len < HEADER_SIZE || len > buffer.size()) {
-            static_cast<void>(close(client_fd));
             return;
         }
-        n = recv(client_fd, std::next(buffer.data(), static_cast<std::ptrdiff_t>(HEADER_SIZE)),
-                 len - HEADER_SIZE, 0);
+        n = recv_all(client_fd, std::next(buffer.data(), static_cast<std::ptrdiff_t>(HEADER_SIZE)),
+                 len - HEADER_SIZE);
         if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
-            static_cast<void>(close(client_fd));
             return;
         }
         protocol = ProtocolReader::read_int32(
@@ -379,7 +401,6 @@ void Server::handle_connection(int client_fd) {
     }
 
     if (protocol != static_cast<uint32_t>(PROTOCOL_VERSION_3)) {
-        static_cast<void>(close(client_fd));
         return;
     }
 
@@ -396,12 +417,12 @@ void Server::handle_connection(int client_fd) {
     /* 5. Main Message Loop */
     while (is_running()) {
         char type = '\0';
-        n = recv(client_fd, &type, 1, 0);
+        n = recv_all(client_fd, &type, 1);
         if (n <= 0) {
             break;
         }
 
-        n = recv(client_fd, buffer.data(), HEADER_SIZE, 0);
+        n = recv_all(client_fd, buffer.data(), HEADER_SIZE);
         if (n < static_cast<ssize_t>(HEADER_SIZE)) {
             break;
         }
@@ -412,7 +433,7 @@ void Server::handle_connection(int client_fd) {
 
         std::vector<char> body(len - HEADER_SIZE);
         if (len > HEADER_SIZE) {
-            n = recv(client_fd, body.data(), len - HEADER_SIZE, 0);
+            n = recv_all(client_fd, body.data(), len - HEADER_SIZE);
             if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
                 break;
             }
@@ -502,8 +523,6 @@ void Server::handle_connection(int client_fd) {
         /* Ready for Query */
         static_cast<void>(send(client_fd, ready.data(), ready.size(), 0));
     }
-
-    static_cast<void>(close(client_fd));
 }
 
 }  // namespace cloudsql::network
