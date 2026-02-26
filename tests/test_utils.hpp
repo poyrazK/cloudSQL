@@ -42,8 +42,8 @@ template <typename T, typename U>
 void expect_eq(const T& a, const U& b, const char* expr_a, const char* expr_b) {
     if (!(a == b)) {
         throw std::runtime_error(std::string("Equality failed: ") + expr_a + " (" +
-                                 to_string_safe(a) + ") != " + expr_b + " (" +
-                                 to_string_safe(b) + ")");
+                                 to_string_safe(a) + ") != " + expr_b + " (" + to_string_safe(b) +
+                                 ")");
     }
 }
 
