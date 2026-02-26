@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
