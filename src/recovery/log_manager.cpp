@@ -70,7 +70,7 @@ lsn_t LogManager::append_log_record(LogRecord& log_record) {
     // If record size > buffer size, flush first
     const uint32_t record_size = log_record.get_size();
     if (log_buffer_offset_ + record_size > log_buffer_size_) {
-        flush(true);
+        flush_internal();
     }
 
     // Assign LSN
@@ -88,7 +88,10 @@ lsn_t LogManager::append_log_record(LogRecord& log_record) {
 void LogManager::flush(bool force) {
     (void)force;
     const std::unique_lock<std::mutex> lock(latch_);
+    flush_internal();
+}
 
+void LogManager::flush_internal() {
     if (log_buffer_offset_ > 0) {
         log_stream_.write(log_buffer_, static_cast<std::streamsize>(log_buffer_offset_));
         log_stream_.flush();
@@ -105,10 +108,7 @@ void LogManager::flush_thread_loop() {
         }));
 
         if (log_buffer_offset_ > 0) {
-            log_stream_.write(log_buffer_, static_cast<std::streamsize>(log_buffer_offset_));
-            log_stream_.flush();
-            persistent_lsn_ = next_lsn_.load() - 1;
-            log_buffer_offset_ = 0;
+            flush_internal();
         }
     }
 }

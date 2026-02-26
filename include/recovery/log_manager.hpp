@@ -87,6 +87,11 @@ class LogManager {
     std::atomic<lsn_t> next_lsn_{0};
     std::atomic<lsn_t> persistent_lsn_{INVALID_LSN};
 
+    /**
+     * @brief Internal flush implementation without locking
+     */
+    void flush_internal();
+
     void flush_thread_loop();
 };
 
