@@ -6,6 +6,7 @@
 #include <arpa/inet.h>   // IWYU pragma: keep
 #include <netinet/in.h>  // IWYU pragma: keep
 #include <sys/socket.h>  // IWYU pragma: keep
+#include <sys/time.h>    // IWYU pragma: keep
 #include <sys/types.h>   // IWYU pragma: keep
 #include <unistd.h>      // IWYU pragma: keep
 

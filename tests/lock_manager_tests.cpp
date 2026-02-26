@@ -7,13 +7,11 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
-#include <vector>
 
 #include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
-using namespace cloudsql;
 using namespace cloudsql::transaction;
 
 namespace {

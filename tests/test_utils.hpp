@@ -124,6 +124,15 @@ inline void expect_ptr_eq(const void* a, const void* b, const char* expr_a, cons
     ::cloudsql::tests::detail::expect_ptr_eq(static_cast<const void*>(a), \
                                              static_cast<const void*>(b), #a, #b)
 
+#define EXPECT_THROW(expr, ex_type)                                               \
+    try {                                                                         \
+        expr;                                                                     \
+        throw std::runtime_error(std::string("Expected exception not thrown: ") + \
+                                 #expr);                                          \
+    } catch (const ex_type&) {                                                    \
+        /* Success */                                                             \
+    }
+
 }  // namespace cloudsql::tests
 
 #endif  // SQL_ENGINE_TEST_UTILS_HPP
