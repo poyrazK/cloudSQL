@@ -169,7 +169,8 @@ bool Server::start() {
     struct sockaddr_storage storage {};
     std::memcpy(&storage, &addr, sizeof(addr));
 
-    if (bind(fd, reinterpret_cast<struct sockaddr*>(&storage), sizeof(addr)) < 0) {
+    if (bind(fd, reinterpret_cast<struct sockaddr*>(&storage),  // NOLINT
+             sizeof(addr)) < 0) {
         static_cast<void>(close(fd));
         return false;
     }
@@ -329,7 +330,8 @@ void Server::accept_connections() {
         socklen_t client_len = sizeof(client_addr);
 
         struct sockaddr_storage storage {};
-        const int client_fd = accept(fd, reinterpret_cast<struct sockaddr*>(&storage), &client_len);
+        const int client_fd =
+            accept(fd, reinterpret_cast<struct sockaddr*>(&storage), &client_len);  // NOLINT
         if (client_fd < 0) {
             continue;
         }

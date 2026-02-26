@@ -21,6 +21,8 @@ namespace {
 using cloudsql::tests::tests_failed;
 using cloudsql::tests::tests_passed;
 
+constexpr auto TEST_SLEEP_MS = std::chrono::milliseconds(100);
+
 TEST(LockManager_Shared) {
     LockManager lm;
     Transaction txn1(1);
@@ -80,7 +82,7 @@ TEST(LockManager_Wait) {
     });
 
     // Small sleep to ensure threads are waiting
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(TEST_SLEEP_MS);
     EXPECT_TRUE(shared_granted.load() == 0);
 
     // 3. Release Exclusive (should grant both shared)
@@ -108,7 +110,7 @@ TEST(LockManager_Deadlock) {
     std::thread t1([&]() { static_cast<void>(lm.acquire_exclusive(&txn1, "B")); });
 
     // Small sleep to ensure t1 is waiting
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(TEST_SLEEP_MS);
 
     // txn2 waits for A -> Deadlock!
     // Current implementation might not detect deadlock and just timeout or block.

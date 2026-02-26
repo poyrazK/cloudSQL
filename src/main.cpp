@@ -37,6 +37,9 @@ namespace {
  */
 std::atomic<bool> shutdown_requested{false};
 
+constexpr uint32_t CONST_MAX_PORT = 65535;
+constexpr auto SLEEP_MS = std::chrono::milliseconds(100);
+
 /**
  * @brief Thread-safe getter for the global server instance
  */
@@ -106,7 +109,7 @@ int main(int argc, char* argv[]) {
                 try {
                     const std::string& port_str = args[++i];
                     const unsigned long port_val = std::stoul(port_str);
-                    if (port_val > 65535) {
+                    if (port_val > CONST_MAX_PORT) {
                         throw std::out_of_range("Port out of range");
                     }
                     config.port = static_cast<uint16_t>(port_val);
@@ -191,7 +194,7 @@ int main(int argc, char* argv[]) {
 
         /* Monitor shutdown flag */
         while (!shutdown_requested.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(SLEEP_MS);
         }
 
         /* Cleanup */

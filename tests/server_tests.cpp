@@ -307,8 +307,9 @@ TEST(Server_MultiClient) {
     auto server = Server::create(PORT_MULTI, *catalog, sm);
     static_cast<void>(server->start());
 
-    const int NUM_CLIENTS = 5;
+    constexpr int NUM_CLIENTS = 5;
     std::vector<std::thread> clients;
+    clients.reserve(NUM_CLIENTS);
     std::atomic<int> success_count{0};
 
     for (int i = 0; i < NUM_CLIENTS; ++i) {
