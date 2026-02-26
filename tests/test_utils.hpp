@@ -70,6 +70,13 @@ void expect_lt(const T& a, const U& b, const char* expr_a, const char* expr_b) {
     }
 }
 
+template <typename T, typename U>
+void expect_le(const T& a, const U& b, const char* expr_a, const char* expr_b) {
+    if (!(a <= b)) {
+        throw std::runtime_error(std::string("Less-equal failed: ") + expr_a + " <= " + expr_b);
+    }
+}
+
 inline void expect_double_eq(double a, double b, const char* expr_a, const char* expr_b) {
     const double diff = a - b;
     const double abs_diff = (diff < 0) ? -diff : diff;
@@ -114,6 +121,8 @@ inline void expect_ptr_eq(const void* a, const void* b, const char* expr_a, cons
 #define EXPECT_GT(a, b) ::cloudsql::tests::detail::expect_gt((a), (b), #a, #b)
 
 #define EXPECT_LT(a, b) ::cloudsql::tests::detail::expect_lt((a), (b), #a, #b)
+
+#define EXPECT_LE(a, b) ::cloudsql::tests::detail::expect_le((a), (b), #a, #b)
 
 #define EXPECT_STREQ(a, b) \
     ::cloudsql::tests::detail::expect_eq_str(std::string(a), std::string(b), #a, #b)
