@@ -64,7 +64,7 @@ void expect_gt(const T& a, const U& b, const char* expr_a, const char* expr_b) {
 }
 
 template <typename T, typename U>
-void expect_lt(const T& a, const uint32_t b, const char* expr_a, const char* expr_b) {
+void expect_lt(const T& a, const U& b, const char* expr_a, const char* expr_b) {
     if (!(a < b)) {
         throw std::runtime_error(std::string("Less-than failed: ") + expr_a + " < " + expr_b);
     }
