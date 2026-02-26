@@ -371,7 +371,7 @@ void Server::handle_connection(int client_fd) {
 
     /* 2. Read Rest of Startup/SSL Packet */
     n = recv_all(client_fd, std::next(buffer.data(), static_cast<std::ptrdiff_t>(HEADER_SIZE)),
-             len - HEADER_SIZE);
+                 len - HEADER_SIZE);
     if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
         return;
     }
@@ -393,7 +393,7 @@ void Server::handle_connection(int client_fd) {
             return;
         }
         n = recv_all(client_fd, std::next(buffer.data(), static_cast<std::ptrdiff_t>(HEADER_SIZE)),
-                 len - HEADER_SIZE);
+                     len - HEADER_SIZE);
         if (n < static_cast<ssize_t>(len - HEADER_SIZE)) {
             return;
         }
