@@ -861,8 +861,7 @@ TEST(CatalogTest_Errors) {
     /* Duplicate index */
     const oid_t tid = catalog->create_table("idx_fail", cols);
     static_cast<void>(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true));
-    EXPECT_THROW(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true),
-                 std::exception);
+    EXPECT_THROW(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true), std::exception);
 
     /* Missing index */
     EXPECT_FALSE(catalog->get_index(INDEX_8888).has_value());
