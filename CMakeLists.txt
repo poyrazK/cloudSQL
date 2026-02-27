@@ -120,42 +120,34 @@ endif()
 
 # Build test executables
 if (BUILD_TESTS)
-    # Create test executable
-    add_executable(sqlEngine_tests tests/cloudSQL_tests.cpp)
-    target_link_libraries(sqlEngine_tests PRIVATE sqlEngineCore)
+    enable_testing()
+    include(FetchContent)
+    FetchContent_Declare(
+      googletest
+      URL https://github.com/google/googletest/archive/refs/heads/main.zip
+    )
+    # For Windows: prevent overriding the parent project's compiler/linker settings
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
 
-    # Create lock manager unit tests
-    add_executable(lock_manager_tests tests/lock_manager_tests.cpp)
-    target_link_libraries(lock_manager_tests PRIVATE sqlEngineCore)
+    macro(add_cloudsql_test name source)
+        add_executable(${name} ${source})
+        target_link_libraries(${name} PRIVATE sqlEngineCore GTest::gtest_main)
+        add_test(NAME ${name} COMMAND ${name})
+    endmacro()
 
-    # Create server unit tests
-    add_executable(server_tests tests/server_tests.cpp)
-    target_link_libraries(server_tests PRIVATE sqlEngineCore)
-
-    # Create transaction manager unit tests
-    add_executable(transaction_manager_tests tests/transaction_manager_tests.cpp)
-    target_link_libraries(transaction_manager_tests PRIVATE sqlEngineCore)
-
-    # Create statement unit tests
-    add_executable(statement_tests tests/statement_tests.cpp)
-    target_link_libraries(statement_tests PRIVATE sqlEngineCore)
-
-    # Create recovery unit tests
-    add_executable(recovery_tests tests/recovery_tests.cpp)
-    target_link_libraries(recovery_tests PRIVATE sqlEngineCore)
-
-    # Check if GoogleTest is available
-    find_package(GTest QUIET)
-    if (GTest_FOUND)
-        target_link_libraries(sqlEngine_tests PRIVATE GTest::GTest GTest::GTestMain)
-        include(GoogleTest)
-        gtest_discover_tests(sqlEngine_tests)
-    endif()
+    add_cloudsql_test(sqlEngine_tests tests/cloudSQL_tests.cpp)
+    add_cloudsql_test(lock_manager_tests tests/lock_manager_tests.cpp)
+    add_cloudsql_test(server_tests tests/server_tests.cpp)
+    add_cloudsql_test(transaction_manager_tests tests/transaction_manager_tests.cpp)
+    add_cloudsql_test(statement_tests tests/statement_tests.cpp)
+    add_cloudsql_test(recovery_tests tests/recovery_tests.cpp)
+    add_cloudsql_test(recovery_manager_tests tests/recovery_manager_tests.cpp)
+    add_cloudsql_test(buffer_pool_tests tests/buffer_pool_tests.cpp)
 
     add_custom_target(run-tests
-        COMMAND ${CMAKE_CURRENT_BINARY_DIR}/sqlEngine_tests
-        DEPENDS sqlEngine_tests
-        COMMENT "Running cloudSQL tests")
+        COMMAND ${CMAKE_CTEST_COMMAND}
+        COMMENT "Running all tests via CTest")
 endif()
 
 # Installation
