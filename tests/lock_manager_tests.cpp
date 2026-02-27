@@ -8,7 +8,6 @@
 #include <thread>
 #include <gtest/gtest.h>
 
-#include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 

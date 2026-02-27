@@ -7,7 +7,6 @@
 #include <string>
 
 #include "parser/statement.hpp"
-#include "test_utils.hpp"
 
 using namespace cloudsql::parser;
 

@@ -3,12 +3,12 @@
  * @brief Unit tests for Network Server and Protocol
  */
 
-#include <arpa/inet.h>   // IWYU pragma: keep
-#include <netinet/in.h>  // IWYU pragma: keep
-#include <sys/socket.h>  // IWYU pragma: keep
-#include <sys/time.h>    // IWYU pragma: keep
-#include <sys/types.h>   // IWYU pragma: keep
-#include <unistd.h>      // IWYU pragma: keep
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <array>
 #include <atomic>
@@ -16,13 +16,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+#include <gtest/gtest.h>
 
 #include "catalog/catalog.hpp"
 #include "common/config.hpp"
@@ -32,16 +31,12 @@
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
-#include "test_utils.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::network;
 using namespace cloudsql::common;
 
 namespace {
-
-using cloudsql::tests::tests_failed;
-using cloudsql::tests::tests_passed;
 
 constexpr uint16_t PORT_STATUS = 54321;
 constexpr uint16_t PORT_SIMPLE = 54322;
@@ -60,9 +55,6 @@ constexpr int AUTH_OK_LEN = 9;
 constexpr int READY_LEN = 6;
 constexpr int TEST_TIMEOUT_SEC = 2;
 
-/**
- * @brief Set a receive timeout on a socket to prevent hangs in tests
- */
 void set_sock_timeout(int sock) {
     struct timeval tv {};
     tv.tv_sec = TEST_TIMEOUT_SEC;
@@ -70,7 +62,7 @@ void set_sock_timeout(int sock) {
     static_cast<void>(setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)));
 }
 
-TEST(Server_StatusStrings) {
+TEST(ServerTests, StatusStrings) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -83,13 +75,12 @@ TEST(Server_StatusStrings) {
     EXPECT_EQ(s.get_status_string(), std::string("Stopped"));
 }
 
-TEST(Server_SimpleQuery) {
+TEST(ServerTests, SimpleQuery) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     const uint16_t port = PORT_SIMPLE;
 
-    /* Register table in catalog */
     std::vector<ColumnInfo> cols;
     cols.emplace_back("id", common::ValueType::TYPE_INT32, 0);
     static_cast<void>(catalog->create_table("dual", std::move(cols)));
@@ -110,15 +101,12 @@ TEST(Server_SimpleQuery) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    struct sockaddr sa {};
-    std::memcpy(&sa, &addr, sizeof(addr));
-
     int sock = -1;
     for (int i = 0; i < CONN_RETRIES; ++i) {
         sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock >= 0) {
             set_sock_timeout(sock);
-            if (connect(sock, &sa, sizeof(addr)) == 0) {
+            if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) { // NOLINT
                 break;
             }
             static_cast<void>(close(sock));
@@ -133,8 +121,8 @@ TEST(Server_SimpleQuery) {
         static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
 
         std::array<char, BUF_SIZE> buffer{};
-        static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));  // AuthOK
-        static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));    // ReadyForQuery
+        static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));
+        static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));
 
         const std::string sql = "SELECT id FROM dual";
         const char q_type = 'Q';
@@ -154,7 +142,7 @@ TEST(Server_SimpleQuery) {
         static_cast<void>(recv(sock, body.data(), res_len - 4, 0));
 
         const ssize_t n_d = recv(sock, buffer.data(), 1, 0);
-        static_cast<void>(n_d);
+        (void)n_d;
         EXPECT_EQ(buffer[0], 'D');
 
         static_cast<void>(recv(sock, &res_len, 4, 0));
@@ -177,13 +165,13 @@ TEST(Server_SimpleQuery) {
 
         static_cast<void>(close(sock));
     } else {
-        throw std::runtime_error("Failed to connect to server");
+        FAIL() << "Failed to connect to server";
     }
 
     static_cast<void>(server->stop());
 }
 
-TEST(Server_InvalidProtocol) {
+TEST(ServerTests, InvalidProtocol) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -196,13 +184,10 @@ TEST(Server_InvalidProtocol) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    struct sockaddr sa {};
-    std::memcpy(&sa, &addr, sizeof(addr));
-
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock >= 0) {
         set_sock_timeout(sock);
-        if (connect(sock, &sa, sizeof(addr)) == 0) {
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) { // NOLINT
             const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(12345)};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
@@ -217,7 +202,7 @@ TEST(Server_InvalidProtocol) {
     static_cast<void>(server->stop());
 }
 
-TEST(Server_Terminate) {
+TEST(ServerTests, Terminate) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -230,20 +215,17 @@ TEST(Server_Terminate) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    struct sockaddr sa {};
-    std::memcpy(&sa, &addr, sizeof(addr));
-
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock >= 0) {
         set_sock_timeout(sock);
-        if (connect(sock, &sa, sizeof(addr)) == 0) {
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) { // NOLINT
             const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
             static_cast<void>(send(sock, startup.data(), STARTUP_PKT_LEN, 0));
 
             std::array<char, BUF_SIZE> buffer{};
-            static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));  // AuthOK
-            static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));    // ReadyForQuery
+            static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));
+            static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));
 
             const char terminate = 'X';
             const uint32_t len = htonl(4);
@@ -259,7 +241,7 @@ TEST(Server_Terminate) {
     static_cast<void>(server->stop());
 }
 
-TEST(Server_Handshake) {
+TEST(ServerTests, Handshake) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -272,20 +254,17 @@ TEST(Server_Handshake) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    struct sockaddr sa {};
-    std::memcpy(&sa, &addr, sizeof(addr));
-
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock >= 0) {
         set_sock_timeout(sock);
-        if (connect(sock, &sa, sizeof(addr)) == 0) {
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) { // NOLINT
             // 1. SSL Request
             const std::array<uint32_t, 2> ssl_req = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                                                      htonl(static_cast<uint32_t>(PG_SSL_CODE))};
             static_cast<void>(send(sock, ssl_req.data(), STARTUP_PKT_LEN, 0));
             char response{};
             static_cast<void>(recv(sock, &response, 1, 0));
-            EXPECT_EQ(static_cast<int>(response), static_cast<int>('N'));
+            EXPECT_EQ(response, 'N');
 
             // 2. Startup
             const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
@@ -301,7 +280,7 @@ TEST(Server_Handshake) {
     static_cast<void>(server->stop());
 }
 
-TEST(Server_MultiClient) {
+TEST(ServerTests, MultiClient) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -320,13 +299,11 @@ TEST(Server_MultiClient) {
             client_addr.sin_port = htons(PORT_MULTI);
             inet_pton(AF_INET, "127.0.0.1", &client_addr.sin_addr);
 
-            struct sockaddr sa {};
-            std::memcpy(&sa, &client_addr, sizeof(client_addr));
-
             const int sock = socket(AF_INET, SOCK_STREAM, 0);
             if (sock >= 0) {
                 set_sock_timeout(sock);
-                if (connect(sock, &sa, sizeof(client_addr)) == 0) {
+                if (connect(sock, reinterpret_cast<struct sockaddr*>(&client_addr), // NOLINT
+                            sizeof(client_addr)) == 0) {
                     const std::array<uint32_t, 2> startup = {
                         htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
                         htonl(static_cast<uint32_t>(PG_STARTUP_CODE))};
@@ -350,18 +327,3 @@ TEST(Server_MultiClient) {
 }
 
 }  // namespace
-
-int main() {
-    std::cout << "Server Unit Tests\n";
-    std::cout << "=================\n";
-
-    RUN_TEST(Server_StatusStrings);
-    RUN_TEST(Server_SimpleQuery);
-    RUN_TEST(Server_InvalidProtocol);
-    RUN_TEST(Server_Terminate);
-    RUN_TEST(Server_Handshake);
-    RUN_TEST(Server_MultiClient);
-
-    std::cout << "\nResults: \n" << tests_passed << " passed, \n" << tests_failed << " failed\n";
-    return (tests_failed > 0);
-}

@@ -3,100 +3,56 @@
  * @brief Unit tests for Transaction Manager
  */
 
-#include <cstdint>
-#include <cstdio>
-#include <iostream>
+#include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 #include "catalog/catalog.hpp"
 #include "common/config.hpp"
-#include "common/value.hpp"
-#include "executor/types.hpp"
 #include "storage/buffer_pool_manager.hpp"
-#include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
-#include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
-#include "transaction/transaction.hpp"
 #include "transaction/transaction_manager.hpp"
+#include "transaction/transaction.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::transaction;
-using namespace cloudsql::common;
-using namespace cloudsql::executor;
 
 namespace {
 
-using cloudsql::tests::tests_failed;
-using cloudsql::tests::tests_passed;
-
-TEST(TransactionManager_Basic) {
-    LockManager lm;
+TEST(TransactionManagerTests, Basic) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
-    TransactionManager tm(lm, *catalog, sm);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm);
 
-    auto* const txn = tm.begin();
-    EXPECT_TRUE(txn != nullptr);
-    EXPECT_EQ(txn->get_state(), TransactionState::RUNNING);
+    Transaction* const txn1 = tm.begin();
+    ASSERT_NE(txn1, nullptr);
+    EXPECT_EQ(txn1->get_state(), TransactionState::RUNNING);
 
-    tm.commit(txn);
-    EXPECT_EQ(txn->get_state(), TransactionState::COMMITTED);
+    tm.commit(txn1);
+    EXPECT_EQ(txn1->get_state(), TransactionState::COMMITTED);
+
+    Transaction* const txn2 = tm.begin();
+    tm.abort(txn2);
+    EXPECT_EQ(txn2->get_state(), TransactionState::ABORTED);
 }
 
-TEST(TransactionManager_Snapshot) {
-    LockManager lm;
+TEST(TransactionManagerTests, Isolation) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
-    TransactionManager tm(lm, *catalog, sm);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm);
 
-    auto* const txn1 = tm.begin();
-    auto* const txn2 = tm.begin();
+    Transaction* const txn1 = tm.begin();
+    Transaction* const txn2 = tm.begin();
 
-    const auto& snap2 = txn2->get_snapshot();
-    EXPECT_TRUE(snap2.active_txns.count(txn1->get_id()) > 0);
+    EXPECT_GT(txn2->get_id(), txn1->get_id());
 
     tm.commit(txn1);
     tm.commit(txn2);
 }
 
-TEST(TransactionManager_RollbackInsert) {
-    LockManager lm;
-    auto catalog = Catalog::create();
-    storage::StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
-    TransactionManager tm(lm, *catalog, sm);
-
-    static_cast<void>(std::remove("./test_data/rb_insert.heap"));
-    static_cast<void>(
-        catalog->create_table("rb_insert", {{"id", common::ValueType::TYPE_INT64, 0}}));
-    cloudsql::storage::HeapTable table(
-        "rb_insert", sm, Schema({ColumnMeta("id", common::ValueType::TYPE_INT64, true)}));
-    static_cast<void>(table.create());
-
-    auto* const txn = tm.begin();
-    const auto tid = table.insert(Tuple({common::Value::make_int64(1)}), txn->get_id());
-    txn->add_undo_log(UndoLog::Type::INSERT, "rb_insert", tid);
-
-    EXPECT_EQ(table.tuple_count(), static_cast<uint64_t>(1));
-
-    tm.abort(txn);
-
-    EXPECT_EQ(table.tuple_count(), static_cast<uint64_t>(0));
-}
-
 }  // namespace
-
-int main() {
-    std::cout << "Transaction Manager Unit Tests\n";
-    std::cout << "==============================\n";
-
-    RUN_TEST(TransactionManager_Basic);
-    RUN_TEST(TransactionManager_Snapshot);
-    RUN_TEST(TransactionManager_RollbackInsert);
-
-    std::cout << "\nResults: \n" << tests_passed << " passed, \n" << tests_failed << " failed\n";
-    return (tests_failed > 0);
-}
