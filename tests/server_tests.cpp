@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -30,6 +31,7 @@
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
+#include "test_utils.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::network;

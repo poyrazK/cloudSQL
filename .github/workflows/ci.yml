@@ -73,13 +73,15 @@ jobs:
         ./transaction_manager_tests
         ./statement_tests
         ./recovery_tests
+        ./recovery_manager_tests
+        ./buffer_pool_tests
 
     - name: Generate Coverage Report
       if: matrix.sanitizer == 'address' && matrix.compiler == 'clang++'
       run: |
         cd build
         lcov --directory . --capture --output-file coverage.info --gcov-tool "$GITHUB_WORKSPACE/.github/scripts/llvm-gcov.sh" --ignore-errors inconsistent
-        lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' --output-file filtered_coverage.info --ignore-errors inconsistent,unused
+        lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' '*/_deps/*' --output-file filtered_coverage.info --ignore-errors inconsistent,unused
         genhtml filtered_coverage.info --output-directory out_coverage --ignore-errors inconsistent
 
     - name: Upload Coverage

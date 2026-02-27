@@ -74,6 +74,18 @@ class StorageManager {
     bool write_page(const std::string& filename, uint32_t page_num, const char* buffer);
 
     /**
+     * @brief Allocate a new page in the database file
+     * @param filename Name of the database file
+     * @return index of the newly allocated page
+     */
+    uint32_t allocate_page(const std::string& filename);
+
+    /**
+     * @brief Deallocate a page (stub for future use)
+     */
+    void deallocate_page(const std::string& filename, uint32_t page_num);
+
+    /**
      * @brief Check if a file exists
      */
     [[nodiscard]] bool file_exists(const std::string& filename) const;

@@ -3,11 +3,18 @@
  * @brief Comprehensive test suite for cloudSQL C++ implementation
  */
 
-#include <gtest/gtest.h>
+#include <arpa/inet.h>   // IWYU pragma: keep
+#include <netinet/in.h>  // IWYU pragma: keep
+#include <sys/socket.h>  // IWYU pragma: keep
+#include <sys/types.h>   // IWYU pragma: keep
+#include <unistd.h>      // IWYU pragma: keep
 
-#include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <exception>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -19,12 +26,17 @@
 #include "common/value.hpp"
 #include "executor/query_executor.hpp"
 #include "executor/types.hpp"
+#include "network/server.hpp"  // IWYU pragma: keep
+#include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
 #include "parser/statement.hpp"
+#include "parser/token.hpp"
+#include "storage/btree_index.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
+#include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
@@ -37,57 +49,70 @@ using namespace cloudsql::transaction;
 
 namespace {
 
+// Using common test counters
+using cloudsql::tests::tests_failed;
+using cloudsql::tests::tests_passed;
+
 constexpr int64_t VAL_42 = 42;
 constexpr double PI_LOWER = 3.14;
 constexpr double PI_UPPER = 3.15;
 constexpr int64_t VAL_10 = 10;
 constexpr int64_t VAL_25 = 25;
 constexpr uint64_t STATS_100 = 100;
-constexpr uint16_t PORT_5432 = 5432;
 constexpr uint16_t PORT_9999 = 9999;
+constexpr uint64_t XMAX_100 = 100;
+constexpr int64_t BTREE_VAL_10 = 10;
+constexpr int64_t BTREE_VAL_20 = 20;
+constexpr uint64_t STATS_500 = 500;
+
+constexpr uint16_t PORT_5432 = 5432;
 constexpr int64_t VAL_123 = 123;
 constexpr double VAL_1_5 = 1.5;
+constexpr oid_t TABLE_9999 = 9999;
+constexpr oid_t INDEX_8888 = 8888;
 
 // ============= Value Tests =============
 
-TEST(CloudSQLTests, ValueBasic) {
+TEST(ValueTest_Basic) {
     const auto val = Value::make_int64(VAL_42);
     EXPECT_EQ(val.to_int64(), VAL_42);
 }
 
-TEST(CloudSQLTests, ValueTypeVariety) {
+TEST(ValueTest_TypeVariety) {
     const Value b(true);
     EXPECT_TRUE(b.as_bool());
-    EXPECT_STREQ(b.to_string().c_str(), "TRUE");
+    EXPECT_STREQ(b.to_string(), "TRUE");
 
     const Value f(3.14159);
     EXPECT_GT(f.as_float64(), PI_LOWER);
     EXPECT_LT(f.as_float64(), PI_UPPER);
 
     const Value s("cloudSQL");
-    EXPECT_STREQ(s.as_text().c_str(), "cloudSQL");
+    EXPECT_STREQ(s.as_text(), "cloudSQL");
 }
 
 // ============= Parser Tests =============
 
-TEST(CloudSQLTests, ParserExpressions) {
-    auto lexer = std::make_unique<Lexer>("SELECT 1 + 2 * 3 FROM dual");
-    Parser parser(std::move(lexer));
-    auto stmt = parser.parse_statement();
-    ASSERT_NE(stmt, nullptr);
-    const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
-    ASSERT_NE(select, nullptr);
-    EXPECT_STREQ(select->columns()[0]->to_string().c_str(), "1 + 2 * 3");
+TEST(ParserTest_Expressions) {
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT 1 + 2 * 3 FROM dual");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        EXPECT_TRUE(stmt != nullptr);
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        EXPECT_STREQ(select->columns()[0]->to_string(), "1 + 2 * 3");
+    }
 }
 
-TEST(CloudSQLTests, ExpressionComplex) {
+TEST(ExpressionTest_Complex) {
     {
         auto lexer = std::make_unique<Lexer>("SELECT (1 > 0 AND 5 <= 2) OR NOT (1 = 1) FROM dual");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        ASSERT_TRUE(stmt != nullptr);
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 1");
+        }
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
-        ASSERT_NE(select, nullptr);
         const auto val = select->columns()[0]->evaluate();
         EXPECT_FALSE(val.as_bool());
     }
@@ -95,29 +120,75 @@ TEST(CloudSQLTests, ExpressionComplex) {
         auto lexer = std::make_unique<Lexer>("SELECT -10 + 20, 5 * (2 + 3) FROM dual");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        ASSERT_TRUE(stmt != nullptr);
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 2");
+        }
         const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
-        ASSERT_NE(select, nullptr);
         EXPECT_EQ(select->columns()[0]->evaluate().to_int64(), VAL_10);
         EXPECT_EQ(select->columns()[1]->evaluate().to_int64(), VAL_25);
     }
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT 5.5 FROM dual");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3a");
+        }
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        EXPECT_TRUE(
+            select->columns()[0]->evaluate().to_float64() ==
+            5.5);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+    }
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT 10 / 2 FROM dual");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        if (!stmt) {
+            throw std::runtime_error("ExpressionTest_Complex: Parser failed on query 3b");
+        }
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        EXPECT_TRUE(
+            select->columns()[0]->evaluate().to_float64() ==
+            5.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+    }
 }
 
-TEST(CloudSQLTests, ParserSelectVariants) {
-    auto lexer = std::make_unique<Lexer>("SELECT DISTINCT name FROM users LIMIT 10 OFFSET 20");
-    Parser parser(std::move(lexer));
-    auto stmt = parser.parse_statement();
-    ASSERT_NE(stmt, nullptr);
-    const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
-    ASSERT_NE(select, nullptr);
-    EXPECT_TRUE(select->distinct());
-    EXPECT_EQ(select->limit(), VAL_10);
-    EXPECT_EQ(select->offset(), 20);
+TEST(ParserTest_SelectVariants) {
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT DISTINCT name FROM users LIMIT 10 OFFSET 20");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        EXPECT_TRUE(select->distinct());
+        EXPECT_EQ(select->limit(), VAL_10);
+        EXPECT_EQ(
+            select->offset(),
+            static_cast<int64_t>(
+                20));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+    }
+    {
+        auto lexer =
+            std::make_unique<Lexer>("SELECT age, cnt FROM users GROUP BY age ORDER BY age");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        EXPECT_EQ(select->group_by().size(), static_cast<size_t>(1));
+        EXPECT_EQ(select->order_by().size(), static_cast<size_t>(1));
+    }
+}
+
+TEST(ParserTest_Errors) {
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT FROM users");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        EXPECT_TRUE(stmt == nullptr);
+    }
 }
 
 // ============= Catalog Tests =============
 
-TEST(CloudSQLTests, CatalogFullLifecycle) {
+TEST(CatalogTest_FullLifecycle) {
     auto catalog = Catalog::create();
 
     const std::vector<ColumnInfo> cols = {{"id", ValueType::TYPE_INT64, 0},
@@ -131,7 +202,7 @@ TEST(CloudSQLTests, CatalogFullLifecycle) {
     auto table = catalog->get_table(table_id);
     EXPECT_TRUE(table.has_value());
     if (table.has_value()) {
-        EXPECT_STREQ(table.value()->name.c_str(), "test_table");
+        EXPECT_STREQ(table.value()->name, "test_table");
     }
 
     catalog->update_table_stats(table_id, STATS_100);
@@ -139,13 +210,26 @@ TEST(CloudSQLTests, CatalogFullLifecycle) {
         EXPECT_EQ(table.value()->num_rows, STATS_100);
     }
 
+    const oid_t idx_id = catalog->create_index("test_idx", table_id, {0}, IndexType::BTree, true);
+    EXPECT_TRUE(idx_id > 0);
+    EXPECT_EQ(catalog->get_table_indexes(table_id).size(), static_cast<size_t>(1));
+
+    auto idx_pair = catalog->get_index(idx_id);
+    EXPECT_TRUE(idx_pair.has_value());
+    if (idx_pair.has_value()) {
+        EXPECT_STREQ(idx_pair.value().second->name, "test_idx");
+    }
+
+    EXPECT_TRUE(catalog->drop_index(idx_id));
+    EXPECT_EQ(catalog->get_table_indexes(table_id).size(), static_cast<size_t>(0));
+
     EXPECT_TRUE(catalog->drop_table(table_id));
     EXPECT_FALSE(catalog->table_exists(table_id));
 }
 
 // ============= Config Tests =============
 
-TEST(CloudSQLTests, ConfigBasic) {
+TEST(ConfigTest_Basic) {
     config::Config cfg;
     EXPECT_EQ(cfg.port, PORT_5432);
 
@@ -160,14 +244,46 @@ TEST(CloudSQLTests, ConfigBasic) {
     config::Config cfg2;
     EXPECT_TRUE(cfg2.load(cfg_file));
     EXPECT_EQ(cfg2.port, PORT_9999);
-    EXPECT_STREQ(cfg2.data_dir.c_str(), "./tmp_data");
+    EXPECT_STREQ(cfg2.data_dir, "./tmp_data");
 
     static_cast<void>(std::remove(cfg_file.c_str()));
 }
 
+// ============= Statement Tests =============
+
+TEST(StatementTest_ToString) {
+    const TransactionBeginStatement begin;
+    EXPECT_STREQ(begin.to_string(), "BEGIN");
+
+    const TransactionCommitStatement commit;
+    EXPECT_STREQ(commit.to_string(), "COMMIT");
+
+    const TransactionRollbackStatement rollback;
+    EXPECT_STREQ(rollback.to_string(), "ROLLBACK");
+}
+
+TEST(StatementTest_Serialization) {
+    {
+        auto lexer = std::make_unique<Lexer>(
+            "SELECT name, age FROM users WHERE age > 18 ORDER BY age LIMIT 10 OFFSET 5");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        EXPECT_STREQ(stmt->to_string(),
+                     "SELECT name, age FROM users WHERE age > 18 ORDER BY age LIMIT 10 OFFSET 5");
+    }
+    {
+        auto lexer =
+            std::make_unique<Lexer>("INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob')");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        EXPECT_STREQ(stmt->to_string(),
+                     "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob')");
+    }
+}
+
 // ============= Storage Tests =============
 
-TEST(CloudSQLTests, StoragePersistence) {
+TEST(StorageTest_Persistence) {
     const std::string filename = "persist_test";
     static_cast<void>(std::remove("./test_data/persist_test.heap"));
     Schema schema;
@@ -186,11 +302,11 @@ TEST(CloudSQLTests, StoragePersistence) {
         auto iter = table.scan();
         Tuple t;
         EXPECT_TRUE(iter.next(t));
-        EXPECT_STREQ(t.get(0).as_text().c_str(), "Persistent data");
+        EXPECT_STREQ(t.get(0).as_text(), "Persistent data");
     }
 }
 
-TEST(CloudSQLTests, StorageDelete) {
+TEST(StorageTest_Delete) {
     const std::string filename = "delete_test";
     static_cast<void>(std::remove("./test_data/delete_test.heap"));
     StorageManager disk_manager("./test_data");
@@ -203,9 +319,9 @@ TEST(CloudSQLTests, StorageDelete) {
     static_cast<void>(table.insert(Tuple({Value::make_int64(1)})));
     const auto tid2 = table.insert(Tuple({Value::make_int64(2)}));
 
-    EXPECT_EQ(table.tuple_count(), 2U);
-    EXPECT_TRUE(table.remove(tid2, 100));  // Logically delete with xmax=100
-    EXPECT_EQ(table.tuple_count(), 1U);
+    EXPECT_EQ(table.tuple_count(), static_cast<uint64_t>(2));
+    EXPECT_TRUE(table.remove(tid2, XMAX_100));  // Logically delete with xmax=100
+    EXPECT_EQ(table.tuple_count(), static_cast<uint64_t>(1));
 
     auto iter = table.scan();
     Tuple t;
@@ -216,21 +332,21 @@ TEST(CloudSQLTests, StorageDelete) {
 
 // ============= Index Tests =============
 
-TEST(CloudSQLTests, IndexBTreeBasic) {
+TEST(IndexTest_BTreeBasic) {
     static_cast<void>(std::remove("./test_data/idx_test.idx"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     BTreeIndex idx("idx_test", sm, ValueType::TYPE_INT64);
     static_cast<void>(idx.create());
-    static_cast<void>(idx.insert(Value::make_int64(10), HeapTable::TupleId(1, 1)));
-    static_cast<void>(idx.insert(Value::make_int64(20), HeapTable::TupleId(1, 2)));
-    static_cast<void>(idx.insert(Value::make_int64(10), HeapTable::TupleId(2, 1)));
-    const auto res = idx.search(Value::make_int64(10));
-    EXPECT_EQ(res.size(), 2U);
+    static_cast<void>(idx.insert(Value::make_int64(BTREE_VAL_10), HeapTable::TupleId(1, 1)));
+    static_cast<void>(idx.insert(Value::make_int64(BTREE_VAL_20), HeapTable::TupleId(1, 2)));
+    static_cast<void>(idx.insert(Value::make_int64(BTREE_VAL_10), HeapTable::TupleId(2, 1)));
+    const auto res = idx.search(Value::make_int64(BTREE_VAL_10));
+    EXPECT_EQ(res.size(), static_cast<size_t>(2));
     static_cast<void>(idx.drop());
 }
 
-TEST(CloudSQLTests, IndexScan) {
+TEST(IndexTest_Scan) {
     static_cast<void>(std::remove("./test_data/scan_test.idx"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -250,7 +366,7 @@ TEST(CloudSQLTests, IndexScan) {
 
 // ============= Execution Tests =============
 
-TEST(CloudSQLTests, ExecutionEndToEnd) {
+TEST(ExecutionTest_EndToEnd) {
     static_cast<void>(std::remove("./test_data/users.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -263,25 +379,31 @@ TEST(CloudSQLTests, ExecutionEndToEnd) {
         auto lexer = std::make_unique<Lexer>("CREATE TABLE users (id BIGINT, age BIGINT)");
         auto stmt = Parser(std::move(lexer)).parse_statement();
         const auto res = exec.execute(*stmt);
-        EXPECT_TRUE(res.success());
+        if (!res.success()) {
+            throw std::runtime_error("CREATE failed: " + res.error());
+        }
     }
     {
         auto lexer =
             std::make_unique<Lexer>("INSERT INTO users (id, age) VALUES (1, 20), (2, 30), (3, 40)");
         auto stmt = Parser(std::move(lexer)).parse_statement();
         const auto res = exec.execute(*stmt);
-        EXPECT_TRUE(res.success());
+        if (!res.success()) {
+            throw std::runtime_error("INSERT failed: " + res.error());
+        }
     }
     {
         auto lexer = std::make_unique<Lexer>("SELECT id FROM users WHERE age > 25");
         auto stmt = Parser(std::move(lexer)).parse_statement();
         const auto res = exec.execute(*stmt);
-        EXPECT_TRUE(res.success());
-        EXPECT_EQ(res.row_count(), 2U);
+        if (!res.success()) {
+            throw std::runtime_error("SELECT failed: " + res.error());
+        }
+        EXPECT_EQ(res.row_count(), static_cast<size_t>(2));
     }
 }
 
-TEST(CloudSQLTests, ExecutionSort) {
+TEST(ExecutionTest_Sort) {
     static_cast<void>(std::remove("./test_data/sort_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -299,13 +421,13 @@ TEST(CloudSQLTests, ExecutionSort) {
     const auto res =
         exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM sort_test ORDER BY val"))
                           .parse_statement());
-    EXPECT_EQ(res.row_count(), 3U);
-    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "10");
-    EXPECT_STREQ(res.rows()[1].get(0).to_string().c_str(), "20");
-    EXPECT_STREQ(res.rows()[2].get(0).to_string().c_str(), "30");
+    EXPECT_EQ(res.row_count(), static_cast<size_t>(3));
+    EXPECT_STREQ(res.rows()[0].get(0).to_string(), "10");
+    EXPECT_STREQ(res.rows()[1].get(0).to_string(), "20");
+    EXPECT_STREQ(res.rows()[2].get(0).to_string(), "30");
 }
 
-TEST(CloudSQLTests, ExecutionAggregate) {
+TEST(ExecutionTest_Aggregate) {
     static_cast<void>(std::remove("./test_data/agg_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -325,19 +447,23 @@ TEST(CloudSQLTests, ExecutionAggregate) {
     auto lex =
         std::make_unique<Lexer>("SELECT cat, COUNT(val), SUM(val) FROM agg_test GROUP BY cat");
     auto stmt = Parser(std::move(lex)).parse_statement();
-    ASSERT_NE(stmt, nullptr);
+    if (!stmt) {
+        throw std::runtime_error("Parser failed for aggregate query");
+    }
 
     const auto res = exec.execute(*stmt);
-    EXPECT_TRUE(res.success());
+    if (!res.success()) {
+        throw std::runtime_error("Execution failed: " + res.error());
+    }
 
-    EXPECT_EQ(res.row_count(), 2U);
+    EXPECT_EQ(res.row_count(), static_cast<size_t>(2));
     /* Row 0: 'A', 2, 30 */
-    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "A");
-    EXPECT_STREQ(res.rows()[0].get(1).to_string().c_str(), "2");
-    EXPECT_STREQ(res.rows()[0].get(2).to_string().c_str(), "30");
+    EXPECT_STREQ(res.rows()[0].get(0).to_string(), "A");
+    EXPECT_STREQ(res.rows()[0].get(1).to_string(), "2");
+    EXPECT_STREQ(res.rows()[0].get(2).to_string(), "30");
 }
 
-TEST(CloudSQLTests, ExecutionAggregateAdvanced) {
+TEST(ExecutionTest_AggregateAdvanced) {
     static_cast<void>(std::remove("./test_data/adv_agg.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -355,15 +481,17 @@ TEST(CloudSQLTests, ExecutionAggregateAdvanced) {
     const auto res = exec.execute(
         *Parser(std::make_unique<Lexer>("SELECT MIN(val), MAX(val), AVG(val) FROM adv_agg"))
              .parse_statement());
-    EXPECT_TRUE(res.success());
+    if (!res.success()) {
+        throw std::runtime_error("Execution failed: " + res.error());
+    }
 
-    EXPECT_EQ(res.row_count(), 1U);
-    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "10");
-    EXPECT_STREQ(res.rows()[0].get(1).to_string().c_str(), "30");
-    EXPECT_STREQ(res.rows()[0].get(2).to_string().c_str(), "20");
+    EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
+    EXPECT_STREQ(res.rows()[0].get(0).to_string(), "10");
+    EXPECT_STREQ(res.rows()[0].get(1).to_string(), "30");
+    EXPECT_STREQ(res.rows()[0].get(2).to_string(), "20");
 }
 
-TEST(CloudSQLTests, ExecutionAggregateDistinct) {
+TEST(ExecutionTest_AggregateDistinct) {
     static_cast<void>(std::remove("./test_data/dist_agg.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -383,14 +511,16 @@ TEST(CloudSQLTests, ExecutionAggregateDistinct) {
         exec.execute(*Parser(std::make_unique<Lexer>(
                                  "SELECT COUNT(DISTINCT val), SUM(DISTINCT val) FROM dist_agg"))
                           .parse_statement());
-    EXPECT_TRUE(res.success());
+    if (!res.success()) {
+        throw std::runtime_error("Execution failed: " + res.error());
+    }
 
-    EXPECT_EQ(res.row_count(), 1U);
-    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "3");
-    EXPECT_STREQ(res.rows()[0].get(1).to_string().c_str(), "60");
+    EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
+    EXPECT_STREQ(res.rows()[0].get(0).to_string(), "3");
+    EXPECT_STREQ(res.rows()[0].get(1).to_string(), "60");
 }
 
-TEST(CloudSQLTests, ExecutionTransaction) {
+TEST(ExecutionTest_Transaction) {
     static_cast<void>(std::remove("./test_data/txn_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -417,11 +547,11 @@ TEST(CloudSQLTests, ExecutionTransaction) {
     const auto res_select =
         qexec2.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM txn_test WHERE id = 1"))
                             .parse_statement());
-    EXPECT_EQ(res_select.row_count(), 1U);
-    EXPECT_STREQ(res_select.rows()[0].get(0).to_string().c_str(), "100");
+    EXPECT_EQ(res_select.row_count(), static_cast<size_t>(1));
+    EXPECT_STREQ(res_select.rows()[0].get(0).to_string(), "100");
 }
 
-TEST(CloudSQLTests, ExecutionRollback) {
+TEST(ExecutionTest_Rollback) {
     static_cast<void>(std::remove("./test_data/rollback_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -441,16 +571,16 @@ TEST(CloudSQLTests, ExecutionRollback) {
 
     const auto res_internal = exec.execute(
         *Parser(std::make_unique<Lexer>("SELECT val FROM rollback_test")).parse_statement());
-    EXPECT_EQ(res_internal.row_count(), 1U);
+    EXPECT_EQ(res_internal.row_count(), static_cast<size_t>(1));
 
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     const auto res_after = exec.execute(
         *Parser(std::make_unique<Lexer>("SELECT val FROM rollback_test")).parse_statement());
-    EXPECT_EQ(res_after.row_count(), 0U);
+    EXPECT_EQ(res_after.row_count(), static_cast<size_t>(0));
 }
 
-TEST(CloudSQLTests, ExecutionUpdateDelete) {
+TEST(ExecutionTest_UpdateDelete) {
     static_cast<void>(std::remove("./test_data/upd_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -470,25 +600,25 @@ TEST(CloudSQLTests, ExecutionUpdateDelete) {
     const auto res_upd = exec.execute(
         *Parser(std::make_unique<Lexer>("UPDATE upd_test SET val = 'new' WHERE id = 1"))
              .parse_statement());
-    EXPECT_EQ(res_upd.rows_affected(), 1U);
+    EXPECT_EQ(res_upd.rows_affected(), static_cast<uint64_t>(1));
 
     const auto res_sel =
         exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_test WHERE id = 1"))
                           .parse_statement());
-    EXPECT_EQ(res_sel.row_count(), 1U);
-    EXPECT_STREQ(res_sel.rows()[0].get(0).to_string().c_str(), "new");
+    EXPECT_EQ(res_sel.row_count(), static_cast<size_t>(1));
+    EXPECT_STREQ(res_sel.rows()[0].get(0).to_string(), "new");
 
     /* Test DELETE */
     const auto res_del = exec.execute(
         *Parser(std::make_unique<Lexer>("DELETE FROM upd_test WHERE id = 2")).parse_statement());
-    EXPECT_EQ(res_del.rows_affected(), 1U);
+    EXPECT_EQ(res_del.rows_affected(), static_cast<uint64_t>(1));
 
     const auto res_sel2 =
         exec.execute(*Parser(std::make_unique<Lexer>("SELECT id FROM upd_test")).parse_statement());
-    EXPECT_EQ(res_sel2.row_count(), 1U);  // Only ID 1 remains
+    EXPECT_EQ(res_sel2.row_count(), static_cast<size_t>(1));  // Only ID 1 remains
 }
 
-TEST(CloudSQLTests, ExecutionMVCC) {
+TEST(ExecutionTest_MVCC) {
     static_cast<void>(std::remove("./test_data/mvcc_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -509,7 +639,7 @@ TEST(CloudSQLTests, ExecutionMVCC) {
     QueryExecutor qexec2(*catalog, sm, lm, tm);
     const auto res2_pre = qexec2.execute(
         *Parser(std::make_unique<Lexer>("SELECT val FROM mvcc_test")).parse_statement());
-    EXPECT_EQ(res2_pre.row_count(), 0U);
+    EXPECT_EQ(res2_pre.row_count(), static_cast<size_t>(0));
 
     /* T1 updates row */
     static_cast<void>(qexec1.execute(
@@ -518,19 +648,19 @@ TEST(CloudSQLTests, ExecutionMVCC) {
     /* T1 sees new value */
     const auto res1 = qexec1.execute(
         *Parser(std::make_unique<Lexer>("SELECT val FROM mvcc_test")).parse_statement());
-    EXPECT_EQ(res1.row_count(), 1U);
-    EXPECT_STREQ(res1.rows()[0].get(0).to_string().c_str(), "20");
+    EXPECT_EQ(res1.row_count(), static_cast<size_t>(1));
+    EXPECT_STREQ(res1.rows()[0].get(0).to_string(), "20");
 
     static_cast<void>(qexec1.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     /* After commit, Session 2 sees the latest value */
     const auto res2_post = qexec2.execute(
         *Parser(std::make_unique<Lexer>("SELECT val FROM mvcc_test")).parse_statement());
-    EXPECT_EQ(res2_post.row_count(), 1U);
-    EXPECT_STREQ(res2_post.rows()[0].get(0).to_string().c_str(), "20");
+    EXPECT_EQ(res2_post.row_count(), static_cast<size_t>(1));
+    EXPECT_STREQ(res2_post.rows()[0].get(0).to_string(), "20");
 }
 
-TEST(CloudSQLTests, ExecutionJoin) {
+TEST(ExecutionTest_Join) {
     static_cast<void>(std::remove("./test_data/users.heap"));
     static_cast<void>(std::remove("./test_data/orders.heap"));
     StorageManager disk_manager("./test_data");
@@ -561,16 +691,16 @@ TEST(CloudSQLTests, ExecutionJoin) {
                                         "ON users.id = orders.user_id ORDER BY orders.amount"))
              .parse_statement());
 
-    EXPECT_EQ(result.row_count(), 3U);
+    EXPECT_EQ(result.row_count(), static_cast<size_t>(3));
 
     /* 25.0 (Alice), 50.5 (Alice), 100.0 (Bob) */
-    EXPECT_STREQ(result.rows()[0].get(0).to_string().c_str(), "Alice");
-    EXPECT_STREQ(result.rows()[0].get(1).to_string().c_str(), "25");
-    EXPECT_STREQ(result.rows()[2].get(0).to_string().c_str(), "Bob");
-    EXPECT_STREQ(result.rows()[2].get(1).to_string().c_str(), "100");
+    EXPECT_STREQ(result.rows()[0].get(0).to_string(), "Alice");
+    EXPECT_STREQ(result.rows()[0].get(1).to_string(), "25");
+    EXPECT_STREQ(result.rows()[2].get(0).to_string(), "Bob");
+    EXPECT_STREQ(result.rows()[2].get(1).to_string(), "100");
 }
 
-TEST(CloudSQLTests, ExecutionDDL) {
+TEST(ExecutionTest_DDL) {
     static_cast<void>(std::remove("./test_data/ddl_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -597,6 +727,8 @@ TEST(CloudSQLTests, ExecutionDDL) {
     /* 3. Create Index and then Drop Index */
     static_cast<void>(exec.execute(
         *Parser(std::make_unique<Lexer>("CREATE TABLE ddl_test (id INT)")).parse_statement()));
+    // Note: Our system doesn't have a direct "CREATE INDEX" statement parsing yet,
+    // but the catalog supports it. For now we just test that DROP INDEX works if index exists.
     auto table_opt = catalog->get_table_by_name("ddl_test");
     if (table_opt) {
         const oid_t tid = (*table_opt)->table_id;
@@ -608,7 +740,7 @@ TEST(CloudSQLTests, ExecutionDDL) {
     EXPECT_TRUE(res_drop_idx.success());
 }
 
-TEST(CloudSQLTests, LexerAdvanced) {
+TEST(LexerTest_Advanced) {
     /* 1. Test comments and line tracking */
     {
         const std::string sql = "SELECT -- comment here\n* FROM users";
@@ -616,8 +748,8 @@ TEST(CloudSQLTests, LexerAdvanced) {
         const auto t1 = lexer.next_token();
         EXPECT_EQ(static_cast<int>(t1.type()), static_cast<int>(TokenType::Select));
         const auto t2 = lexer.next_token();  // Should skip comment and newline
-        EXPECT_STREQ(t2.lexeme().c_str(), "*");
-        EXPECT_EQ(t2.line(), 2U);
+        EXPECT_STREQ(t2.lexeme(), "*");
+        EXPECT_EQ(t2.line(), static_cast<uint32_t>(2));
     }
     /* 2. Test Error and Unknown operators */
     {
@@ -627,7 +759,7 @@ TEST(CloudSQLTests, LexerAdvanced) {
     }
 }
 
-TEST(CloudSQLTests, ExecutionExpressions) {
+TEST(ExecutionTest_Expressions) {
     static_cast<void>(std::remove("./test_data/expr_test.heap"));
     StorageManager disk_manager("./test_data");
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
@@ -649,13 +781,16 @@ TEST(CloudSQLTests, ExecutionExpressions) {
         const auto res = exec.execute(
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE val IS NULL"))
                  .parse_statement());
-        EXPECT_EQ(res.row_count(), 1U);
-        EXPECT_EQ(res.rows()[0].get(0).to_int64(), 2);
+        EXPECT_EQ(res.row_count(), static_cast<size_t>(1));
+        EXPECT_EQ(
+            res.rows()[0].get(0).to_int64(),
+            static_cast<int64_t>(
+                2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 
         const auto res2 = exec.execute(
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE val IS NOT NULL"))
                  .parse_statement());
-        EXPECT_EQ(res2.row_count(), 2U);
+        EXPECT_EQ(res2.row_count(), static_cast<size_t>(2));
     }
 
     /* 2. Test IN / NOT IN */
@@ -663,13 +798,16 @@ TEST(CloudSQLTests, ExecutionExpressions) {
         const auto res = exec.execute(
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE id IN (1, 3)"))
                  .parse_statement());
-        EXPECT_EQ(res.row_count(), 2U);
+        EXPECT_EQ(res.row_count(), static_cast<size_t>(2));
 
         const auto res2 = exec.execute(
             *Parser(std::make_unique<Lexer>("SELECT id FROM expr_test WHERE str NOT IN ('A', 'C')"))
                  .parse_statement());
-        EXPECT_EQ(res2.row_count(), 1U);
-        EXPECT_EQ(res2.rows()[0].get(0).to_int64(), 2);
+        EXPECT_EQ(res2.row_count(), static_cast<size_t>(1));
+        EXPECT_EQ(
+            res2.rows()[0].get(0).to_int64(),
+            static_cast<int64_t>(
+                2));  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 
     /* 3. Test Arithmetic and Complex Binary */
@@ -678,13 +816,19 @@ TEST(CloudSQLTests, ExecutionExpressions) {
             *Parser(std::make_unique<Lexer>(
                         "SELECT id, val * 2 + 10, val / 2, val - 5 FROM expr_test WHERE id = 1"))
                  .parse_statement());
-        EXPECT_DOUBLE_EQ(res.rows()[0].get(1).to_float64(), 31.0);
-        EXPECT_DOUBLE_EQ(res.rows()[0].get(2).to_float64(), 5.25);
-        EXPECT_DOUBLE_EQ(res.rows()[0].get(3).to_float64(), 5.5);
+        EXPECT_DOUBLE_EQ(
+            res.rows()[0].get(1).to_float64(),
+            31.0);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(
+            res.rows()[0].get(2).to_float64(),
+            5.25);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+        EXPECT_DOUBLE_EQ(
+            res.rows()[0].get(3).to_float64(),
+            5.5);  // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
     }
 }
 
-TEST(CloudSQLTests, ExpressionTypes) {
+TEST(ExpressionTest_Types) {
     /* Test ConstantExpr with various types for coverage */
     {
         const ConstantExpr c_bool(Value::make_bool(true));
@@ -701,15 +845,38 @@ TEST(CloudSQLTests, ExpressionTypes) {
     }
 }
 
-TEST(CloudSQLTests, CatalogStats) {
+TEST(CatalogTest_Errors) {
+    auto catalog = Catalog::create();
+    const std::vector<ColumnInfo> cols = {{"id", ValueType::TYPE_INT64, 0}};
+
+    static_cast<void>(catalog->create_table("fail_test", cols));
+    /* Duplicate table */
+    EXPECT_THROW(catalog->create_table("fail_test", cols), std::exception);
+
+    /* Missing table */
+    EXPECT_FALSE(catalog->table_exists(TABLE_9999));
+    EXPECT_FALSE(catalog->get_table(TABLE_9999).has_value());
+    EXPECT_FALSE(catalog->table_exists_by_name("non_existent"));
+
+    /* Duplicate index */
+    const oid_t tid = catalog->create_table("idx_fail", cols);
+    static_cast<void>(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true));
+    EXPECT_THROW(catalog->create_index("my_idx", tid, {0}, IndexType::BTree, true), std::exception);
+
+    /* Missing index */
+    EXPECT_FALSE(catalog->get_index(INDEX_8888).has_value());
+    EXPECT_FALSE(catalog->drop_index(INDEX_8888));
+}
+
+TEST(CatalogTest_Stats) {
     auto catalog = Catalog::create();
     const std::vector<ColumnInfo> cols = {{"id", ValueType::TYPE_INT64, 0}};
     const oid_t tid = catalog->create_table("stats_test", cols);
 
-    EXPECT_TRUE(catalog->update_table_stats(tid, 500U));
+    EXPECT_TRUE(catalog->update_table_stats(tid, STATS_500));
     auto tinfo = catalog->get_table(tid);
     if (tinfo) {
-        EXPECT_EQ((*tinfo)->num_rows, 500U);
+        EXPECT_EQ((*tinfo)->num_rows, STATS_500);
     }
 
     /* Cover print() */
@@ -717,3 +884,42 @@ TEST(CloudSQLTests, CatalogStats) {
 }
 
 }  // namespace
+
+int main() {
+    std::cout << "Unit Tests\n";
+    std::cout << "==========\n";
+
+    RUN_TEST(ValueTest_Basic);
+    RUN_TEST(ValueTest_TypeVariety);
+    RUN_TEST(ParserTest_Expressions);
+    RUN_TEST(ExpressionTest_Complex);
+    RUN_TEST(ParserTest_SelectVariants);
+    RUN_TEST(ParserTest_Errors);
+    RUN_TEST(CatalogTest_FullLifecycle);
+    RUN_TEST(ConfigTest_Basic);
+    RUN_TEST(StatementTest_ToString);
+    RUN_TEST(StatementTest_Serialization);
+    RUN_TEST(StorageTest_Persistence);
+    RUN_TEST(StorageTest_Delete);
+    RUN_TEST(IndexTest_BTreeBasic);
+    RUN_TEST(IndexTest_Scan);
+    RUN_TEST(ExecutionTest_EndToEnd);
+    RUN_TEST(ExecutionTest_Sort);
+    RUN_TEST(ExecutionTest_Aggregate);
+    RUN_TEST(ExecutionTest_AggregateAdvanced);
+    RUN_TEST(ExecutionTest_AggregateDistinct);
+    RUN_TEST(ExecutionTest_Transaction);
+    RUN_TEST(ExecutionTest_Rollback);
+    RUN_TEST(ExecutionTest_UpdateDelete);
+    RUN_TEST(ExecutionTest_MVCC);
+    RUN_TEST(ExecutionTest_Join);
+    RUN_TEST(ExecutionTest_DDL);
+    RUN_TEST(LexerTest_Advanced);
+    RUN_TEST(ExecutionTest_Expressions);
+    RUN_TEST(ExpressionTest_Types);
+    RUN_TEST(CatalogTest_Errors);
+    RUN_TEST(CatalogTest_Stats);
+
+    std::cout << "\nResults: \n" << tests_passed << " passed, \n" << tests_failed << " failed\n";
+    return (tests_failed > 0);
+}
