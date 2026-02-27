@@ -7,11 +7,11 @@
 #define CLOUDSQL_STORAGE_BUFFER_POOL_MANAGER_HPP
 
 #include <list>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <memory>
 
 #include "storage/lru_replacer.hpp"
 #include "storage/page.hpp"

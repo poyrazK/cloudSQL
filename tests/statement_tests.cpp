@@ -95,7 +95,8 @@ TEST(StatementTests, InsertStatementMultiRow) {
     row2.emplace_back(std::make_unique<ConstantExpr>(Value::make_text("B")));
     stmt->add_row(std::move(row2));
 
-    EXPECT_STREQ(stmt->to_string().c_str(), "INSERT INTO users (id, val) VALUES (1, 'A'), (2, 'B')");
+    EXPECT_STREQ(stmt->to_string().c_str(),
+                 "INSERT INTO users (id, val) VALUES (1, 'A'), (2, 'B')");
 }
 
 TEST(StatementTests, UpdateStatementBasic) {

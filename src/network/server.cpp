@@ -343,7 +343,8 @@ void Server::handle_connection(int client_fd) {
                 auto stmt = parser.parse_statement();
 
                 if (stmt) {
-                    executor::QueryExecutor exec(catalog_, bpm_, lock_manager_, transaction_manager_);
+                    executor::QueryExecutor exec(catalog_, bpm_, lock_manager_,
+                                                 transaction_manager_);
                     auto res = exec.execute(*stmt);
 
                     if (res.success()) {
