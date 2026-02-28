@@ -5,13 +5,19 @@
 
 #include "transaction/transaction_manager.hpp"
 
+#include <memory>
 #include <mutex>
 #include <utility>
 
+#include "recovery/log_manager.hpp"
 #include "recovery/log_record.hpp"
+#include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
 namespace cloudsql::transaction {
+
+TransactionManager::TransactionManager(LockManager& lock_manager, recovery::LogManager* log_manager)
+    : lock_manager_(lock_manager), log_manager_(log_manager) {}
 
 Transaction* TransactionManager::begin(IsolationLevel level) {
     const std::scoped_lock<std::mutex> lock(manager_latch_);
@@ -51,8 +57,13 @@ void TransactionManager::commit(Transaction* txn) {
 
     {
         const std::scoped_lock<std::mutex> lock(manager_latch_);
-        completed_transactions_[txn->get_id()] = std::move(active_transactions_[txn->get_id()]);
+        completed_transactions_.push_back(std::move(active_transactions_[txn->get_id()]));
         static_cast<void>(active_transactions_.erase(txn->get_id()));
+
+        constexpr size_t MAX_COMPLETED = 100;
+        if (completed_transactions_.size() > MAX_COMPLETED) {
+            completed_transactions_.pop_front();
+        }
     }
 }
 
@@ -78,8 +89,13 @@ void TransactionManager::abort(Transaction* txn) {
 
     {
         const std::scoped_lock<std::mutex> lock(manager_latch_);
-        completed_transactions_[txn->get_id()] = std::move(active_transactions_[txn->get_id()]);
+        completed_transactions_.push_back(std::move(active_transactions_[txn->get_id()]));
         static_cast<void>(active_transactions_.erase(txn->get_id()));
+
+        constexpr size_t MAX_COMPLETED = 100;
+        if (completed_transactions_.size() > MAX_COMPLETED) {
+            completed_transactions_.pop_front();
+        }
     }
 }
 

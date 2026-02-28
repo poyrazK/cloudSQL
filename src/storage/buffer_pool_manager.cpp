@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -166,7 +167,7 @@ bool BufferPoolManager::delete_page(const std::string& file_name, uint32_t page_
         free_list_.push_back(frame_id);
     }
 
-    storage_manager_.deallocate_page(file_name, page_id);
+    StorageManager::deallocate_page(file_name, page_id);
     return true;
 }
 

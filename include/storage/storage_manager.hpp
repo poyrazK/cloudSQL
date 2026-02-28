@@ -83,7 +83,7 @@ class StorageManager {
     /**
      * @brief Deallocate a page (stub for future use)
      */
-    void deallocate_page(const std::string& filename, uint32_t page_num);
+    static void deallocate_page(const std::string& filename, uint32_t page_num);
 
     /**
      * @brief Check if a file exists

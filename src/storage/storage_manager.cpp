@@ -174,7 +174,7 @@ uint32_t StorageManager::allocate_page(const std::string& filename) {
     auto& file = open_files_[filename];
     file->clear();
     file->seekg(0, std::ios::end);
-    const std::streampos size = file->tellg();
+    const std::streamoff size = file->tellg();
 
     return static_cast<uint32_t>(static_cast<uint64_t>(size) / PAGE_SIZE);
 }

@@ -84,13 +84,13 @@ TEST(ServerTests, SimpleQuery) {
 
     std::vector<ColumnInfo> cols;
     cols.emplace_back("id", common::ValueType::TYPE_INT32, 0);
-    static_cast<void>(catalog->create_table("dual", std::move(cols)));
+    static_cast<void>(catalog->create_table("dual_server", std::move(cols)));
 
     auto server = Server::create(port, *catalog, sm);
 
-    static_cast<void>(std::remove("./test_data/dual.heap"));
+    static_cast<void>(std::remove("./test_data/dual_server.heap"));
     storage::HeapTable table(
-        "dual", sm,
+        "dual_server", sm,
         executor::Schema({executor::ColumnMeta("id", common::ValueType::TYPE_INT32, true)}));
     static_cast<void>(table.create());
     static_cast<void>(table.insert(executor::Tuple({common::Value(1)}), 0));
@@ -126,7 +126,7 @@ TEST(ServerTests, SimpleQuery) {
         static_cast<void>(recv(sock, buffer.data(), AUTH_OK_LEN, 0));
         static_cast<void>(recv(sock, buffer.data(), READY_LEN, 0));
 
-        const std::string sql = "SELECT id FROM dual";
+        const std::string sql = "SELECT id FROM dual_server";
         const char q_type = 'Q';
         const uint32_t q_len = htonl(static_cast<uint32_t>(sql.size() + 4 + 1));
         static_cast<void>(send(sock, &q_type, 1, 0));
@@ -171,6 +171,7 @@ TEST(ServerTests, SimpleQuery) {
     }
 
     static_cast<void>(server->stop());
+    static_cast<void>(std::remove("./test_data/dual_server.heap"));
 }
 
 TEST(ServerTests, InvalidProtocol) {

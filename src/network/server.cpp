@@ -20,6 +20,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -91,8 +92,10 @@ Server::Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm)
     : port_(port),
       catalog_(catalog),
       bpm_(bpm),
-      lock_manager_(),
-      transaction_manager_(lock_manager_, catalog, bpm, bpm.get_log_manager()) {}
+      lock_manager_(std::make_shared<transaction::LockManager>()),
+      transaction_manager_(std::make_shared<transaction::TransactionManager>(*lock_manager_,
+                                                                             bpm.get_log_manager())) {
+}
 
 std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog,
                                        storage::BufferPoolManager& bpm) {
@@ -343,9 +346,9 @@ void Server::handle_connection(int client_fd) {
                 auto stmt = parser.parse_statement();
 
                 if (stmt) {
-                    executor::QueryExecutor exec(catalog_, bpm_, lock_manager_,
-                                                 transaction_manager_);
-                    auto res = exec.execute(*stmt);
+                    executor::QueryExecutor exec(catalog_, bpm_, *lock_manager_,
+                                                 *transaction_manager_);
+                    const auto res = exec.execute(*stmt);
 
                     if (res.success()) {
                         // Row Description (T)
@@ -363,7 +366,7 @@ void Server::handle_connection(int client_fd) {
                         static_cast<void>(send(client_fd, tag.c_str(), tag.size() + 1, 0));
                     } else {
                         // Error Response (E)
-                        const std::string err = res.error();
+                        const std::string& err = res.error();
                         const uint32_t e_len = htonl(static_cast<uint32_t>(err.size() + 4 + 1));
                         const char e_type = 'E';
                         static_cast<void>(send(client_fd, &e_type, 1, 0));
