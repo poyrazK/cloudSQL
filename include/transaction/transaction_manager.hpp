@@ -29,7 +29,8 @@ namespace cloudsql::transaction {
  */
 class TransactionManager {
    public:
-    explicit TransactionManager(LockManager& lock_manager, recovery::LogManager* log_manager = nullptr);
+    explicit TransactionManager(LockManager& lock_manager,
+                                recovery::LogManager* log_manager = nullptr);
 
     ~TransactionManager() = default;
 

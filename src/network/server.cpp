@@ -92,10 +92,8 @@ Server::Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm)
     : port_(port),
       catalog_(catalog),
       bpm_(bpm),
-      lock_manager_(std::make_shared<transaction::LockManager>()),
-      transaction_manager_(std::make_shared<transaction::TransactionManager>(*lock_manager_,
-                                                                             bpm.get_log_manager())) {
-}
+      lock_manager_(),
+      transaction_manager_(lock_manager_, bpm.get_log_manager()) {}
 
 std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog,
                                        storage::BufferPoolManager& bpm) {
@@ -346,8 +344,8 @@ void Server::handle_connection(int client_fd) {
                 auto stmt = parser.parse_statement();
 
                 if (stmt) {
-                    executor::QueryExecutor exec(catalog_, bpm_, *lock_manager_,
-                                                 *transaction_manager_);
+                    executor::QueryExecutor exec(catalog_, bpm_, lock_manager_,
+                                                 transaction_manager_);
                     const auto res = exec.execute(*stmt);
 
                     if (res.success()) {

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,7 +24,6 @@
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
 #include "parser/statement.hpp"
-#include "parser/token.hpp"
 #include "storage/btree_index.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
@@ -51,6 +51,8 @@ constexpr uint16_t PORT_5432 = 5432;
 constexpr uint16_t PORT_9999 = 9999;
 constexpr int64_t VAL_123 = 123;
 constexpr double VAL_1_5 = 1.5;
+constexpr oid_t TABLE_9999 = 9999;
+constexpr oid_t INDEX_8888 = 8888;
 
 // ============= Value Tests =============
 
@@ -78,7 +80,7 @@ TEST(CloudSQLTests, ParserExpressions) {
     auto lexer = std::make_unique<Lexer>("SELECT 1 + 2 * 3 FROM dual");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
-    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt != nullptr);
     const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
     ASSERT_NE(select, nullptr);
     EXPECT_STREQ(select->columns()[0]->to_string().c_str(), "1 + 2 * 3");
@@ -274,7 +276,7 @@ TEST(ExecutionTests, EndToEnd) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     {
@@ -306,7 +308,7 @@ TEST(ExecutionTests, Sort) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(exec.execute(
@@ -331,7 +333,7 @@ TEST(ExecutionTests, Aggregate) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(
@@ -364,7 +366,7 @@ TEST(ExecutionTests, AggregateAdvanced) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(exec.execute(
@@ -391,7 +393,7 @@ TEST(ExecutionTests, AggregateDistinct) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(exec.execute(
@@ -419,7 +421,7 @@ TEST(ExecutionTests, Transaction) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
 
     QueryExecutor qexec1(*catalog, sm, lm, tm);
     static_cast<void>(
@@ -451,7 +453,7 @@ TEST(ExecutionTests, Rollback) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(
@@ -481,7 +483,7 @@ TEST(ExecutionTests, UpdateDelete) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(
@@ -520,7 +522,7 @@ TEST(ExecutionTests, MVCC) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
 
     QueryExecutor qexec1(*catalog, sm, lm, tm);
     static_cast<void>(qexec1.execute(
@@ -564,7 +566,7 @@ TEST(ExecutionTests, Join) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(
@@ -608,7 +610,7 @@ TEST(ExecutionTests, DDL) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     /* 1. Create and then Drop Table */
@@ -666,7 +668,7 @@ TEST(ExecutionTests, Expressions) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     auto catalog = Catalog::create();
     LockManager lm;
-    TransactionManager tm(lm, *catalog, sm);
+    TransactionManager tm(lm, sm.get_log_manager());
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(exec.execute(
