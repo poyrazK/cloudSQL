@@ -80,7 +80,7 @@ TEST(CloudSQLTests, ParserExpressions) {
     auto lexer = std::make_unique<Lexer>("SELECT 1 + 2 * 3 FROM dual");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
-    EXPECT_TRUE(stmt != nullptr);
+    ASSERT_NE(stmt, nullptr);
     const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
     ASSERT_NE(select, nullptr);
     EXPECT_STREQ(select->columns()[0]->to_string().c_str(), "1 + 2 * 3");
