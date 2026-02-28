@@ -23,7 +23,8 @@ namespace {
 TEST(TransactionManagerTests, Basic) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
 
@@ -42,7 +43,8 @@ TEST(TransactionManagerTests, Basic) {
 TEST(TransactionManagerTests, Isolation) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
 
