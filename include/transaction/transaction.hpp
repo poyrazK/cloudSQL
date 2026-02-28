@@ -109,11 +109,11 @@ class Transaction {
         exclusive_locks_.insert(rid);
     }
 
-    [[nodiscard]] const std::unordered_set<std::string>& get_shared_locks() {
+    [[nodiscard]] std::unordered_set<std::string> get_shared_lock_set() {
         const std::scoped_lock<std::mutex> lock(lock_set_mutex_);
         return shared_locks_;
     }
-    [[nodiscard]] const std::unordered_set<std::string>& get_exclusive_locks() {
+    [[nodiscard]] std::unordered_set<std::string> get_exclusive_lock_set() {
         const std::scoped_lock<std::mutex> lock(lock_set_mutex_);
         return exclusive_locks_;
     }

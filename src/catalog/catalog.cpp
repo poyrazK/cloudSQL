@@ -15,6 +15,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -70,6 +71,10 @@ bool Catalog::save(const std::string& filename) const {
  * @brief Create a new table
  */
 oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInfo> columns) {
+    if (table_exists_by_name(table_name)) {
+        throw std::runtime_error("Table already exists: " + table_name);
+    }
+
     auto table = std::make_unique<TableInfo>();
     table->table_id = next_oid_++;
     table->name = table_name;
@@ -139,6 +144,13 @@ oid_t Catalog::create_index(const std::string& index_name, oid_t table_id,
         return 0;
     }
 
+    auto& table = *table_opt.value();
+    for (const auto& existing_idx : table.indexes) {
+        if (existing_idx.name == index_name) {
+            throw std::runtime_error("Index already exists: " + index_name);
+        }
+    }
+
     IndexInfo index;
     index.index_id = next_oid_++;
     index.name = index_name;
@@ -148,7 +160,7 @@ oid_t Catalog::create_index(const std::string& index_name, oid_t table_id,
     index.is_unique = is_unique;
 
     const oid_t id = index.index_id;
-    (*table_opt)->indexes.push_back(std::move(index));
+    table.indexes.push_back(std::move(index));
     return id;
 }
 

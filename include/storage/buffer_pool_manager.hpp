@@ -7,6 +7,7 @@
 #define CLOUDSQL_STORAGE_BUFFER_POOL_MANAGER_HPP
 
 #include <list>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -95,6 +96,11 @@ class BufferPoolManager {
      */
     void flush_all_pages();
 
+    /**
+     * @brief Get pointer to log manager
+     */
+    [[nodiscard]] recovery::LogManager* get_log_manager() const { return log_manager_; }
+
    private:
     /**
      * @brief Generates a unique string key for file and page mapping
@@ -111,7 +117,7 @@ class BufferPoolManager {
     std::mutex latch_;
 
     // The actual array of pages
-    std::vector<Page> pages_;
+    std::unique_ptr<Page[]> pages_;
 
     // Replacer instance
     LRUReplacer replacer_;

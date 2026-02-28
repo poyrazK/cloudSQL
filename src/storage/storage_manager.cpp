@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <ios>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -158,6 +159,32 @@ bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
     static_cast<void>(stats_.pages_written.fetch_add(1));
     static_cast<void>(stats_.bytes_written.fetch_add(PAGE_SIZE));
     return true;
+}
+
+/**
+ * @brief Allocate a new page in the database file
+ */
+uint32_t StorageManager::allocate_page(const std::string& filename) {
+    if (open_files_.find(filename) == open_files_.end()) {
+        if (!open_file(filename)) {
+            return 0;
+        }
+    }
+
+    auto& file = open_files_[filename];
+    file->clear();
+    file->seekg(0, std::ios::end);
+    const std::streamoff size = file->tellg();
+
+    return static_cast<uint32_t>(static_cast<uint64_t>(size) / PAGE_SIZE);
+}
+
+/**
+ * @brief Deallocate a page
+ */
+void StorageManager::deallocate_page(const std::string& filename, uint32_t page_num) {
+    (void)filename;
+    (void)page_num;
 }
 
 /**

@@ -108,8 +108,6 @@ TEST(LockManagerTests, Deadlock) {
     std::this_thread::sleep_for(TEST_SLEEP_MS);
 
     // txn2 waits for A -> Deadlock!
-    // Current implementation might not detect deadlock and just timeout or block.
-    // For now we just verify we can grant if one releases.
     static_cast<void>(lm.unlock(&txn1, "A"));
     static_cast<void>(lm.acquire_exclusive(&txn2, "A"));
 

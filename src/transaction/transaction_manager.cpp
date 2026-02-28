@@ -1,37 +1,36 @@
 /**
  * @file transaction_manager.cpp
- * @brief Transaction Manager implementation
+ * @brief Transaction manager implementation
  */
 
 #include "transaction/transaction_manager.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <utility>
 
+#include "catalog/catalog.hpp"
 #include "executor/types.hpp"
+#include "recovery/log_manager.hpp"
 #include "recovery/log_record.hpp"
+#include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
+#include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 
 namespace cloudsql::transaction {
 
+TransactionManager::TransactionManager(LockManager& lock_manager, Catalog& catalog,
+                                       storage::BufferPoolManager& bpm,
+                                       recovery::LogManager* log_manager)
+    : lock_manager_(lock_manager), catalog_(catalog), bpm_(bpm), log_manager_(log_manager) {}
+
 Transaction* TransactionManager::begin(IsolationLevel level) {
     const std::scoped_lock<std::mutex> lock(manager_latch_);
-
-    /* Clean up old completed transactions to avoid memory leak */
-    completed_transactions_.clear();
-
     const txn_id_t txn_id = next_txn_id_++;
     auto txn = std::make_unique<Transaction>(txn_id, level);
-
-    /* Log BEGIN */
-    if (log_manager_ != nullptr) {
-        recovery::LogRecord log(txn_id, -1, recovery::LogRecordType::BEGIN);
-        const auto lsn = log_manager_->append_log_record(log);
-        txn->set_prev_lsn(lsn);
-    }
 
     /* Capture Snapshot */
     TransactionSnapshot snapshot;
@@ -48,68 +47,79 @@ Transaction* TransactionManager::begin(IsolationLevel level) {
     Transaction* const txn_ptr = txn.get();
     active_transactions_[txn_id] = std::move(txn);
 
+    if (log_manager_ != nullptr) {
+        recovery::LogRecord record(txn_id, txn_ptr->get_prev_lsn(), recovery::LogRecordType::BEGIN);
+        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
+        txn_ptr->set_prev_lsn(lsn);
+    }
+
     return txn_ptr;
 }
 
 void TransactionManager::commit(Transaction* txn) {
-    if (txn == nullptr) {
-        return;
+    if (log_manager_ != nullptr) {
+        recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
+                                   recovery::LogRecordType::COMMIT);
+        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
+        txn->set_prev_lsn(lsn);
+        log_manager_->flush(true);
     }
 
-    if (log_manager_ != nullptr) {
-        recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
-                                recovery::LogRecordType::COMMIT);
-        static_cast<void>(log_manager_->append_log_record(log));
-        log_manager_->flush(true);
+    const auto lock_set = txn->get_shared_lock_set();
+    for (const auto& rid : lock_set) {
+        lock_manager_.unlock(txn, rid);
+    }
+    const auto ex_lock_set = txn->get_exclusive_lock_set();
+    for (const auto& rid : ex_lock_set) {
+        lock_manager_.unlock(txn, rid);
     }
 
     txn->set_state(TransactionState::COMMITTED);
 
-    /* Release all locks */
-    for (const auto& rid : txn->get_shared_locks()) {
-        lock_manager_.unlock(txn, rid);
-    }
-    for (const auto& rid : txn->get_exclusive_locks()) {
-        lock_manager_.unlock(txn, rid);
-    }
+    {
+        const std::scoped_lock<std::mutex> lock(manager_latch_);
+        completed_transactions_.push_back(std::move(active_transactions_[txn->get_id()]));
+        static_cast<void>(active_transactions_.erase(txn->get_id()));
 
-    const std::scoped_lock<std::mutex> lock(manager_latch_);
-    auto it = active_transactions_.find(txn->get_id());
-    if (it != active_transactions_.end()) {
-        completed_transactions_[txn->get_id()] = std::move(it->second);
-        static_cast<void>(active_transactions_.erase(it));
+        constexpr std::size_t MAX_COMPLETED = 100;
+        if (completed_transactions_.size() > MAX_COMPLETED) {
+            completed_transactions_.pop_front();
+        }
     }
 }
 
 void TransactionManager::abort(Transaction* txn) {
-    if (txn == nullptr) {
-        return;
-    }
-
     /* Undo all changes */
     undo_transaction(txn);
 
     if (log_manager_ != nullptr) {
-        recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(), recovery::LogRecordType::ABORT);
-        static_cast<void>(log_manager_->append_log_record(log));
+        recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
+                                   recovery::LogRecordType::ABORT);
+        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
+        txn->set_prev_lsn(lsn);
         log_manager_->flush(true);
+    }
+
+    const auto lock_set = txn->get_shared_lock_set();
+    for (const auto& rid : lock_set) {
+        lock_manager_.unlock(txn, rid);
+    }
+    const auto ex_lock_set = txn->get_exclusive_lock_set();
+    for (const auto& rid : ex_lock_set) {
+        lock_manager_.unlock(txn, rid);
     }
 
     txn->set_state(TransactionState::ABORTED);
 
-    /* Release all locks */
-    for (const auto& rid : txn->get_shared_locks()) {
-        lock_manager_.unlock(txn, rid);
-    }
-    for (const auto& rid : txn->get_exclusive_locks()) {
-        lock_manager_.unlock(txn, rid);
-    }
+    {
+        const std::scoped_lock<std::mutex> lock(manager_latch_);
+        completed_transactions_.push_back(std::move(active_transactions_[txn->get_id()]));
+        static_cast<void>(active_transactions_.erase(txn->get_id()));
 
-    const std::scoped_lock<std::mutex> lock(manager_latch_);
-    auto it = active_transactions_.find(txn->get_id());
-    if (it != active_transactions_.end()) {
-        completed_transactions_[txn->get_id()] = std::move(it->second);
-        static_cast<void>(active_transactions_.erase(it));
+        constexpr std::size_t MAX_COMPLETED = 100;
+        if (completed_transactions_.size() > MAX_COMPLETED) {
+            completed_transactions_.pop_front();
+        }
     }
 }
 
@@ -149,13 +159,8 @@ void TransactionManager::undo_transaction(Transaction* txn) {
 
 Transaction* TransactionManager::get_transaction(txn_id_t txn_id) {
     const std::scoped_lock<std::mutex> lock(manager_latch_);
-    auto it = active_transactions_.find(txn_id);
-    if (it != active_transactions_.end()) {
-        return it->second.get();
-    }
-    auto it_comp = completed_transactions_.find(txn_id);
-    if (it_comp != completed_transactions_.end()) {
-        return it_comp->second.get();
+    if (active_transactions_.find(txn_id) != active_transactions_.end()) {
+        return active_transactions_[txn_id].get();
     }
     return nullptr;
 }

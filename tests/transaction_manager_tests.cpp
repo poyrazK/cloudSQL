@@ -26,7 +26,7 @@ TEST(TransactionManagerTests, Basic) {
     storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
                                    disk_manager);
     LockManager lm;
-    TransactionManager tm(lm, *catalog, bpm);
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
 
     Transaction* const txn1 = tm.begin();
     ASSERT_NE(txn1, nullptr);
@@ -46,7 +46,7 @@ TEST(TransactionManagerTests, Isolation) {
     storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
                                    disk_manager);
     LockManager lm;
-    TransactionManager tm(lm, *catalog, bpm);
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
 
     Transaction* const txn1 = tm.begin();
     Transaction* const txn2 = tm.begin();
