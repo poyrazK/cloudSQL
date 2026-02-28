@@ -5,12 +5,10 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,7 +18,6 @@
 #include "common/value.hpp"
 #include "executor/query_executor.hpp"
 #include "executor/types.hpp"
-#include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
 #include "parser/statement.hpp"
@@ -28,7 +25,6 @@
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
-#include "test_utils.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
@@ -80,7 +76,7 @@ TEST(CloudSQLTests, ParserExpressions) {
     auto lexer = std::make_unique<Lexer>("SELECT 1 + 2 * 3 FROM dual");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
-    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt != nullptr);
     const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
     ASSERT_NE(select, nullptr);
     EXPECT_STREQ(select->columns()[0]->to_string().c_str(), "1 + 2 * 3");
