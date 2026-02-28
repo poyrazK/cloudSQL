@@ -42,8 +42,10 @@ namespace {
 constexpr int64_t VAL_42 = 42;
 constexpr double PI_LOWER = 3.14;
 constexpr double PI_UPPER = 3.15;
+constexpr int64_t VAL_1 = 1;
+constexpr int64_t VAL_2 = 2;
 constexpr int64_t VAL_10 = 10;
-constexpr int64_t VAL_20 = 20;
+
 constexpr int64_t VAL_25 = 25;
 constexpr uint64_t STATS_100 = 100;
 constexpr uint16_t PORT_5432 = 5432;
@@ -117,7 +119,7 @@ TEST(CloudSQLTests, ParserSelectVariants) {
     ASSERT_NE(select, nullptr);
     EXPECT_TRUE(select->distinct());
     EXPECT_EQ(select->limit(), VAL_10);
-    EXPECT_EQ(select->offset(), 20);
+    EXPECT_EQ(select->offset(), VAL_20);
 }
 
 TEST(CloudSQLTests, ParserErrors) {
@@ -218,8 +220,8 @@ TEST(CloudSQLTests, StorageDelete) {
     HeapTable table(filename, sm, schema);
     EXPECT_TRUE(table.create());
 
-    static_cast<void>(table.insert(Tuple({Value::make_int64(1)})));
-    const auto tid2 = table.insert(Tuple({Value::make_int64(2)}));
+    static_cast<void>(table.insert(Tuple({Value::make_int64(VAL_1)})));
+    const auto tid2 = table.insert(Tuple({Value::make_int64(VAL_2)}));
 
     EXPECT_EQ(table.tuple_count(), 2U);
     EXPECT_TRUE(table.remove(tid2, 100));  // Logically delete with xmax=100
@@ -255,8 +257,8 @@ TEST(IndexTests, Scan) {
     BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     BTreeIndex idx("scan_test", sm, ValueType::TYPE_INT64);
     static_cast<void>(idx.create());
-    static_cast<void>(idx.insert(Value::make_int64(1), HeapTable::TupleId(1, 1)));
-    static_cast<void>(idx.insert(Value::make_int64(2), HeapTable::TupleId(1, 2)));
+    static_cast<void>(idx.insert(Value::make_int64(VAL_1), HeapTable::TupleId(1, 1)));
+    static_cast<void>(idx.insert(Value::make_int64(VAL_2), HeapTable::TupleId(1, 2)));
 
     auto iter = idx.scan();
     BTreeIndex::Entry entry;

@@ -361,31 +361,33 @@ void Server::handle_connection(int client_fd) {
                         if (!res.rows().empty() && res.schema().column_count() > 0) {
                             const auto& schema = res.schema();
                             const uint32_t num_cols = static_cast<uint32_t>(schema.column_count());
-                            
+
                             // Calculate T packet length
-                            uint32_t t_len = 4 + 2; // len + num_cols
+                            uint32_t t_len = 4 + 2;  // len + num_cols
                             for (uint32_t i = 0; i < num_cols; ++i) {
-                                t_len += schema.get_column(i).name().size() + 1 + 4 + 2 + 4 + 2 + 4 + 2;
+                                t_len +=
+                                    schema.get_column(i).name().size() + 1 + 4 + 2 + 4 + 2 + 4 + 2;
                             }
-                            
+
                             const char t_type = 'T';
                             const uint32_t net_t_len = htonl(t_len);
                             const uint16_t net_num_cols = htons(static_cast<uint16_t>(num_cols));
-                            
+
                             static_cast<void>(send(client_fd, &t_type, 1, 0));
                             static_cast<void>(send(client_fd, &net_t_len, 4, 0));
                             static_cast<void>(send(client_fd, &net_num_cols, 2, 0));
-                            
+
                             for (uint32_t i = 0; i < num_cols; ++i) {
                                 const auto& col = schema.get_column(i);
-                                static_cast<void>(send(client_fd, col.name().c_str(), col.name().size() + 1, 0));
+                                static_cast<void>(
+                                    send(client_fd, col.name().c_str(), col.name().size() + 1, 0));
                                 const uint32_t table_oid = 0;
                                 const uint16_t col_attr = 0;
-                                const uint32_t type_oid = htonl(23); // 23 is int4, simplified
+                                const uint32_t type_oid = htonl(23);  // 23 is int4, simplified
                                 const uint16_t type_len = htons(4);
                                 const uint32_t type_mod = htonl(0xFFFFFFFF);
-                                const uint16_t format = 0; // Text format
-                                
+                                const uint16_t format = 0;  // Text format
+
                                 static_cast<void>(send(client_fd, &table_oid, 4, 0));
                                 static_cast<void>(send(client_fd, &col_attr, 2, 0));
                                 static_cast<void>(send(client_fd, &type_oid, 4, 0));
@@ -393,27 +395,30 @@ void Server::handle_connection(int client_fd) {
                                 static_cast<void>(send(client_fd, &type_mod, 4, 0));
                                 static_cast<void>(send(client_fd, &format, 2, 0));
                             }
-                            
+
                             // Data Rows (D)
                             for (const auto& row : res.rows()) {
                                 const char d_type = 'D';
-                                uint32_t d_len = 4 + 2; // len + num_cols
+                                uint32_t d_len = 4 + 2;  // len + num_cols
                                 std::vector<std::string> str_vals;
                                 for (uint32_t i = 0; i < num_cols; ++i) {
                                     const std::string s_val = row.get(i).to_string();
                                     str_vals.push_back(s_val);
-                                    d_len += 4 + static_cast<uint32_t>(s_val.size()); // len + value
+                                    d_len +=
+                                        4 + static_cast<uint32_t>(s_val.size());  // len + value
                                 }
-                                
+
                                 const uint32_t net_d_len = htonl(d_len);
                                 static_cast<void>(send(client_fd, &d_type, 1, 0));
                                 static_cast<void>(send(client_fd, &net_d_len, 4, 0));
                                 static_cast<void>(send(client_fd, &net_num_cols, 2, 0));
-                                
+
                                 for (const auto& s_val : str_vals) {
-                                    const uint32_t val_len = htonl(static_cast<uint32_t>(s_val.size()));
+                                    const uint32_t val_len =
+                                        htonl(static_cast<uint32_t>(s_val.size()));
                                     static_cast<void>(send(client_fd, &val_len, 4, 0));
-                                    static_cast<void>(send(client_fd, s_val.c_str(), s_val.size(), 0));
+                                    static_cast<void>(
+                                        send(client_fd, s_val.c_str(), s_val.size(), 0));
                                 }
                             }
                         }

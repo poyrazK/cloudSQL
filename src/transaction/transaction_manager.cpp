@@ -10,12 +10,12 @@
 #include <mutex>
 #include <utility>
 
+#include "catalog/catalog.hpp"
 #include "recovery/log_manager.hpp"
 #include "recovery/log_record.hpp"
+#include "storage/heap_table.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
-#include "catalog/catalog.hpp"
-#include "storage/heap_table.hpp"
 
 namespace cloudsql::transaction {
 
@@ -28,7 +28,7 @@ Transaction* TransactionManager::begin(IsolationLevel level) {
     const std::scoped_lock<std::mutex> lock(manager_latch_);
     const txn_id_t txn_id = next_txn_id_++;
     auto txn = std::make_unique<Transaction>(txn_id, level);
-    
+
     /* Capture Snapshot */
     TransactionSnapshot snapshot;
     snapshot.xmax = next_txn_id_.load();
@@ -40,7 +40,7 @@ Transaction* TransactionManager::begin(IsolationLevel level) {
     }
 
     txn->set_snapshot(std::move(snapshot));
-    
+
     Transaction* const txn_ptr = txn.get();
     active_transactions_[txn_id] = std::move(txn);
 
