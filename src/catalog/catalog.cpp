@@ -20,6 +20,8 @@
 #include <utility>
 #include <vector>
 
+#include "distributed/raft_node.hpp"
+
 namespace cloudsql {
 
 /**
@@ -71,6 +73,15 @@ bool Catalog::save(const std::string& filename) const {
  * @brief Create a new table
  */
 oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInfo> columns) {
+    if (raft_node_ != nullptr) {
+        /* TODO: Serialize DDL and replicate via Raft */
+        /* For now, just call local to keep it working during Step 4 implementation */
+        return create_table_local(table_name, std::move(columns));
+    }
+    return create_table_local(table_name, std::move(columns));
+}
+
+oid_t Catalog::create_table_local(const std::string& table_name, std::vector<ColumnInfo> columns) {
     if (table_exists_by_name(table_name)) {
         throw std::runtime_error("Table already exists: " + table_name);
     }
@@ -81,8 +92,16 @@ oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInf
     table->columns = std::move(columns);
     table->created_at = get_current_time();
 
+    /* Basic Shard Assignment */
+    ShardInfo shard;
+    shard.shard_id = 0;
+    shard.node_address = "127.0.0.1"; // Default
+    shard.port = 6432;
+    table->shards.push_back(shard);
+
     const oid_t id = table->table_id;
     tables_[id] = std::move(table);
+    version_++;
     return id;
 }
 
@@ -90,9 +109,18 @@ oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInf
  * @brief Drop a table
  */
 bool Catalog::drop_table(oid_t table_id) {
+    if (raft_node_ != nullptr) {
+        /* TODO: Replicate via Raft */
+        return drop_table_local(table_id);
+    }
+    return drop_table_local(table_id);
+}
+
+bool Catalog::drop_table_local(oid_t table_id) {
     auto it = tables_.find(table_id);
     if (it != tables_.end()) {
         tables_.erase(it);
+        version_++;
         return true;
     }
     return false;
@@ -161,6 +189,7 @@ oid_t Catalog::create_index(const std::string& index_name, oid_t table_id,
 
     const oid_t id = index.index_id;
     table.indexes.push_back(std::move(index));
+    version_++;
     return id;
 }
 
@@ -174,6 +203,7 @@ bool Catalog::drop_index(oid_t index_id) {
         for (auto it = indexes.begin(); it != indexes.end(); ++it) {
             if (it->index_id == index_id) {
                 indexes.erase(it);
+                version_++;
                 return true;
             }
         }
@@ -218,6 +248,7 @@ bool Catalog::update_table_stats(oid_t table_id, uint64_t num_rows) {
     if (table_opt.has_value()) {
         (*table_opt)->num_rows = num_rows;
         (*table_opt)->modified_at = get_current_time();
+        version_++;
         return true;
     }
     return false;
@@ -251,7 +282,8 @@ void Catalog::print() const {
         std::cout << "  Table: " << table.name << " (OID: " << table.table_id << ")\n";
         std::cout << "    Columns: " << table.num_columns() << "\n";
         std::cout << "    Indexes: " << table.num_indexes() << "\n";
-        std::cout << "    Rows: " << table.num_rows << "\n";
+        std::cout << "    Shards:  " << table.shards.size() << "\n";
+        std::cout << "    Rows:    " << table.num_rows << "\n";
     }
     std::cout << "======================\n";
 }
@@ -262,3 +294,4 @@ uint64_t Catalog::get_current_time() {
 
 /** @} */ /* catalog */
 }  // namespace cloudsql
+

@@ -23,12 +23,21 @@
 #include <vector>
 
 #include "catalog/catalog.hpp"
+#include "common/cluster_manager.hpp"
 #include "common/config.hpp"
+#include "distributed/raft_node.hpp"
+#include "executor/query_executor.hpp"
+#include "network/rpc_message.hpp"
+#include "network/rpc_server.hpp"
 #include "network/server.hpp"
+#include "parser/lexer.hpp"
+#include "parser/parser.hpp"
 #include "recovery/log_manager.hpp"
 #include "recovery/recovery_manager.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/storage_manager.hpp"
+#include "transaction/lock_manager.hpp"
+#include "transaction/transaction_manager.hpp"
 
 namespace {
 
@@ -62,12 +71,14 @@ void signal_handler(int sig) {
 void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [OPTIONS]\n\n";
     std::cout << "Options:\n";
-    std::cout << "  -p, --port PORT     Port to listen on (default: 5432)\n";
-    std::cout << "  -d, --data DIR      Data directory (default: ./data)\n";
-    std::cout << "  -c, --config FILE   Configuration file (optional)\n";
-    std::cout << "  -m, --mode MODE     Run mode: embedded or distributed (default: embedded)\n";
-    std::cout << "  -h, --help          Show this help message\n";
-    std::cout << "  -v, --version       Show version information\n";
+    std::cout << "  -p, --port PORT           PostgreSQL client port (default: 5432)\n";
+    std::cout << "  -cp, --cluster-port PORT  Internal cluster communication port (default: 6432)\n";
+    std::cout << "  -d, --data DIR            Data directory (default: ./data)\n";
+    std::cout << "  -c, --config FILE         Configuration file (optional)\n";
+    std::cout << "  -m, --mode MODE           Run mode: standalone, coordinator, or data\n";
+    std::cout << "  -s, --seed NODES          Seed coordinator addresses (comma-separated)\n";
+    std::cout << "  -h, --help                Show this help message\n";
+    std::cout << "  -v, --version             Show version information\n";
 }
 
 /**
@@ -117,18 +128,34 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Invalid port: " << args[i] << " (" << e.what() << ")\n";
                     return 1;
                 }
+            } else if ((arg == "-cp" || arg == "--cluster-port") && i + 1 < args.size()) {
+                try {
+                    const std::string& port_str = args[++i];
+                    const unsigned long port_val = std::stoul(port_str);
+                    if (port_val > CONST_MAX_PORT) {
+                        throw std::out_of_range("Cluster port out of range");
+                    }
+                    config.cluster_port = static_cast<uint16_t>(port_val);
+                } catch (const std::exception& e) {
+                    std::cerr << "Invalid cluster port: " << args[i] << " (" << e.what() << ")\n";
+                    return 1;
+                }
             } else if ((arg == "-d" || arg == "--data") && i + 1 < args.size()) {
                 config.data_dir = args[++i];
             } else if ((arg == "-c" || arg == "--config") && i + 1 < args.size()) {
                 config.config_file = args[++i];
                 static_cast<void>(config.load(config.config_file));
             } else if ((arg == "-m" || arg == "--mode") && i + 1 < args.size()) {
-                const std::string& mode = args[++i];
-                if (mode == "distributed") {
-                    config.mode = cloudsql::config::RunMode::Distributed;
+                const std::string& mode_str = args[++i];
+                if (mode_str == "coordinator" || mode_str == "distributed") {
+                    config.mode = cloudsql::config::RunMode::Coordinator;
+                } else if (mode_str == "data") {
+                    config.mode = cloudsql::config::RunMode::Data;
                 } else {
-                    config.mode = cloudsql::config::RunMode::Embedded;
+                    config.mode = cloudsql::config::RunMode::Standalone;
                 }
+            } else if ((arg == "-s" || arg == "--seed") && i + 1 < args.size()) {
+                config.seed_nodes = args[++i];
             } else {
                 std::cerr << "Unknown option: " << arg << "\n";
                 if (!args.empty()) {
@@ -140,12 +167,21 @@ int main(int argc, char* argv[]) {
 
         std::cout << "=== SQL Engine ===\n";
         std::cout << "Version: 0.2.0\n";
-        std::cout << "Mode: "
-                  << (config.mode == cloudsql::config::RunMode::Distributed ? "distributed"
-                                                                            : "embedded")
-                  << "\n";
+        std::string mode_display = "Standalone";
+        if (config.mode == cloudsql::config::RunMode::Coordinator) {
+            mode_display = "Coordinator";
+        } else if (config.mode == cloudsql::config::RunMode::Data) {
+            mode_display = "Data";
+        }
+        std::cout << "Mode: " << mode_display << "\n";
         std::cout << "Data directory: " << config.data_dir << "\n";
-        std::cout << "Port: " << config.port << "\n\n";
+        if (config.mode != cloudsql::config::RunMode::Data) {
+            std::cout << "Client Port:    " << config.port << "\n";
+        }
+        if (config.mode != cloudsql::config::RunMode::Standalone) {
+            std::cout << "Cluster Port:   " << config.cluster_port << "\n";
+        }
+        std::cout << "\n";
 
         /* Set up signal handlers */
         static_cast<void>(std::signal(SIGINT, signal_handler));
@@ -173,24 +209,195 @@ int main(int argc, char* argv[]) {
         }
         log_manager->run_flush_thread();
 
-        /* Initialize server */
-        auto& server = get_server_instance();
-        server = cloudsql::network::Server::create(config.port, *catalog, *bpm);
-        if (!server) {
-            std::cerr << "Failed to create server\n";
-            log_manager->stop_flush_thread();
-            return 1;
+        /* Initialize transaction management */
+        cloudsql::transaction::LockManager lock_manager;
+        cloudsql::transaction::TransactionManager transaction_manager(lock_manager, *catalog, *bpm,
+                                                                       log_manager.get());
+
+        std::unique_ptr<cloudsql::network::RpcServer> rpc_server = nullptr;
+        std::unique_ptr<cloudsql::cluster::ClusterManager> cluster_manager = nullptr;
+        std::unique_ptr<cloudsql::raft::RaftNode> raft_node = nullptr;
+
+        /* Role-specific logic */
+        if (config.mode != cloudsql::config::RunMode::Standalone) {
+            cluster_manager = std::make_unique<cloudsql::cluster::ClusterManager>(&config);
+            rpc_server = std::make_unique<cloudsql::network::RpcServer>(config.cluster_port);
+
+            if (config.mode == cloudsql::config::RunMode::Data) {
+                // Register execution handler for Data nodes
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::ExecuteFragment,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::ExecuteFragmentArgs::deserialize(p);
+                        cloudsql::network::QueryResultsReply reply;
+                        try {
+                            auto lexer = std::make_unique<cloudsql::parser::Lexer>(args.sql);
+                            cloudsql::parser::Parser parser(std::move(lexer));
+                            auto stmt = parser.parse_statement();
+                            if (stmt) {
+                                cloudsql::executor::QueryExecutor exec(
+                                    *catalog, *bpm, lock_manager, transaction_manager);
+                                auto res = exec.execute(*stmt);
+                                reply.success = res.success();
+                                if (res.success()) {
+                                    reply.rows = res.rows();
+                                } else {
+                                    reply.error_msg = res.error();
+                                }
+                            } else {
+                                reply.success = false;
+                                reply.error_msg = "Parse error";
+                            }
+                        } catch (const std::exception& e) {
+                            reply.success = false;
+                            reply.error_msg = e.what();
+                        }
+
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[8];
+                        resp_h.encode(h_buf);
+                        send(fd, h_buf, 8, 0);
+                        send(fd, resp_p.data(), resp_p.size(), 0);
+                    });
+
+                // Register 2PC Handlers
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::TxnPrepare,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::TxnOperationArgs::deserialize(p);
+                        cloudsql::network::QueryResultsReply reply;
+                        try {
+                            // In a full implementation, we'd find the txn by ID and flush its WAL.
+                            // For now, we just force a flush.
+                            log_manager->flush(true);
+                            reply.success = true;
+                        } catch (const std::exception& e) {
+                            reply.success = false;
+                            reply.error_msg = e.what();
+                        }
+
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[8];
+                        resp_h.encode(h_buf);
+                        send(fd, h_buf, 8, 0);
+                        send(fd, resp_p.data(), resp_p.size(), 0);
+                    });
+
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::TxnCommit,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::TxnOperationArgs::deserialize(p);
+                        cloudsql::network::QueryResultsReply reply;
+                        try {
+                            auto txn = transaction_manager.get_transaction(args.txn_id);
+                            if (txn) {
+                                transaction_manager.commit(txn);
+                            }
+                            reply.success = true;
+                        } catch (const std::exception& e) {
+                            reply.success = false;
+                            reply.error_msg = e.what();
+                        }
+
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[8];
+                        resp_h.encode(h_buf);
+                        send(fd, h_buf, 8, 0);
+                        send(fd, resp_p.data(), resp_p.size(), 0);
+                    });
+
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::TxnAbort,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::TxnOperationArgs::deserialize(p);
+                        cloudsql::network::QueryResultsReply reply;
+                        try {
+                            auto txn = transaction_manager.get_transaction(args.txn_id);
+                            if (txn) {
+                                transaction_manager.abort(txn);
+                            }
+                            reply.success = true;
+                        } catch (const std::exception& e) {
+                            reply.success = false;
+                            reply.error_msg = e.what();
+                        }
+
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[8];
+                        resp_h.encode(h_buf);
+                        send(fd, h_buf, 8, 0);
+                        send(fd, resp_p.data(), resp_p.size(), 0);
+                    });
+            }
+
+            std::cout << "Starting internal RPC server on port " << config.cluster_port << "...\n";
+            if (!rpc_server->start()) {
+                std::cerr << "Failed to start RPC server\n";
+                log_manager->stop_flush_thread();
+                return 1;
+            }
         }
 
-        /* Start server */
-        std::cout << "Starting server...\n";
-        if (!server->start()) {
-            std::cerr << "Failed to start server\n";
-            log_manager->stop_flush_thread();
-            return 1;
+        if (config.mode == cloudsql::config::RunMode::Data) {
+            std::cout << "Data node online. Waiting for Coordinator instructions...\n";
+        } else {
+            /* Standalone or Coordinator mode: start PostgreSQL server */
+            auto& server = get_server_instance();
+            server = cloudsql::network::Server::create(config.port, *catalog, *bpm, config,
+                                                       cluster_manager.get());
+            if (!server) {
+                std::cerr << "Failed to create PostgreSQL server\n";
+                if (rpc_server) {
+                    rpc_server->stop();
+                }
+                log_manager->stop_flush_thread();
+                return 1;
+            }
+
+            std::cout << "Starting PostgreSQL server on port " << config.port << "...\n";
+            if (!server->start()) {
+                std::cerr << "Failed to start PostgreSQL server\n";
+                if (rpc_server) {
+                    rpc_server->stop();
+                }
+                log_manager->stop_flush_thread();
+                return 1;
+            }
+
+            if (config.mode == cloudsql::config::RunMode::Coordinator) {
+                std::cout << "Coordinator node joining cluster...\n";
+                const std::string node_id = "node_" + std::to_string(config.cluster_port);
+                raft_node = std::make_unique<cloudsql::raft::RaftNode>(node_id, *cluster_manager,
+                                                                      *rpc_server);
+
+                /* Step 4: Link Catalog to RaftNode */
+                catalog->set_raft_node(raft_node.get());
+
+                raft_node->start();
+            }
         }
 
-        std::cout << "Server running. Press Ctrl+C to stop.\n";
+        std::cout << "Node ready. Press Ctrl+C to stop.\n";
 
         /* Monitor shutdown flag */
         while (!shutdown_requested.load()) {
@@ -199,8 +406,19 @@ int main(int argc, char* argv[]) {
 
         /* Cleanup */
         std::cout << "\nShutting down...\n";
-        static_cast<void>(server->stop());
-        server.reset();
+        auto& server = get_server_instance();
+        if (server) {
+            static_cast<void>(server->stop());
+            server.reset();
+        }
+
+        if (raft_node) {
+            raft_node->stop();
+        }
+
+        if (rpc_server) {
+            rpc_server->stop();
+        }
 
         log_manager->stop_flush_thread();
 

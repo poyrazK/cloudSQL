@@ -21,6 +21,10 @@
 
 namespace cloudsql {
 
+namespace raft {
+class RaftNode;
+}
+
 // Type aliases
 using oid_t = uint32_t;
 
@@ -66,6 +70,15 @@ struct IndexInfo {
 };
 
 /**
+ * @brief Shard information
+ */
+struct ShardInfo {
+    uint32_t shard_id;
+    std::string node_address;
+    uint16_t port;
+};
+
+/**
  * @brief Table information structure
  */
 struct TableInfo {
@@ -73,6 +86,7 @@ struct TableInfo {
     std::string name;
     std::vector<ColumnInfo> columns;
     std::vector<IndexInfo> indexes;
+    std::vector<ShardInfo> shards; // New: Shard mapping
     uint64_t num_rows = 0;
     std::string filename;
     uint32_t flags = 0;
@@ -144,6 +158,11 @@ class Catalog {
     [[nodiscard]] static std::unique_ptr<Catalog> create();
 
     /**
+     * @brief Set Raft node for distributed operations
+     */
+    void set_raft_node(raft::RaftNode* raft_node) { raft_node_ = raft_node; }
+
+    /**
      * @brief Load catalog from file
      */
     bool load(const std::string& filename);
@@ -160,9 +179,19 @@ class Catalog {
     oid_t create_table(const std::string& table_name, std::vector<ColumnInfo> columns);
 
     /**
+     * @brief Local-only table creation (called by Raft)
+     */
+    oid_t create_table_local(const std::string& table_name, std::vector<ColumnInfo> columns);
+
+    /**
      * @brief Drop a table
      */
     bool drop_table(oid_t table_id);
+
+    /**
+     * @brief Local-only table drop (called by Raft)
+     */
+    bool drop_table_local(oid_t table_id);
 
     /**
      * @brief Get table by ID
@@ -242,6 +271,7 @@ class Catalog {
     DatabaseInfo database_;
     oid_t next_oid_ = 1;
     uint64_t version_ = 1;
+    raft::RaftNode* raft_node_ = nullptr;
 
     [[nodiscard]] static uint64_t get_current_time();
 };

@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "catalog/catalog.hpp"
+#include "common/cluster_manager.hpp"
+#include "common/config.hpp"
 #include "executor/query_executor.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "transaction/lock_manager.hpp"
@@ -57,7 +59,8 @@ class Server {
     /**
      * @brief Constructor
      */
-    Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm);
+    Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm,
+           const config::Config& config, cluster::ClusterManager* cm);
 
     /**
      * @brief Destructor
@@ -83,7 +86,9 @@ class Server {
      * @brief Create a new server instance
      */
     [[nodiscard]] static std::unique_ptr<Server> create(uint16_t port, Catalog& catalog,
-                                                        storage::BufferPoolManager& bpm);
+                                                        storage::BufferPoolManager& bpm,
+                                                        const config::Config& config,
+                                                        cluster::ClusterManager* cm);
 
     /**
      * @brief Start the server
@@ -118,6 +123,9 @@ class Server {
 
     Catalog& catalog_;
     storage::BufferPoolManager& bpm_;
+    const config::Config& config_;
+    cluster::ClusterManager* cluster_manager_;
+
     transaction::LockManager lock_manager_;
     transaction::TransactionManager transaction_manager_;
 

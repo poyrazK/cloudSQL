@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "catalog/catalog.hpp"
+#include "distributed/distributed_executor.hpp"
 #include "executor/query_executor.hpp"
 #include "executor/types.hpp"
 #include "parser/lexer.hpp"
@@ -91,15 +92,19 @@ class ProtocolWriter {
 
 }  // namespace
 
-Server::Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm)
+Server::Server(uint16_t port, Catalog& catalog, storage::BufferPoolManager& bpm,
+               const config::Config& config, cluster::ClusterManager* cm)
     : port_(port),
       catalog_(catalog),
       bpm_(bpm),
+      config_(config),
+      cluster_manager_(cm),
       transaction_manager_(lock_manager_, catalog, bpm, bpm.get_log_manager()) {}
 
 std::unique_ptr<Server> Server::create(uint16_t port, Catalog& catalog,
-                                       storage::BufferPoolManager& bpm) {
-    return std::make_unique<Server>(port, catalog, bpm);
+                                       storage::BufferPoolManager& bpm, const config::Config& config,
+                                       cluster::ClusterManager* cm) {
+    return std::make_unique<Server>(port, catalog, bpm, config, cm);
 }
 
 bool Server::start() {
@@ -352,9 +357,15 @@ void Server::handle_connection(int client_fd) {
                 auto stmt = parser.parse_statement();
 
                 if (stmt) {
-                    executor::QueryExecutor exec(catalog_, bpm_, lock_manager_,
-                                                 transaction_manager_);
-                    const auto res = exec.execute(*stmt);
+                    executor::QueryResult res;
+                    if (config_.mode == config::RunMode::Coordinator && cluster_manager_ != nullptr) {
+                        executor::DistributedExecutor dist_exec(catalog_, *cluster_manager_);
+                        res = dist_exec.execute(*stmt, sql);
+                    } else {
+                        executor::QueryExecutor exec(catalog_, bpm_, lock_manager_,
+                                                     transaction_manager_);
+                        res = exec.execute(*stmt);
+                    }
 
                     if (res.success()) {
                         // Row Description (T)

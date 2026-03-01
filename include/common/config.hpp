@@ -14,7 +14,11 @@ namespace cloudsql::config {
 /**
  * @brief Run modes for the database engine
  */
-enum class RunMode : uint8_t { Embedded = 0, Distributed = 1 };
+enum class RunMode : uint8_t {
+    Standalone = 0,   /**< Single process mode (legacy Embedded) */
+    Coordinator = 1,  /**< Distributed coordinator node */
+    Data = 2          /**< Distributed data storage node */
+};
 
 /**
  * @brief Server configuration structure (C++ wrapper)
@@ -22,6 +26,7 @@ enum class RunMode : uint8_t { Embedded = 0, Distributed = 1 };
 class Config {
    public:
     static constexpr uint16_t DEFAULT_PORT = 5432;
+    static constexpr uint16_t DEFAULT_CLUSTER_PORT = 6432;
     static constexpr uint16_t MAX_PORT = 65535;
     static constexpr const char* DEFAULT_DATA_DIR = "./data";
     static constexpr int DEFAULT_MAX_CONNECTIONS = 100;
@@ -32,9 +37,11 @@ class Config {
 
     // Configuration fields
     uint16_t port = DEFAULT_PORT;
+    uint16_t cluster_port = DEFAULT_CLUSTER_PORT;
     std::string data_dir = DEFAULT_DATA_DIR;
     std::string config_file;
-    RunMode mode = RunMode::Embedded;
+    RunMode mode = RunMode::Standalone;
+    std::string seed_nodes;  // Comma-separated list of coordinator addresses
     int max_connections = DEFAULT_MAX_CONNECTIONS;
     int buffer_pool_size = DEFAULT_BUFFER_POOL_SIZE;
     int page_size = DEFAULT_PAGE_SIZE;
