@@ -258,7 +258,9 @@ void Server::accept_connections() {
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(fd, &read_fds);
-        struct timeval timeout {SELECT_TIMEOUT_SEC, 0};
+        struct timeval timeout {
+            SELECT_TIMEOUT_SEC, 0
+        };
 
         const int res = select(fd + 1, &read_fds, nullptr, nullptr, &timeout);
         if (res <= 0) {

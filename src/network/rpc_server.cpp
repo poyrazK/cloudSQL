@@ -76,7 +76,9 @@ void RpcServer::accept_loop() {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(listen_fd_, &fds);
-        struct timeval tv {1, 0};
+        struct timeval tv {
+            1, 0
+        };
 
         if (select(listen_fd_ + 1, &fds, nullptr, nullptr, &tv) > 0) {
             const int client_fd = accept(listen_fd_, nullptr, nullptr);
