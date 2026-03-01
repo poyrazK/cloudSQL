@@ -273,6 +273,7 @@ int main(int argc, char* argv[]) {
                         int fd) {
                         (void)h;
                         auto args = cloudsql::network::TxnOperationArgs::deserialize(p);
+                        (void)args;
                         cloudsql::network::QueryResultsReply reply;
                         try {
                             // In a full implementation, we'd find the txn by ID and flush its WAL.
