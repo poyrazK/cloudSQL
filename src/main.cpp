@@ -138,7 +138,8 @@ int main(int argc, char* argv[]) {
                     }
                     config.cluster_port = static_cast<uint16_t>(port_val);
                 } catch (const std::exception& e) {
-                    std::cerr << "Invalid cluster port: " << cmd_args[i] << " (" << e.what() << ")\n";
+                    std::cerr << "Invalid cluster port: " << cmd_args[i] << " (" << e.what()
+                              << ")\n";
                     return 1;
                 }
             } else if ((arg == "-d" || arg == "--data") && i + 1 < cmd_args.size()) {
