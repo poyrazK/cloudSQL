@@ -102,14 +102,14 @@ int main(int argc, char* argv[]) {
         cloudsql::config::Config config;
 
         /* Convert argv to vector of strings for safer parsing */
-        const std::vector<std::string> args(argv, argv + argc);
+        const std::vector<std::string> cmd_args(argv, argv + argc);
 
         /* Parse command line arguments */
-        for (size_t i = 1; i < args.size(); ++i) {
-            const std::string& arg = args[i];
+        for (size_t i = 1; i < cmd_args.size(); ++i) {
+            const std::string& arg = cmd_args[i];
             if (arg == "-h" || arg == "--help") {
-                if (!args.empty()) {
-                    print_usage(args[0].c_str());
+                if (!cmd_args.empty()) {
+                    print_usage(cmd_args[0].c_str());
                 }
                 return 0;
             }
@@ -117,37 +117,37 @@ int main(int argc, char* argv[]) {
                 print_version();
                 return 0;
             }
-            if ((arg == "-p" || arg == "--port") && i + 1 < args.size()) {
+            if ((arg == "-p" || arg == "--port") && i + 1 < cmd_args.size()) {
                 try {
-                    const std::string& port_str = args[++i];
+                    const std::string& port_str = cmd_args[++i];
                     const unsigned long port_val = std::stoul(port_str);
                     if (port_val > CONST_MAX_PORT) {
                         throw std::out_of_range("Port out of range");
                     }
                     config.port = static_cast<uint16_t>(port_val);
                 } catch (const std::exception& e) {
-                    std::cerr << "Invalid port: " << args[i] << " (" << e.what() << ")\n";
+                    std::cerr << "Invalid port: " << cmd_args[i] << " (" << e.what() << ")\n";
                     return 1;
                 }
-            } else if ((arg == "-cp" || arg == "--cluster-port") && i + 1 < args.size()) {
+            } else if ((arg == "-cp" || arg == "--cluster-port") && i + 1 < cmd_args.size()) {
                 try {
-                    const std::string& port_str = args[++i];
+                    const std::string& port_str = cmd_args[++i];
                     const unsigned long port_val = std::stoul(port_str);
                     if (port_val > CONST_MAX_PORT) {
                         throw std::out_of_range("Cluster port out of range");
                     }
                     config.cluster_port = static_cast<uint16_t>(port_val);
                 } catch (const std::exception& e) {
-                    std::cerr << "Invalid cluster port: " << args[i] << " (" << e.what() << ")\n";
+                    std::cerr << "Invalid cluster port: " << cmd_args[i] << " (" << e.what() << ")\n";
                     return 1;
                 }
-            } else if ((arg == "-d" || arg == "--data") && i + 1 < args.size()) {
-                config.data_dir = args[++i];
-            } else if ((arg == "-c" || arg == "--config") && i + 1 < args.size()) {
-                config.config_file = args[++i];
+            } else if ((arg == "-d" || arg == "--data") && i + 1 < cmd_args.size()) {
+                config.data_dir = cmd_args[++i];
+            } else if ((arg == "-c" || arg == "--config") && i + 1 < cmd_args.size()) {
+                config.config_file = cmd_args[++i];
                 static_cast<void>(config.load(config.config_file));
-            } else if ((arg == "-m" || arg == "--mode") && i + 1 < args.size()) {
-                const std::string& mode_str = args[++i];
+            } else if ((arg == "-m" || arg == "--mode") && i + 1 < cmd_args.size()) {
+                const std::string& mode_str = cmd_args[++i];
                 if (mode_str == "coordinator" || mode_str == "distributed") {
                     config.mode = cloudsql::config::RunMode::Coordinator;
                 } else if (mode_str == "data") {
@@ -155,12 +155,12 @@ int main(int argc, char* argv[]) {
                 } else {
                     config.mode = cloudsql::config::RunMode::Standalone;
                 }
-            } else if ((arg == "-s" || arg == "--seed") && i + 1 < args.size()) {
-                config.seed_nodes = args[++i];
+            } else if ((arg == "-s" || arg == "--seed") && i + 1 < cmd_args.size()) {
+                config.seed_nodes = cmd_args[++i];
             } else {
                 std::cerr << "Unknown option: " << arg << "\n";
-                if (!args.empty()) {
-                    print_usage(args[0].c_str());
+                if (!cmd_args.empty()) {
+                    print_usage(cmd_args[0].c_str());
                 }
                 return 1;
             }
