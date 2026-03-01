@@ -18,7 +18,7 @@ namespace cloudsql::transaction {
 
 using txn_id_t = uint64_t;
 
-enum class TransactionState : uint8_t { RUNNING, COMMITTED, ABORTED };
+enum class TransactionState : uint8_t { RUNNING, PREPARED, COMMITTED, ABORTED };
 
 enum class IsolationLevel : uint8_t {
     READ_UNCOMMITTED,

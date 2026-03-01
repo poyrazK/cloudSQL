@@ -31,6 +31,7 @@ enum class LogRecordType : uint8_t {
     ROLLBACK_DELETE,
     UPDATE,
     BEGIN,
+    PREPARE,
     COMMIT,
     ABORT,
     NEW_PAGE
@@ -146,6 +147,8 @@ class LogRecord {
                 return "UPDATE";
             case LogRecordType::BEGIN:
                 return "BEGIN";
+            case LogRecordType::PREPARE:
+                return "PREPARE";
             case LogRecordType::COMMIT:
                 return "COMMIT";
             case LogRecordType::ABORT:

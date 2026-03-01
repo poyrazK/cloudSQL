@@ -50,6 +50,11 @@ class TransactionManager {
     void commit(Transaction* txn);
 
     /**
+     * @brief Prepare a transaction (2PC Phase 1)
+     */
+    void prepare(Transaction* txn);
+
+    /**
      * @brief Abort a transaction
      */
     void abort(Transaction* txn);

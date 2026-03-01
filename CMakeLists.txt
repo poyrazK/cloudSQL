@@ -20,6 +20,7 @@ set(USE_SANITIZER "address" CACHE STRING "Sanitizer to use: address, thread, und
 # Configure Sanitizers
 if (NOT USE_SANITIZER STREQUAL "none")
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        set(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         string(REPLACE "," ";" SAN_LIST ${USE_SANITIZER})
         foreach (SAN ${SAN_LIST})
             list(APPEND SAN_FLAGS "-fsanitize=${SAN}")
@@ -132,7 +133,7 @@ if (BUILD_TESTS)
 
     macro(add_cloudsql_test name source)
         add_executable(${name} ${source})
-        target_link_libraries(${name} PRIVATE sqlEngineCore GTest::gtest_main)
+        target_link_libraries(${name} PRIVATE sqlEngineCore GTest::gtest_main GTest::gmock_main)
         add_test(NAME ${name} COMMAND ${name})
     endmacro()
 
@@ -144,6 +145,10 @@ if (BUILD_TESTS)
     add_cloudsql_test(recovery_tests tests/recovery_tests.cpp)
     add_cloudsql_test(recovery_manager_tests tests/recovery_manager_tests.cpp)
     add_cloudsql_test(buffer_pool_tests tests/buffer_pool_tests.cpp)
+    add_cloudsql_test(raft_tests tests/raft_tests.cpp)
+    add_cloudsql_test(distributed_tests tests/distributed_tests.cpp)
+    add_cloudsql_test(raft_sim_tests tests/raft_simulation_tests.cpp)
+    add_cloudsql_test(distributed_txn_tests tests/distributed_txn_tests.cpp)
 
     add_custom_target(run-tests
         COMMAND ${CMAKE_CTEST_COMMAND}

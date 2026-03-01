@@ -56,7 +56,27 @@ Transaction* TransactionManager::begin(IsolationLevel level) {
     return txn_ptr;
 }
 
+void TransactionManager::prepare(Transaction* txn) {
+    if (txn->get_state() != TransactionState::RUNNING) {
+        return;
+    }
+
+    if (log_manager_ != nullptr) {
+        recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
+                                   recovery::LogRecordType::PREPARE);
+        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
+        txn->set_prev_lsn(lsn);
+        log_manager_->flush(true);
+    }
+
+    txn->set_state(TransactionState::PREPARED);
+}
+
 void TransactionManager::commit(Transaction* txn) {
+    if (txn->get_state() == TransactionState::COMMITTED) {
+        return;
+    }
+
     if (log_manager_ != nullptr) {
         recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
                                    recovery::LogRecordType::COMMIT);
@@ -78,8 +98,11 @@ void TransactionManager::commit(Transaction* txn) {
 
     {
         const std::scoped_lock<std::mutex> lock(manager_latch_);
-        completed_transactions_.push_back(std::move(active_transactions_[txn->get_id()]));
-        static_cast<void>(active_transactions_.erase(txn->get_id()));
+        auto it = active_transactions_.find(txn->get_id());
+        if (it != active_transactions_.end()) {
+            completed_transactions_.push_back(std::move(it->second));
+            active_transactions_.erase(it);
+        }
 
         constexpr std::size_t MAX_COMPLETED = 100;
         if (completed_transactions_.size() > MAX_COMPLETED) {
@@ -89,8 +112,14 @@ void TransactionManager::commit(Transaction* txn) {
 }
 
 void TransactionManager::abort(Transaction* txn) {
-    /* Undo all changes */
-    undo_transaction(txn);
+    if (txn->get_state() == TransactionState::ABORTED) {
+        return;
+    }
+
+    /* Undo all changes if not already committed */
+    if (txn->get_state() != TransactionState::COMMITTED) {
+        undo_transaction(txn);
+    }
 
     if (log_manager_ != nullptr) {
         recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
@@ -113,8 +142,11 @@ void TransactionManager::abort(Transaction* txn) {
 
     {
         const std::scoped_lock<std::mutex> lock(manager_latch_);
-        completed_transactions_.push_back(std::move(active_transactions_[txn->get_id()]));
-        static_cast<void>(active_transactions_.erase(txn->get_id()));
+        auto it = active_transactions_.find(txn->get_id());
+        if (it != active_transactions_.end()) {
+            completed_transactions_.push_back(std::move(it->second));
+            active_transactions_.erase(it);
+        }
 
         constexpr std::size_t MAX_COMPLETED = 100;
         if (completed_transactions_.size() > MAX_COMPLETED) {

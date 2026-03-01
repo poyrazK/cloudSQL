@@ -53,6 +53,8 @@ bool Config::load(const std::string& filename) {
         /* Parse configuration options */
         if (key == "port") {
             port = static_cast<uint16_t>(std::stoi(value));
+        } else if (key == "cluster_port") {
+            cluster_port = static_cast<uint16_t>(std::stoi(value));
         } else if (key == "data_dir") {
             data_dir = value;
         } else if (key == "max_connections") {
@@ -62,7 +64,15 @@ bool Config::load(const std::string& filename) {
         } else if (key == "page_size") {
             page_size = std::stoi(value);
         } else if (key == "mode") {
-            mode = (value == "distributed") ? RunMode::Distributed : RunMode::Embedded;
+            if (value == "distributed" || value == "coordinator") {
+                mode = RunMode::Coordinator;
+            } else if (value == "data") {
+                mode = RunMode::Data;
+            } else {
+                mode = RunMode::Standalone;
+            }
+        } else if (key == "seed_nodes") {
+            seed_nodes = value;
         } else if (key == "debug") {
             debug = (value == "true" || value == "1");
         } else if (key == "verbose") {
@@ -92,11 +102,20 @@ bool Config::save(const std::string& filename) const {
     file << "# Auto-generated\n\n";
 
     file << "port=" << port << "\n";
+    file << "cluster_port=" << cluster_port << "\n";
     file << "data_dir=" << data_dir << "\n";
     file << "max_connections=" << max_connections << "\n";
     file << "buffer_pool_size=" << buffer_pool_size << "\n";
     file << "page_size=" << page_size << "\n";
-    file << "mode=" << (mode == RunMode::Distributed ? "distributed" : "embedded") << "\n";
+
+    std::string mode_str = "standalone";
+    if (mode == RunMode::Coordinator) {
+        mode_str = "coordinator";
+    } else if (mode == RunMode::Data) {
+        mode_str = "data";
+    }
+    file << "mode=" << mode_str << "\n";
+    file << "seed_nodes=" << seed_nodes << "\n";
     file << "debug=" << (debug ? "true" : "false") << "\n";
     file << "verbose=" << (verbose ? "true" : "false") << "\n";
 
@@ -110,6 +129,11 @@ bool Config::save(const std::string& filename) const {
 bool Config::validate() const {
     if (port == 0 || port > MAX_PORT) {
         std::cerr << "Invalid port number: " << port << "\n";
+        return false;
+    }
+
+    if (cluster_port == 0 || cluster_port > MAX_PORT) {
+        std::cerr << "Invalid cluster port number: " << cluster_port << "\n";
         return false;
     }
 
@@ -142,10 +166,17 @@ bool Config::validate() const {
  */
 void Config::print() const {
     std::cout << "=== SQL Engine Configuration ===\n";
-    std::cout << "Mode:         " << (mode == RunMode::Distributed ? "distributed" : "embedded")
-              << "\n";
+    std::string mode_str = "Standalone";
+    if (mode == RunMode::Coordinator) {
+        mode_str = "Coordinator";
+    } else if (mode == RunMode::Data) {
+        mode_str = "Data";
+    }
+    std::cout << "Mode:         " << mode_str << "\n";
     std::cout << "Port:         " << port << "\n";
+    std::cout << "Cluster Port: " << cluster_port << "\n";
     std::cout << "Data dir:     " << data_dir << "\n";
+    std::cout << "Seed Nodes:   " << seed_nodes << "\n";
     std::cout << "Max conns:    " << max_connections << "\n";
     std::cout << "Buffer pool:  " << buffer_pool_size << " pages\n";
     std::cout << "Page size:    " << page_size << " bytes\n";
