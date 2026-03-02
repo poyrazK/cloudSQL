@@ -239,8 +239,9 @@ int main(int argc, char* argv[]) {
                             cloudsql::parser::Parser parser(std::move(lexer));
                             auto stmt = parser.parse_statement();
                             if (stmt) {
-                                cloudsql::executor::QueryExecutor exec(*catalog, *bpm, lock_manager,
-                                                                       transaction_manager);
+                                cloudsql::executor::QueryExecutor exec(
+                                    *catalog, *bpm, lock_manager, transaction_manager,
+                                    log_manager.get(), cluster_manager.get());
                                 auto res = exec.execute(*stmt);
                                 reply.success = res.success();
                                 if (res.success()) {
@@ -350,6 +351,33 @@ int main(int argc, char* argv[]) {
                         resp_h.encode(h_buf);
                         send(fd, h_buf, 8, 0);
                         send(fd, resp_p.data(), resp_p.size(), 0);
+                    });
+
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::PushData,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::PushDataArgs::deserialize(p);
+                        std::cout << "[Shuffle] Received " << args.rows.size()
+                                  << " rows for table " << args.table_name << "\n";
+
+                        if (cluster_manager != nullptr) {
+                            cluster_manager->buffer_shuffle_data(args.table_name,
+                                                                 std::move(args.rows));
+                        }
+
+                        // Send success response
+                        cloudsql::network::QueryResultsReply reply;
+                        reply.success = true;
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[8];
+                        resp_h.encode(h_buf);
+                        static_cast<void>(send(fd, h_buf, 8, 0));
+                        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
                     });
             }
 
