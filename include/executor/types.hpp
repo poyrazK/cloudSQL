@@ -32,7 +32,14 @@ class Tuple {
     Tuple& operator=(Tuple&& other) noexcept = default;
     ~Tuple() = default;
 
-    [[nodiscard]] const common::Value& get(size_t index) const { return values_.at(index); }
+    [[nodiscard]] const common::Value& get(size_t index) const {
+        if (index >= values_.size()) {
+            static const common::Value null_val = common::Value::make_null();
+            return null_val;
+        }
+        return values_[index];
+    }
+
     void set(size_t index, const common::Value& value) {
         if (values_.size() <= index) {
             values_.resize(index + 1);

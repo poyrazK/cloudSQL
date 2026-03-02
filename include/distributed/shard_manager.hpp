@@ -24,11 +24,13 @@ class ShardManager {
      * @brief Compute target shard index based on primary key value
      */
     static uint32_t compute_shard(const common::Value& pk_value, uint32_t num_shards) {
-        if (num_shards == 0) return 0;
+        if (num_shards == 0) {
+            return 0;
+        }
 
         // Simple hash for demo purposes
-        std::string s = pk_value.to_string();
-        size_t hash = std::hash<std::string>{}(s);
+        const std::string s = pk_value.to_string();
+        const size_t hash = std::hash<std::string>{}(s);
         return static_cast<uint32_t>(hash % num_shards);
     }
 
