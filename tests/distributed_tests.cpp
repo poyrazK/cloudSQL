@@ -245,7 +245,7 @@ TEST(DistributedExecutorTests, BroadcastJoinOrchestration) {
         if (h.type == RpcType::ExecuteFragment) {
             auto args = ExecuteFragmentArgs::deserialize(p);
             // Detect if it's the fetch-all part of a broadcast
-            if (args.sql.find("SELECT * FROM small_table") != std::string::npos) {
+            if (args.is_fetch_all) {
                 fetch_calls++;
                 std::vector<common::Value> vals;
                 vals.push_back(common::Value::make_int64(1));

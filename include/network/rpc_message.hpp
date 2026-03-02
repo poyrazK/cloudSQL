@@ -136,16 +136,16 @@ class Serializer {
     static void serialize_string(const std::string& s, std::vector<uint8_t>& out) {
         const auto len = static_cast<uint32_t>(s.size());
         const size_t offset = out.size();
-        out.resize(offset + 4 + len);
-        std::memcpy(out.data() + offset, &len, 4);
-        std::memcpy(out.data() + offset + 4, s.data(), len);
+        out.resize(offset + VAL_SIZE_32 + len);
+        std::memcpy(out.data() + offset, &len, VAL_SIZE_32);
+        std::memcpy(out.data() + offset + VAL_SIZE_32, s.data(), len);
     }
 
     static std::string deserialize_string(const uint8_t* data, size_t& offset, size_t size) {
         uint32_t len = 0;
-        if (offset + 4 <= size) {
-            std::memcpy(&len, data + offset, 4);
-            offset += 4;
+        if (offset + VAL_SIZE_32 <= size) {
+            std::memcpy(&len, data + offset, VAL_SIZE_32);
+            offset += VAL_SIZE_32;
         }
         std::string s;
         if (offset + len <= size) {
@@ -197,11 +197,13 @@ struct RpcHeader {
 struct ExecuteFragmentArgs {
     std::string sql;
     std::string context_id;
+    bool is_fetch_all = false;
 
     [[nodiscard]] std::vector<uint8_t> serialize() const {
         std::vector<uint8_t> out;
         Serializer::serialize_string(sql, out);
         Serializer::serialize_string(context_id, out);
+        out.push_back(is_fetch_all ? 1 : 0);
         return out;
     }
 
@@ -210,6 +212,9 @@ struct ExecuteFragmentArgs {
         size_t offset = 0;
         args.sql = Serializer::deserialize_string(in.data(), offset, in.size());
         args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+        if (offset < in.size()) {
+            args.is_fetch_all = in[offset++] != 0;
+        }
         return args;
     }
 };
@@ -229,8 +234,8 @@ struct QueryResultsReply {
 
         const auto row_count = static_cast<uint32_t>(rows.size());
         const size_t offset = out.size();
-        out.resize(offset + 4);
-        std::memcpy(out.data() + offset, &row_count, 4);
+        out.resize(offset + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + offset, &row_count, Serializer::VAL_SIZE_32);
 
         for (const auto& row : rows) {
             Serializer::serialize_tuple(row, out);
@@ -250,9 +255,9 @@ struct QueryResultsReply {
         reply.error_msg = Serializer::deserialize_string(in.data(), offset, in.size());
 
         uint32_t row_count = 0;
-        if (offset + 4 <= in.size()) {
-            std::memcpy(&row_count, in.data() + offset, 4);
-            offset += 4;
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&row_count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
         }
         for (uint32_t i = 0; i < row_count; ++i) {
             reply.rows.push_back(Serializer::deserialize_tuple(in.data(), offset, in.size()));
@@ -277,8 +282,8 @@ struct PushDataArgs {
 
         const auto row_count = static_cast<uint32_t>(rows.size());
         const size_t offset = out.size();
-        out.resize(offset + 4);
-        std::memcpy(out.data() + offset, &row_count, 4);
+        out.resize(offset + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + offset, &row_count, Serializer::VAL_SIZE_32);
         for (const auto& row : rows) {
             Serializer::serialize_tuple(row, out);
         }
@@ -292,9 +297,9 @@ struct PushDataArgs {
         args.table_name = Serializer::deserialize_string(in.data(), offset, in.size());
 
         uint32_t row_count = 0;
-        if (offset + 4 <= in.size()) {
-            std::memcpy(&row_count, in.data() + offset, 4);
-            offset += 4;
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&row_count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
         }
         for (uint32_t i = 0; i < row_count; ++i) {
             args.rows.push_back(Serializer::deserialize_tuple(in.data(), offset, in.size()));

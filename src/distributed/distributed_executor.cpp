@@ -5,6 +5,7 @@
 
 #include "distributed/distributed_executor.hpp"
 
+#include <algorithm>
 #include <future>
 #include <iostream>
 #include <string>
@@ -61,6 +62,18 @@ bool try_extract_sharding_key(const parser::Expression* where, common::Value& ou
     return false;
 }
 
+/**
+ * @brief Normalizes a column identifier by stripping table qualification
+ */
+std::string normalize_key(const parser::Expression& expr) {
+    std::string s = expr.to_string();
+    size_t dot = s.find_last_of('.');
+    if (dot != std::string::npos) {
+        return s.substr(dot + 1);
+    }
+    return s;
+}
+
 }  // namespace
 
 DistributedExecutor::DistributedExecutor(Catalog& catalog, cluster::ClusterManager& cm)
@@ -109,8 +122,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     const auto* bin_expr =
                         dynamic_cast<const parser::BinaryExpr*>(join.condition.get());
                     if (bin_expr != nullptr && bin_expr->op() == parser::TokenType::Eq) {
-                        left_key = bin_expr->left().to_string();
-                        right_key = bin_expr->right().to_string();
+                        left_key = normalize_key(bin_expr->left());
+                        right_key = normalize_key(bin_expr->right());
                     }
                 }
 
@@ -132,10 +145,22 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
 
                 for (const auto& node : data_nodes) {
                     network::RpcClient client(node.address, node.cluster_port);
-                    if (client.connect()) {
-                        std::vector<uint8_t> resp;
-                        static_cast<void>(
-                            client.call(network::RpcType::ShuffleFragment, left_payload, resp));
+                    if (!client.connect()) {
+                        QueryResult res;
+                        res.set_error("Failed to connect to node " + node.id + " for shuffle");
+                        return res;
+                    }
+                    std::vector<uint8_t> resp;
+                    if (!client.call(network::RpcType::ShuffleFragment, left_payload, resp)) {
+                        QueryResult res;
+                        res.set_error("Shuffle RPC failed on node " + node.id);
+                        return res;
+                    }
+                    auto reply = network::QueryResultsReply::deserialize(resp);
+                    if (!reply.success) {
+                        QueryResult res;
+                        res.set_error("Shuffle failed on node " + node.id + ": " + reply.error_msg);
+                        return res;
                     }
                 }
 
@@ -148,10 +173,22 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
 
                 for (const auto& node : data_nodes) {
                     network::RpcClient client(node.address, node.cluster_port);
-                    if (client.connect()) {
-                        std::vector<uint8_t> resp;
-                        static_cast<void>(
-                            client.call(network::RpcType::ShuffleFragment, right_payload, resp));
+                    if (!client.connect()) {
+                        QueryResult res;
+                        res.set_error("Failed to connect to node " + node.id + " for shuffle");
+                        return res;
+                    }
+                    std::vector<uint8_t> resp;
+                    if (!client.call(network::RpcType::ShuffleFragment, right_payload, resp)) {
+                        QueryResult res;
+                        res.set_error("Shuffle RPC failed on node " + node.id);
+                        return res;
+                    }
+                    auto reply = network::QueryResultsReply::deserialize(resp);
+                    if (!reply.success) {
+                        QueryResult res;
+                        res.set_error("Shuffle failed on node " + node.id + ": " + reply.error_msg);
+                        return res;
                     }
                 }
             }
@@ -172,7 +209,7 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
         // Phase 1: Prepare (Parallel)
         std::vector<std::future<std::pair<bool, std::string>>> prepare_futures;
         for (const auto& node : data_nodes) {
-            prepare_futures.push_back(std::async(std::launch::async, [&node, payload]() {
+            prepare_futures.push_back(std::async(std::launch::async, [node, payload]() {
                 network::RpcClient client(node.address, node.cluster_port);
                 if (client.connect()) {
                     std::vector<uint8_t> resp_payload;
@@ -205,14 +242,13 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
 
         std::vector<std::future<void>> phase2_futures;
         for (const auto& node : data_nodes) {
-            phase2_futures.push_back(
-                std::async(std::launch::async, [&node, payload, phase2_type]() {
-                    network::RpcClient client(node.address, node.cluster_port);
-                    if (client.connect()) {
-                        std::vector<uint8_t> resp_payload;
-                        static_cast<void>(client.call(phase2_type, payload, resp_payload));
-                    }
-                }));
+            phase2_futures.push_back(std::async(std::launch::async, [node, payload, phase2_type]() {
+                network::RpcClient client(node.address, node.cluster_port);
+                if (client.connect()) {
+                    std::vector<uint8_t> resp_payload;
+                    static_cast<void>(client.call(phase2_type, payload, resp_payload));
+                }
+            }));
         }
         for (auto& f : phase2_futures) {
             f.get();
@@ -228,12 +264,12 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
 
     if (type == parser::StmtType::TransactionRollback) {
         network::TxnOperationArgs args;
-        args.txn_id = GLOBAL_TXN_ID;
+        args.txn_id = GLOBAL_TX_ID;
         auto payload = args.serialize();
 
         std::vector<std::future<void>> rollback_futures;
         for (const auto& node : data_nodes) {
-            rollback_futures.push_back(std::async(std::launch::async, [&node, payload]() {
+            rollback_futures.push_back(std::async(std::launch::async, [node, payload]() {
                 network::RpcClient client(node.address, node.cluster_port);
                 if (client.connect()) {
                     std::vector<uint8_t> resp_payload;
@@ -304,7 +340,7 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
 
     std::vector<std::future<std::pair<bool, network::QueryResultsReply>>> query_futures;
     for (const auto& node : target_nodes) {
-        query_futures.push_back(std::async(std::launch::async, [&node, fragment_payload]() {
+        query_futures.push_back(std::async(std::launch::async, [node, fragment_payload]() {
             network::RpcClient client(node.address, node.cluster_port);
             network::QueryResultsReply reply;
             if (client.connect()) {
@@ -391,6 +427,7 @@ bool DistributedExecutor::broadcast_table(const std::string& table_name) {
     network::ExecuteFragmentArgs fetch_args;
     fetch_args.sql = "SELECT * FROM " + table_name;
     fetch_args.context_id = context_id;
+    fetch_args.is_fetch_all = true;
     auto fetch_payload = fetch_args.serialize();
 
     std::vector<executor::Tuple> all_rows;
