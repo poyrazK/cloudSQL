@@ -36,6 +36,11 @@ class QueryExecutor {
     QueryExecutor& operator=(QueryExecutor&&) = delete;
 
     /**
+     * @brief Set the context ID for the current execution (for shuffle data lookups)
+     */
+    void set_context_id(const std::string& ctx_id) { context_id_ = ctx_id; }
+
+    /**
      * @brief Execute a SQL statement and return results
      */
     QueryResult execute(const parser::Statement& stmt);
@@ -47,6 +52,7 @@ class QueryExecutor {
     transaction::TransactionManager& transaction_manager_;
     recovery::LogManager* log_manager_;
     cluster::ClusterManager* cluster_manager_;
+    std::string context_id_;
     transaction::Transaction* current_txn_ = nullptr;
 
     QueryResult execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn);

@@ -235,6 +235,7 @@ TEST(DistributedExecutorTests, BroadcastJoinOrchestration) {
     RpcServer node1(7600);
     RpcServer node2(7601);
 
+    std::atomic<int> fetch_calls{0};
     std::atomic<int> push_calls{0};
 
     auto handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
@@ -243,8 +244,9 @@ TEST(DistributedExecutorTests, BroadcastJoinOrchestration) {
 
         if (h.type == RpcType::ExecuteFragment) {
             auto args = ExecuteFragmentArgs::deserialize(p);
-            // If it's the fetch part of broadcast: "SELECT * FROM small_table"
-            if (args.sql.find("small_table") != std::string::npos) {
+            // Detect if it's the fetch-all part of a broadcast
+            if (args.is_fetch_all) {
+                fetch_calls++;
                 std::vector<common::Value> vals;
                 vals.push_back(common::Value::make_int64(1));
                 reply.rows.emplace_back(std::move(vals));
@@ -279,26 +281,143 @@ TEST(DistributedExecutorTests, BroadcastJoinOrchestration) {
     cm.register_node("n2", "127.0.0.1", 7601, config::RunMode::Data);
     DistributedExecutor exec(*catalog, cm);
 
+    // 3. Execute Broadcast Join (Force it by having no join key in condition for now,
+    // or we'll update the executor to support a hint)
+    // For the POC, we'll manually call the broadcast_table method to test it.
+    bool success = exec.broadcast_table("small_table");
+
+    // 4. Verify orchestration
+    EXPECT_TRUE(success);
+    EXPECT_GE(fetch_calls.load(), 2);
+    EXPECT_GE(push_calls.load(), 2);
+
+    node1.stop();
+    node2.stop();
+}
+
+TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
+    // 1. Setup mock shards
+    RpcServer node1(7700);
+    RpcServer node2(7701);
+
+    std::atomic<int> shuffle_calls{0};
+    std::atomic<int> push_calls{0};
+    std::atomic<int> fragment_calls{0};
+
+    auto handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)p;
+        QueryResultsReply reply;
+        reply.success = true;
+
+        if (h.type == RpcType::ShuffleFragment) {
+            shuffle_calls++;
+        } else if (h.type == RpcType::PushData) {
+            push_calls++;
+        } else if (h.type == RpcType::ExecuteFragment) {
+            fragment_calls++;
+        }
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        std::array<char, 8> h_buf{};
+        resp_h.encode(h_buf.data());
+        static_cast<void>(send(fd, h_buf.data(), 8, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    node1.set_handler(RpcType::ShuffleFragment, handler);
+    node1.set_handler(RpcType::PushData, handler);
+    node1.set_handler(RpcType::ExecuteFragment, handler);
+    node2.set_handler(RpcType::ShuffleFragment, handler);
+    node2.set_handler(RpcType::PushData, handler);
+    node2.set_handler(RpcType::ExecuteFragment, handler);
+
+    ASSERT_TRUE(node1.start());
+    ASSERT_TRUE(node2.start());
+
+    // 2. Setup Coordinator
+    auto catalog = Catalog::create();
+    const config::Config config;
+    ClusterManager cm(&config);
+    cm.register_node("n1", "127.0.0.1", 7700, config::RunMode::Data);
+    cm.register_node("n2", "127.0.0.1", 7701, config::RunMode::Data);
+    DistributedExecutor exec(*catalog, cm);
+
     // 3. Execute JOIN
-    // Use a format that build_plan understands
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM big_table JOIN small_table ON big_table.id = small_table.id");
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 JOIN table2 ON table1.val = table2.val");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
 
-    // This should trigger broadcast_table("small_table")
-    auto res = exec.execute(
-        *stmt, "SELECT * FROM big_table JOIN small_table ON big_table.id = small_table.id");
+    // This should trigger ShuffleFragment for table1 AND table2 on both nodes,
+    // followed by ExecuteFragment on both nodes.
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 JOIN table2 ON table1.val = table2.val");
 
     // 4. Verify orchestration
-    // Each node should have been asked to fetch (2 calls) AND each node should have received push
-    // (2 calls) Wait for async operations if any (though currently broadcast_table is synchronous
-    // loop)
-    EXPECT_GE(push_calls.load(), 2);
+    // Each table (2) should be shuffled on each node (2) = 4 shuffle calls total
+    EXPECT_GE(shuffle_calls.load(), 4);
+    // Finally, ExecuteFragment should be sent to both nodes
+    EXPECT_GE(fragment_calls.load(), 2);
     EXPECT_TRUE(res.success());
 
     node1.stop();
     node2.stop();
+}
+
+TEST(DistributedExecutorTests, ConcurrentShuffleIsolation) {
+    auto cfg = std::make_unique<config::Config>();
+    ClusterManager cm(cfg.get());
+
+    std::string ctx1 = "query_1";
+    std::string ctx2 = "query_2";
+    std::string table = "users";
+
+    std::vector<executor::Tuple> rows1;
+    rows1.push_back(executor::Tuple({common::Value::make_int64(1)}));
+
+    std::vector<executor::Tuple> rows2;
+    rows2.push_back(executor::Tuple({common::Value::make_int64(2)}));
+
+    // Push data into different contexts
+    cm.buffer_shuffle_data(ctx1, table, std::move(rows1));
+    cm.buffer_shuffle_data(ctx2, table, std::move(rows2));
+
+    // Verify isolation
+    EXPECT_TRUE(cm.has_shuffle_data(ctx1, table));
+    EXPECT_TRUE(cm.has_shuffle_data(ctx2, table));
+
+    auto fetch1 = cm.fetch_shuffle_data(ctx1, table);
+    EXPECT_EQ(fetch1.size(), 1U);
+    EXPECT_EQ(fetch1[0].get(0).as_int64(), 1);
+
+    // Context 1 should be gone, but Context 2 should remain
+    EXPECT_FALSE(cm.has_shuffle_data(ctx1, table));
+    EXPECT_TRUE(cm.has_shuffle_data(ctx2, table));
+
+    auto fetch2 = cm.fetch_shuffle_data(ctx2, table);
+    EXPECT_EQ(fetch2.size(), 1U);
+    EXPECT_EQ(fetch2[0].get(0).as_int64(), 2);
+}
+TEST(DistributedExecutorTests, NonEqualityJoinRejection) {
+    auto catalog = Catalog::create();
+    const config::Config config;
+    ClusterManager cm(&config);
+    cm.register_node("n1", "127.0.0.1", 7800, config::RunMode::Data);
+    DistributedExecutor exec(*catalog, cm);
+
+    // Try a join with > instead of =
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 JOIN table2 ON table1.val > table2.val");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 JOIN table2 ON table1.val > table2.val");
+
+    // Should fail because our POC shuffle join only supports equality
+    EXPECT_FALSE(res.success());
+    EXPECT_THAT(res.error(), testing::HasSubstr("equality join condition"));
 }
 
 }  // namespace

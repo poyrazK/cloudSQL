@@ -447,9 +447,10 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
     const std::string base_table_name = stmt.from()->to_string();
 
-    /* Check if table is in cluster shuffle buffers (e.g. Broadcast Join) */
-    if (cluster_manager_ != nullptr && cluster_manager_->has_shuffle_data(base_table_name)) {
-        auto data = cluster_manager_->fetch_shuffle_data(base_table_name);
+    /* Check if table is in cluster shuffle buffers (e.g. Broadcast or Shuffle Join) */
+    if (cluster_manager_ != nullptr &&
+        cluster_manager_->has_shuffle_data(context_id_, base_table_name)) {
+        auto data = cluster_manager_->fetch_shuffle_data(context_id_, base_table_name);
         /* We need a schema for the buffered data. For simplicity, we assume
          * the first table in the FROM clause has a catalog entry we can use.
          */
@@ -460,7 +461,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 buffer_schema.add_column(base_table_name + "." + col.name, col.type);
             }
         }
-        return std::make_unique<BufferScanOperator>(base_table_name, std::move(data),
+        return std::make_unique<BufferScanOperator>(context_id_, base_table_name, std::move(data),
                                                     std::move(buffer_schema));
     }
 
@@ -486,8 +487,9 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         std::unique_ptr<Operator> join_scan = nullptr;
 
         /* Check if JOIN table is in shuffle buffers */
-        if (cluster_manager_ != nullptr && cluster_manager_->has_shuffle_data(join_table_name)) {
-            auto data = cluster_manager_->fetch_shuffle_data(join_table_name);
+        if (cluster_manager_ != nullptr &&
+            cluster_manager_->has_shuffle_data(context_id_, join_table_name)) {
+            auto data = cluster_manager_->fetch_shuffle_data(context_id_, join_table_name);
             auto meta_opt = catalog_.get_table_by_name(join_table_name);
             Schema buffer_schema;
             if (meta_opt.has_value()) {
@@ -495,8 +497,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                     buffer_schema.add_column(join_table_name + "." + col.name, col.type);
                 }
             }
-            join_scan = std::make_unique<BufferScanOperator>(join_table_name, std::move(data),
-                                                             std::move(buffer_schema));
+            join_scan = std::make_unique<BufferScanOperator>(
+                context_id_, join_table_name, std::move(data), std::move(buffer_schema));
         } else {
             auto join_table_meta_opt = catalog_.get_table_by_name(join_table_name);
             if (!join_table_meta_opt.has_value()) {

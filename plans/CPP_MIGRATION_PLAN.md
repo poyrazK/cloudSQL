@@ -6,6 +6,7 @@
 - **Phase 3: Catalog & SQL Parsing** - [x] COMPLETE
 - **Phase 4: Distributed State (Raft)** - [x] COMPLETE
 - **Phase 5: Finalize & Distributed Optimization** - [x] COMPLETE
+- **Phase 6: Multi-Shard Joins (Shuffle Join)** - [/] IN PROGRESS
 
 ---
 
@@ -48,9 +49,17 @@
     - [x] **Advanced Joins**: Implementation of Broadcast Join POC.
     - [x] **Comprehensive Validation**: 100% test pass on distributed scenarios.
 
+### Phase 6: Multi-Shard Joins (Shuffle Join) [IN PROGRESS]
+- **Goal**: Implement high-throughput data redistribution for distributed joins.
+- **Tasks**:
+    - [x] **Context-Aware Buffering**: Isolated staging areas in `ClusterManager`.
+    - [x] **Shuffle RPC Handlers**: Implementation of `ShuffleFragment` and `PushData` logic.
+    - [x] **Shuffle Orchestration**: Two-phase join coordination in `DistributedExecutor`.
+    - [x] **Validation**: Verified orchestration flow via automated integration tests.
+- **Status**: Core orchestration and redistribution logic implemented.
+
 ---
 
 ## Technical Debt & Future Phases
-- [ ] **Phase 6: Multi-Shard Joins**: Implementation of Shuffle Join.
 - [ ] **Phase 7: Replication & HA**: Automatic failover and shard rebalancing.
 - [ ] **Phase 8: Analytics**: Columnar storage and vectorized execution.

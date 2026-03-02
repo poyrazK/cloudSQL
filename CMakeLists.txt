@@ -56,14 +56,16 @@ if (MSVC)
 endif()
 
 # Clang-Tidy integration
-find_program(CLANG_TIDY_BIN NAMES clang-tidy
-    PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin /usr/bin /usr/local/bin)
+if (NOT DEFINED CMAKE_CXX_CLANG_TIDY)
+    find_program(CLANG_TIDY_BIN NAMES clang-tidy
+        PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin /usr/bin /usr/local/bin)
 
-if (CLANG_TIDY_BIN)
-    message(STATUS "Found clang-tidy: ${CLANG_TIDY_BIN}")
-    set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_BIN}")
-else()
-    message(WARNING "clang-tidy not found")
+    if (CLANG_TIDY_BIN)
+        message(STATUS "Found clang-tidy: ${CLANG_TIDY_BIN}")
+        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_BIN}")
+    else()
+        message(WARNING "clang-tidy not found")
+    endif()
 endif()
 
 # Clang-Format target

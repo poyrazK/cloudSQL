@@ -131,13 +131,15 @@ class SeqScanOperator : public Operator {
  */
 class BufferScanOperator : public Operator {
    private:
+    std::string context_id_;
     std::string table_name_;
     std::vector<Tuple> data_;
     size_t current_index_ = 0;
     Schema schema_;
 
    public:
-    BufferScanOperator(std::string table_name, std::vector<Tuple> data, Schema schema);
+    BufferScanOperator(std::string context_id, std::string table_name, std::vector<Tuple> data,
+                       Schema schema);
 
     bool init() override { return true; }
     bool open() override {

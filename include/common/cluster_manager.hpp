@@ -96,30 +96,42 @@ class ClusterManager {
     /**
      * @brief Buffer received shuffle data
      */
-    void buffer_shuffle_data(const std::string& table, std::vector<executor::Tuple> rows) {
+    void buffer_shuffle_data(const std::string& context_id, const std::string& table,
+                             std::vector<executor::Tuple> rows) {
         const std::scoped_lock<std::mutex> lock(mutex_);
-        auto& target = shuffle_buffers_[table];
+        auto& target = shuffle_buffers_[context_id][table];
         target.insert(target.end(), std::make_move_iterator(rows.begin()),
                       std::make_move_iterator(rows.end()));
     }
 
     /**
-     * @brief Check if shuffle data exists for a table
+     * @brief Check if shuffle data exists for a table in a context
      */
-    [[nodiscard]] bool has_shuffle_data(const std::string& table) const {
+    [[nodiscard]] bool has_shuffle_data(const std::string& context_id,
+                                        const std::string& table) const {
         const std::scoped_lock<std::mutex> lock(mutex_);
-        return shuffle_buffers_.count(table) != 0U;
+        if (shuffle_buffers_.count(context_id) == 0U) {
+            return false;
+        }
+        return shuffle_buffers_.at(context_id).count(table) != 0U;
     }
 
     /**
-     * @brief Retrieve and clear buffered shuffle data
+     * @brief Retrieve and clear buffered shuffle data for a context
      */
-    std::vector<executor::Tuple> fetch_shuffle_data(const std::string& table) {
+    std::vector<executor::Tuple> fetch_shuffle_data(const std::string& context_id,
+                                                    const std::string& table) {
         const std::scoped_lock<std::mutex> lock(mutex_);
         std::vector<executor::Tuple> data;
-        if (shuffle_buffers_.count(table) != 0U) {
-            data = std::move(shuffle_buffers_[table]);
-            shuffle_buffers_.erase(table);
+        if (shuffle_buffers_.count(context_id) != 0U) {
+            auto& context_buffers = shuffle_buffers_[context_id];
+            if (context_buffers.count(table) != 0U) {
+                data = std::move(context_buffers[table]);
+                context_buffers.erase(table);
+            }
+            if (context_buffers.empty()) {
+                shuffle_buffers_.erase(context_id);
+            }
         }
         return data;
     }
@@ -128,7 +140,9 @@ class ClusterManager {
     const config::Config* config_;
     NodeInfo self_node_;
     std::unordered_map<std::string, NodeInfo> nodes_;
-    std::unordered_map<std::string, std::vector<executor::Tuple>> shuffle_buffers_;
+    /* context_id -> table_name -> rows */
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
+        shuffle_buffers_;
     mutable std::mutex mutex_;
 };
 

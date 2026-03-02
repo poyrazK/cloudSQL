@@ -103,11 +103,12 @@ Schema& SeqScanOperator::output_schema() {
     return schema_;
 }
 
-/* --- BufferScanOperator --- */
+// --- BufferScanOperator ---
 
-BufferScanOperator::BufferScanOperator(std::string table_name, std::vector<Tuple> data,
-                                       Schema schema)
+BufferScanOperator::BufferScanOperator(std::string context_id, std::string table_name,
+                                       std::vector<Tuple> data, Schema schema)
     : Operator(OperatorType::BufferScan),
+      context_id_(std::move(context_id)),
       table_name_(std::move(table_name)),
       data_(std::move(data)),
       schema_(std::move(schema)) {}

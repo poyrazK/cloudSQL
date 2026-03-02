@@ -9,6 +9,7 @@
  * @date 2024
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -26,7 +27,9 @@
 #include "common/cluster_manager.hpp"
 #include "common/config.hpp"
 #include "distributed/raft_node.hpp"
+#include "distributed/shard_manager.hpp"
 #include "executor/query_executor.hpp"
+#include "network/rpc_client.hpp"
 #include "network/rpc_message.hpp"
 #include "network/rpc_server.hpp"
 #include "network/server.hpp"
@@ -242,6 +245,7 @@ int main(int argc, char* argv[]) {
                                 cloudsql::executor::QueryExecutor exec(
                                     *catalog, *bpm, lock_manager, transaction_manager,
                                     log_manager.get(), cluster_manager.get());
+                                exec.set_context_id(args.context_id);
                                 auto res = exec.execute(*stmt);
                                 reply.success = res.success();
                                 if (res.success()) {
@@ -360,16 +364,140 @@ int main(int argc, char* argv[]) {
                         (void)h;
                         auto args = cloudsql::network::PushDataArgs::deserialize(p);
                         std::cout << "[Shuffle] Received " << args.rows.size() << " rows for table "
-                                  << args.table_name << "\n";
+                                  << args.table_name << " (Context: " << args.context_id << ")\n";
 
                         if (cluster_manager != nullptr) {
-                            cluster_manager->buffer_shuffle_data(args.table_name,
+                            cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
                                                                  std::move(args.rows));
                         }
 
                         // Send success response
                         cloudsql::network::QueryResultsReply reply;
                         reply.success = true;
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[8];
+                        resp_h.encode(h_buf);
+                        static_cast<void>(send(fd, h_buf, 8, 0));
+                        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+                    });
+
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::ShuffleFragment,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::ShuffleFragmentArgs::deserialize(p);
+                        std::cout << "[Shuffle] Orchestrating shuffle for " << args.table_name
+                                  << " on key " << args.join_key_col << "\n";
+
+                        cloudsql::network::QueryResultsReply reply;
+                        try {
+                            // 1. Scan local shard
+                            auto table_meta_opt = catalog->get_table_by_name(args.table_name);
+                            if (!table_meta_opt.has_value()) {
+                                throw std::runtime_error("Table not found: " + args.table_name);
+                            }
+                            const auto* table_meta = table_meta_opt.value();
+                            cloudsql::executor::Schema schema;
+                            for (const auto& col : table_meta->columns) {
+                                schema.add_column(col.name, col.type);
+                            }
+                            cloudsql::storage::HeapTable table(args.table_name, *bpm, schema);
+
+                            const size_t key_idx = schema.find_column(args.join_key_col);
+                            if (key_idx == static_cast<size_t>(-1)) {
+                                throw std::runtime_error("Join key column not found: " +
+                                                         args.join_key_col);
+                            }
+
+                            auto data_nodes = cluster_manager->get_data_nodes();
+                            if (data_nodes.empty()) {
+                                throw std::runtime_error("No data nodes available for shuffle");
+                            }
+
+                            // Ensure stable ordering of data nodes
+                            std::sort(data_nodes.begin(), data_nodes.end(),
+                                      [](const auto& a, const auto& b) { return a.id < b.id; });
+
+                            std::unordered_map<std::string, std::vector<cloudsql::executor::Tuple>>
+                                partitions;
+
+                            // Pre-initialize partitions for all nodes to ensure empty partitions
+                            // are still pushed
+                            for (const auto& node : data_nodes) {
+                                partitions[node.id] = {};
+                            }
+
+                            auto iter = table.scan();
+                            cloudsql::storage::HeapTable::TupleMeta t_meta;
+                            while (iter.next_meta(t_meta)) {
+                                if (t_meta.xmax == 0) {  // Visible
+                                    const auto& key_val = t_meta.tuple.get(key_idx);
+                                    uint32_t node_idx =
+                                        cloudsql::cluster::ShardManager::compute_shard(
+                                            key_val, static_cast<uint32_t>(data_nodes.size()));
+                                    partitions[data_nodes[node_idx].id].push_back(
+                                        std::move(t_meta.tuple));
+                                }
+                            }
+
+                            // 2. Push partitions to peers
+                            bool overall_success = true;
+                            std::string delivery_errors;
+
+                            for (auto& [node_id, rows] : partitions) {
+                                // Find node info
+                                const cloudsql::cluster::NodeInfo* target_node = nullptr;
+                                for (const auto& n : data_nodes) {
+                                    if (n.id == node_id) {
+                                        target_node = &n;
+                                        break;
+                                    }
+                                }
+
+                                if (target_node != nullptr) {
+                                    cloudsql::network::RpcClient client(target_node->address,
+                                                                        target_node->cluster_port);
+                                    if (!client.connect()) {
+                                        overall_success = false;
+                                        delivery_errors += "Connect failed to " + node_id + "; ";
+                                        continue;
+                                    }
+
+                                    cloudsql::network::PushDataArgs push_args;
+                                    push_args.context_id = args.context_id;
+                                    push_args.table_name = args.table_name;
+                                    push_args.rows = std::move(rows);
+                                    std::vector<uint8_t> resp;
+                                    if (!client.call(cloudsql::network::RpcType::PushData,
+                                                     push_args.serialize(), resp)) {
+                                        overall_success = false;
+                                        delivery_errors += "RPC failed to " + node_id + "; ";
+                                    } else {
+                                        auto push_reply =
+                                            cloudsql::network::QueryResultsReply::deserialize(resp);
+                                        if (!push_reply.success) {
+                                            overall_success = false;
+                                            delivery_errors += "Push failed on " + node_id + ": " +
+                                                               push_reply.error_msg + "; ";
+                                        }
+                                    }
+                                }
+                            }
+                            if (overall_success) {
+                                reply.success = true;
+                            } else {
+                                reply.success = false;
+                                reply.error_msg = "Shuffle delivery failed: " + delivery_errors;
+                            }
+                        } catch (const std::exception& e) {
+                            reply.success = false;
+                            reply.error_msg = e.what();
+                        }
+
                         auto resp_p = reply.serialize();
                         cloudsql::network::RpcHeader resp_h;
                         resp_h.type = cloudsql::network::RpcType::QueryResults;
