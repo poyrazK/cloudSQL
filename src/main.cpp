@@ -413,8 +413,7 @@ int main(int argc, char* argv[]) {
                             }
 
                             auto data_nodes = cluster_manager->get_data_nodes();
-                            std::unordered_map<std::string,
-                                               std::vector<cloudsql::executor::Tuple>>
+                            std::unordered_map<std::string, std::vector<cloudsql::executor::Tuple>>
                                 partitions;
 
                             auto iter = table.scan();
