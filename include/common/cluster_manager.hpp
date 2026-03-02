@@ -141,8 +141,7 @@ class ClusterManager {
     NodeInfo self_node_;
     std::unordered_map<std::string, NodeInfo> nodes_;
     /* context_id -> table_name -> rows */
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, std::vector<executor::Tuple>>>
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
         shuffle_buffers_;
     mutable std::mutex mutex_;
 };

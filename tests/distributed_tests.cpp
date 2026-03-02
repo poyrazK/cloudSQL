@@ -281,7 +281,7 @@ TEST(DistributedExecutorTests, BroadcastJoinOrchestration) {
     cm.register_node("n2", "127.0.0.1", 7601, config::RunMode::Data);
     DistributedExecutor exec(*catalog, cm);
 
-    // 3. Execute Broadcast Join (Force it by having no join key in condition for now, 
+    // 3. Execute Broadcast Join (Force it by having no join key in condition for now,
     // or we'll update the executor to support a hint)
     // For the POC, we'll manually call the broadcast_table method to test it.
     bool success = exec.broadcast_table("small_table");
@@ -346,15 +346,14 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
     DistributedExecutor exec(*catalog, cm);
 
     // 3. Execute JOIN
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM table1 JOIN table2 ON table1.val = table2.val");
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 JOIN table2 ON table1.val = table2.val");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
 
     // This should trigger ShuffleFragment for table1 AND table2 on both nodes,
     // followed by ExecuteFragment on both nodes.
-    auto res = exec.execute(
-        *stmt, "SELECT * FROM table1 JOIN table2 ON table1.val = table2.val");
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 JOIN table2 ON table1.val = table2.val");
 
     // 4. Verify orchestration
     // Each table (2) should be shuffled on each node (2) = 4 shuffle calls total
@@ -370,14 +369,14 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
 TEST(DistributedExecutorTests, ConcurrentShuffleIsolation) {
     auto config = std::make_unique<config::Config>();
     ClusterManager cm(config.get());
-    
+
     std::string ctx1 = "query_1";
     std::string ctx2 = "query_2";
     std::string table = "users";
 
     std::vector<executor::Tuple> rows1;
     rows1.push_back(executor::Tuple({common::Value::make_int64(1)}));
-    
+
     std::vector<executor::Tuple> rows2;
     rows2.push_back(executor::Tuple({common::Value::make_int64(2)}));
 
@@ -410,8 +409,8 @@ TEST(DistributedExecutorTests, NonEqualityJoinRejection) {
     DistributedExecutor exec(*catalog, cm);
 
     // Try a join with > instead of =
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM table1 JOIN table2 ON table1.val > table2.val");
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 JOIN table2 ON table1.val > table2.val");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
 

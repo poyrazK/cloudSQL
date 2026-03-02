@@ -96,17 +96,18 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
     if (type == parser::StmtType::Select) {
         const auto* select_stmt = dynamic_cast<const parser::SelectStatement*>(&stmt);
         if (select_stmt != nullptr && !select_stmt->joins().empty()) {
-            // POC: For multi-shard joins, use Shuffle Join if tables are "large" 
+            // POC: For multi-shard joins, use Shuffle Join if tables are "large"
             // (In this POC, we always Shuffle if it's a complex join)
             for (const auto& join : select_stmt->joins()) {
                 const std::string left_table = select_stmt->from()->to_string();
                 const std::string right_table = join.table->to_string();
-                
+
                 // Assume join key is in the condition
                 std::string left_key;
                 std::string right_key;
                 if (join.condition && join.condition->type() == parser::ExprType::Binary) {
-                    const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(join.condition.get());
+                    const auto* bin_expr =
+                        dynamic_cast<const parser::BinaryExpr*>(join.condition.get());
                     if (bin_expr != nullptr && bin_expr->op() == parser::TokenType::Eq) {
                         left_key = bin_expr->left().to_string();
                         right_key = bin_expr->right().to_string();
@@ -119,7 +120,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     return res;
                 }
 
-                std::cout << "[Executor] Orchestrating Shuffle Join (" << left_table << " <-> " << right_table << ")\n";
+                std::cout << "[Executor] Orchestrating Shuffle Join (" << left_table << " <-> "
+                          << right_table << ")\n";
 
                 // Phase 1: Instruct nodes to shuffle Left Table
                 network::ShuffleFragmentArgs left_args;
@@ -132,7 +134,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     network::RpcClient client(node.address, node.cluster_port);
                     if (client.connect()) {
                         std::vector<uint8_t> resp;
-                        static_cast<void>(client.call(network::RpcType::ShuffleFragment, left_payload, resp));
+                        static_cast<void>(
+                            client.call(network::RpcType::ShuffleFragment, left_payload, resp));
                     }
                 }
 
@@ -147,7 +150,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     network::RpcClient client(node.address, node.cluster_port);
                     if (client.connect()) {
                         std::vector<uint8_t> resp;
-                        static_cast<void>(client.call(network::RpcType::ShuffleFragment, right_payload, resp));
+                        static_cast<void>(
+                            client.call(network::RpcType::ShuffleFragment, right_payload, resp));
                     }
                 }
             }
@@ -305,7 +309,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
             network::QueryResultsReply reply;
             if (client.connect()) {
                 std::vector<uint8_t> resp_payload;
-                if (client.call(network::RpcType::ExecuteFragment, fragment_payload, resp_payload)) {
+                if (client.call(network::RpcType::ExecuteFragment, fragment_payload,
+                                resp_payload)) {
                     reply = network::QueryResultsReply::deserialize(resp_payload);
                     return std::make_pair(true, reply);
                 }
@@ -379,7 +384,8 @@ bool DistributedExecutor::broadcast_table(const std::string& table_name) {
     }
 
     // Use a unique context for this broadcast
-    std::string context_id = "broadcast_" + table_name + "_" + std::to_string(next_context_id.fetch_add(1));
+    std::string context_id =
+        "broadcast_" + table_name + "_" + std::to_string(next_context_id.fetch_add(1));
 
     // 1. Fetch data from all shards
     network::ExecuteFragmentArgs fetch_args;
@@ -408,7 +414,7 @@ bool DistributedExecutor::broadcast_table(const std::string& table_name) {
 
     // 2. Push data to all nodes
     network::PushDataArgs push_args;
-    push_args.context_id = context_id; // Data nodes will look for this context
+    push_args.context_id = context_id;  // Data nodes will look for this context
     push_args.table_name = table_name;
     push_args.rows = std::move(all_rows);
     auto push_payload = push_args.serialize();

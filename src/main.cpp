@@ -405,23 +405,27 @@ int main(int argc, char* argv[]) {
                                 schema.add_column(col.name, col.type);
                             }
                             storage::HeapTable table(args.table_name, *bpm, schema);
-                            
+
                             const size_t key_idx = schema.find_column(args.join_key_col);
                             if (key_idx == static_cast<size_t>(-1)) {
-                                throw std::runtime_error("Join key column not found: " + args.join_key_col);
+                                throw std::runtime_error("Join key column not found: " +
+                                                         args.join_key_col);
                             }
 
                             auto data_nodes = cluster_manager->get_data_nodes();
-                            std::unordered_map<std::string, std::vector<executor::Tuple>> partitions;
+                            std::unordered_map<std::string, std::vector<executor::Tuple>>
+                                partitions;
 
                             auto iter = table.scan();
                             storage::HeapTable::TupleMeta meta;
                             while (iter.next_meta(meta)) {
-                                if (meta.xmax == 0) { // Visible
+                                if (meta.xmax == 0) {  // Visible
                                     const auto& key_val = meta.tuple.get(key_idx);
-                                    uint32_t node_idx = cloudsql::cluster::ShardManager::compute_shard(
-                                        key_val, static_cast<uint32_t>(data_nodes.size()));
-                                    partitions[data_nodes[node_idx].id].push_back(std::move(meta.tuple));
+                                    uint32_t node_idx =
+                                        cloudsql::cluster::ShardManager::compute_shard(
+                                            key_val, static_cast<uint32_t>(data_nodes.size()));
+                                    partitions[data_nodes[node_idx].id].push_back(
+                                        std::move(meta.tuple));
                                 }
                             }
 
@@ -430,18 +434,24 @@ int main(int argc, char* argv[]) {
                                 // Find node info
                                 const cloudsql::cluster::NodeInfo* target_node = nullptr;
                                 for (const auto& n : data_nodes) {
-                                    if (n.id == node_id) { target_node = &n; break; }
+                                    if (n.id == node_id) {
+                                        target_node = &n;
+                                        break;
+                                    }
                                 }
 
                                 if (target_node != nullptr) {
-                                    cloudsql::network::RpcClient client(target_node->address, target_node->cluster_port);
+                                    cloudsql::network::RpcClient client(target_node->address,
+                                                                        target_node->cluster_port);
                                     if (client.connect()) {
                                         cloudsql::network::PushDataArgs push_args;
                                         push_args.context_id = args.context_id;
                                         push_args.table_name = args.table_name;
                                         push_args.rows = std::move(rows);
                                         std::vector<uint8_t> resp;
-                                        static_cast<void>(client.call(cloudsql::network::RpcType::PushData, push_args.serialize(), resp));
+                                        static_cast<void>(
+                                            client.call(cloudsql::network::RpcType::PushData,
+                                                        push_args.serialize(), resp));
                                     }
                                 }
                             }
