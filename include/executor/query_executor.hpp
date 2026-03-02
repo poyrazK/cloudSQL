@@ -7,6 +7,7 @@
 #define CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP
 
 #include "catalog/catalog.hpp"
+#include "common/cluster_manager.hpp"
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "parser/statement.hpp"
@@ -24,7 +25,8 @@ class QueryExecutor {
     QueryExecutor(Catalog& catalog, storage::BufferPoolManager& bpm,
                   transaction::LockManager& lock_manager,
                   transaction::TransactionManager& transaction_manager,
-                  recovery::LogManager* log_manager = nullptr);
+                  recovery::LogManager* log_manager = nullptr,
+                  cluster::ClusterManager* cluster_manager = nullptr);
     ~QueryExecutor() = default;
 
     // Disable copy/move for executor
@@ -44,6 +46,7 @@ class QueryExecutor {
     transaction::LockManager& lock_manager_;
     transaction::TransactionManager& transaction_manager_;
     recovery::LogManager* log_manager_;
+    cluster::ClusterManager* cluster_manager_;
     transaction::Transaction* current_txn_ = nullptr;
 
     QueryResult execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn);
