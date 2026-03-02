@@ -9,6 +9,7 @@
  * @date 2024
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>

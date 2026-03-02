@@ -120,7 +120,7 @@ bool Server::start() {
         return false;
     }
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
@@ -259,16 +259,14 @@ void Server::accept_connections() {
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(fd, &read_fds);
-        struct timeval timeout {
-            SELECT_TIMEOUT_SEC, 0
-        };
+        struct timeval timeout{SELECT_TIMEOUT_SEC, 0};
 
         const int res = select(fd + 1, &read_fds, nullptr, nullptr, &timeout);
         if (res <= 0) {
             continue;
         }
 
-        struct sockaddr_in client_addr {};
+        struct sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
         const int client_fd =
             accept(fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
