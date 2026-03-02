@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "common/config.hpp"
+#include "executor/types.hpp"
 
 namespace cloudsql::cluster {
 
@@ -92,10 +93,42 @@ class ClusterManager {
         return coordinators;
     }
 
+    /**
+     * @brief Buffer received shuffle data
+     */
+    void buffer_shuffle_data(const std::string& table, std::vector<executor::Tuple> rows) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto& target = shuffle_buffers_[table];
+        target.insert(target.end(), std::make_move_iterator(rows.begin()),
+                      std::make_move_iterator(rows.end()));
+    }
+
+    /**
+     * @brief Check if shuffle data exists for a table
+     */
+    [[nodiscard]] bool has_shuffle_data(const std::string& table) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        return shuffle_buffers_.count(table) != 0U;
+    }
+
+    /**
+     * @brief Retrieve and clear buffered shuffle data
+     */
+    std::vector<executor::Tuple> fetch_shuffle_data(const std::string& table) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        std::vector<executor::Tuple> data;
+        if (shuffle_buffers_.count(table) != 0U) {
+            data = std::move(shuffle_buffers_[table]);
+            shuffle_buffers_.erase(table);
+        }
+        return data;
+    }
+
    private:
     const config::Config* config_;
     NodeInfo self_node_;
     std::unordered_map<std::string, NodeInfo> nodes_;
+    std::unordered_map<std::string, std::vector<executor::Tuple>> shuffle_buffers_;
     mutable std::mutex mutex_;
 };
 
