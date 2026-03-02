@@ -38,12 +38,14 @@ namespace cloudsql::executor {
 QueryExecutor::QueryExecutor(Catalog& catalog, storage::BufferPoolManager& bpm,
                              transaction::LockManager& lock_manager,
                              transaction::TransactionManager& transaction_manager,
-                             recovery::LogManager* log_manager)
+                             recovery::LogManager* log_manager,
+                             cluster::ClusterManager* cluster_manager)
     : catalog_(catalog),
       bpm_(bpm),
       lock_manager_(lock_manager),
       transaction_manager_(transaction_manager),
-      log_manager_(log_manager) {}
+      log_manager_(log_manager),
+      cluster_manager_(cluster_manager) {}
 
 QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     const auto start = std::chrono::high_resolution_clock::now();
@@ -444,6 +446,24 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     }
 
     const std::string base_table_name = stmt.from()->to_string();
+
+    /* Check if table is in cluster shuffle buffers (e.g. Broadcast Join) */
+    if (cluster_manager_ != nullptr && cluster_manager_->has_shuffle_data(base_table_name)) {
+        auto data = cluster_manager_->fetch_shuffle_data(base_table_name);
+        /* We need a schema for the buffered data. For simplicity, we assume
+         * the first table in the FROM clause has a catalog entry we can use.
+         */
+        auto meta_opt = catalog_.get_table_by_name(base_table_name);
+        Schema buffer_schema;
+        if (meta_opt.has_value()) {
+            for (const auto& col : meta_opt.value()->columns) {
+                buffer_schema.add_column(base_table_name + "." + col.name, col.type);
+            }
+        }
+        return std::make_unique<BufferScanOperator>(base_table_name, std::move(data),
+                                                    std::move(buffer_schema));
+    }
+
     auto base_table_meta_opt = catalog_.get_table_by_name(base_table_name);
     if (!base_table_meta_opt.has_value()) {
         return nullptr;
@@ -462,20 +482,37 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     /* 2. Add JOINs */
     for (const auto& join : stmt.joins()) {
         const std::string join_table_name = join.table->to_string();
-        auto join_table_meta_opt = catalog_.get_table_by_name(join_table_name);
-        if (!join_table_meta_opt.has_value()) {
-            return nullptr;
-        }
-        const auto* join_table_meta = join_table_meta_opt.value();
 
-        Schema join_schema;
-        for (const auto& col : join_table_meta->columns) {
-            join_schema.add_column(col.name, col.type);
-        }
+        std::unique_ptr<Operator> join_scan = nullptr;
 
-        auto join_scan = std::make_unique<SeqScanOperator>(
-            std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema), txn,
-            &lock_manager_);
+        /* Check if JOIN table is in shuffle buffers */
+        if (cluster_manager_ != nullptr && cluster_manager_->has_shuffle_data(join_table_name)) {
+            auto data = cluster_manager_->fetch_shuffle_data(join_table_name);
+            auto meta_opt = catalog_.get_table_by_name(join_table_name);
+            Schema buffer_schema;
+            if (meta_opt.has_value()) {
+                for (const auto& col : meta_opt.value()->columns) {
+                    buffer_schema.add_column(join_table_name + "." + col.name, col.type);
+                }
+            }
+            join_scan = std::make_unique<BufferScanOperator>(join_table_name, std::move(data),
+                                                             std::move(buffer_schema));
+        } else {
+            auto join_table_meta_opt = catalog_.get_table_by_name(join_table_name);
+            if (!join_table_meta_opt.has_value()) {
+                return nullptr;
+            }
+            const auto* join_table_meta = join_table_meta_opt.value();
+
+            Schema join_schema;
+            for (const auto& col : join_table_meta->columns) {
+                join_schema.add_column(col.name, col.type);
+            }
+
+            join_scan = std::make_unique<SeqScanOperator>(
+                std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema), txn,
+                &lock_manager_);
+        }
 
         /* For now, we use HashJoin if a condition exists, otherwise NestedLoop would be needed.
          * Note: HashJoin requires equality condition. We'll assume equality for now or default to
