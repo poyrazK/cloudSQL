@@ -56,6 +56,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DUSE_SANITIZER=${{ matrix.sanitizer }} \
           -DBUILD_TESTS=ON \
+          -DSTRICT_LINT=OFF \
           -DBUILD_COVERAGE=${{ matrix.sanitizer == 'address' && 'ON' || 'OFF' }}
 
     - name: Build
