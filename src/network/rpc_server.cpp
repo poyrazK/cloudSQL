@@ -62,12 +62,18 @@ void RpcServer::stop() {
     if (accept_thread_.joinable()) {
         accept_thread_.join();
     }
-    for (auto& t : worker_threads_) {
+
+    std::vector<std::thread> workers;
+    {
+        const std::scoped_lock<std::mutex> lock(worker_mutex_);
+        workers.swap(worker_threads_);
+    }
+
+    for (auto& t : workers) {
         if (t.joinable()) {
             t.join();
         }
     }
-    worker_threads_.clear();
 }
 
 void RpcServer::set_handler(RpcType type, RpcHandler handler) {
@@ -87,6 +93,7 @@ void RpcServer::accept_loop() {
         if (select(listen_fd_ + 1, &fds, nullptr, nullptr, &tv) > 0) {
             const int client_fd = accept(listen_fd_, nullptr, nullptr);
             if (client_fd >= 0) {
+                const std::scoped_lock<std::mutex> lock(worker_mutex_);
                 worker_threads_.emplace_back(&RpcServer::handle_client, this, client_fd);
             }
         }
