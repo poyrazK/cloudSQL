@@ -382,46 +382,44 @@ std::unique_ptr<Statement> Parser::parse_insert() {
         }
     }
 
-    if (!consume(TokenType::Values)) {
-        return nullptr;
-    }
-
-    bool first_row = true;
-    while (true) {
-        if (!first_row && !consume(TokenType::Comma)) {
-            break;
-        }
-        first_row = false;
-
-        if (!consume(TokenType::LParen)) {
-            return nullptr;
-        }
-
-        std::vector<std::unique_ptr<Expression>> row;
-        bool first_val = true;
+    if (consume(TokenType::Values)) {
+        bool first_row = true;
         while (true) {
-            if (!first_val && !consume(TokenType::Comma)) {
+            if (!first_row && !consume(TokenType::Comma)) {
                 break;
             }
-            first_val = false;
+            first_row = false;
 
-            auto expr = parse_expression();
-            if (!expr) {
+            if (!consume(TokenType::LParen)) {
                 return nullptr;
             }
-            row.push_back(std::move(expr));
 
-            if (peek_token().type() == TokenType::RParen) {
+            std::vector<std::unique_ptr<Expression>> row;
+            bool first_val = true;
+            while (true) {
+                if (!first_val && !consume(TokenType::Comma)) {
+                    break;
+                }
+                first_val = false;
+
+                auto expr = parse_expression();
+                if (!expr) {
+                    return nullptr;
+                }
+                row.push_back(std::move(expr));
+
+                if (peek_token().type() == TokenType::RParen) {
+                    break;
+                }
+            }
+            stmt->add_row(std::move(row));
+            if (!consume(TokenType::RParen)) {
+                return nullptr;
+            }
+
+            if (peek_token().type() != TokenType::Comma) {
                 break;
             }
-        }
-        stmt->add_row(std::move(row));
-        if (!consume(TokenType::RParen)) {
-            return nullptr;
-        }
-
-        if (peek_token().type() != TokenType::Comma) {
-            break;
         }
     }
 
@@ -687,6 +685,11 @@ std::unique_ptr<Expression> Parser::parse_primary() {  // NOLINT(misc-no-recursi
         return std::make_unique<ConstantExpr>(common::Value::make_text(tok.as_string()));
     }
 
+    if (tok.type() == TokenType::Star) {
+        static_cast<void>(next_token());
+        return std::make_unique<ColumnExpr>("*");
+    }
+
     if (tok.type() == TokenType::Identifier || tok.is_keyword()) {
         const Token id = next_token();
 
@@ -712,17 +715,24 @@ std::unique_ptr<Expression> Parser::parse_primary() {  // NOLINT(misc-no-recursi
                 func->set_distinct(true);
             }
 
-            bool first = true;
+            bool f_first = true;
             while (peek_token().type() != TokenType::RParen) {
-                if (!first && !consume(TokenType::Comma)) {
+                if (!f_first && !consume(TokenType::Comma)) {
                     break;
                 }
-                first = false;
-                auto arg = parse_expression();
-                if (!arg) {
-                    return nullptr;
+                f_first = false;
+
+                // Special case for '*' in functions like COUNT(*)
+                if (peek_token().type() == TokenType::Star) {
+                    static_cast<void>(next_token());
+                    func->add_arg(std::make_unique<ColumnExpr>("*"));
+                } else {
+                    auto arg = parse_expression();
+                    if (!arg) {
+                        return nullptr;
+                    }
+                    func->add_arg(std::move(arg));
                 }
-                func->add_arg(std::move(arg));
             }
             if (!consume(TokenType::RParen)) {
                 return nullptr;
