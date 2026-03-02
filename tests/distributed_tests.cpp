@@ -367,8 +367,8 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
 }
 
 TEST(DistributedExecutorTests, ConcurrentShuffleIsolation) {
-    auto config = std::make_unique<config::Config>();
-    ClusterManager cm(config.get());
+    auto cfg = std::make_unique<config::Config>();
+    ClusterManager cm(cfg.get());
 
     std::string ctx1 = "query_1";
     std::string ctx2 = "query_2";
@@ -400,7 +400,6 @@ TEST(DistributedExecutorTests, ConcurrentShuffleIsolation) {
     EXPECT_EQ(fetch2.size(), 1U);
     EXPECT_EQ(fetch2[0].get(0).as_int64(), 2);
 }
-
 TEST(DistributedExecutorTests, NonEqualityJoinRejection) {
     auto catalog = Catalog::create();
     const config::Config config;
