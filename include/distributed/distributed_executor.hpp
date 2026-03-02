@@ -28,6 +28,11 @@ class DistributedExecutor {
     QueryResult execute(const parser::Statement& stmt, const std::string& raw_sql);
 
    private:
+    /**
+     * @brief Fetch data for a table from all nodes and broadcast it to all nodes
+     */
+    bool broadcast_table(const std::string& table_name);
+
     Catalog& catalog_;
     cluster::ClusterManager& cluster_manager_;
 };
