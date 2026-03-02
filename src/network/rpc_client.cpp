@@ -39,7 +39,7 @@ bool RpcClient::connect() {
         return false;
     }
 
-    struct sockaddr_in addr{};
+    struct sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port_);
     static_cast<void>(inet_pton(AF_INET, address_.c_str(), &addr.sin_addr));
