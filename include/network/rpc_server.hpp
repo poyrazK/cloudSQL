@@ -59,6 +59,8 @@ class RpcServer {
     int listen_fd_ = -1;
     std::atomic<bool> running_{false};
     std::thread accept_thread_;
+    std::vector<std::thread> worker_threads_;
+    std::mutex worker_mutex_;
     std::unordered_map<RpcType, RpcHandler> handlers_;
     std::mutex handlers_mutex_;
 };
