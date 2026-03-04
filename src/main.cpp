@@ -239,6 +239,12 @@ int main(int argc, char* argv[]) {
             catalog->set_raft_group(catalog_group.get());
 
             if (config.mode == cloudsql::config::RunMode::Data) {
+                // Data nodes also participate in shard consensus (e.g. Group 1)
+                auto shard_group = raft_manager->get_or_create_group(1);
+                // Mock state machine for shard 1
+                static cloudsql::executor::ShardStateMachine shard_sm("data", *bpm, *catalog);
+                shard_group->set_state_machine(&shard_sm);
+
                 // Register execution handler for Data nodes
                 rpc_server->set_handler(
                     cloudsql::network::RpcType::ExecuteFragment,
