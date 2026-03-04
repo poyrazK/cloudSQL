@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <random>
@@ -39,6 +40,24 @@ void serialize_entry(const LogEntry& entry, std::vector<uint8_t>& out) {
     std::memcpy(out.data() + offset + 24, entry.data.data(), data_len);
 }
 
+/**
+ * @brief Simple helper to deserialize a LogEntry
+ */
+LogEntry deserialize_entry(const uint8_t* data, size_t& offset, size_t size) {
+    LogEntry entry;
+    if (offset + 24 > size) return entry;
+    std::memcpy(&entry.term, data + offset, 8);
+    std::memcpy(&entry.index, data + offset + 8, 8);
+    uint64_t data_len = 0;
+    std::memcpy(&data_len, data + offset + 16, 8);
+    offset += 24;
+    if (offset + data_len <= size) {
+        entry.data.assign(data + offset, data + offset + data_len);
+        offset += data_len;
+    }
+    return entry;
+}
+
 }  // namespace
 
 RaftGroup::RaftGroup(uint16_t group_id, std::string node_id, cluster::ClusterManager& cluster_manager,
@@ -48,8 +67,8 @@ RaftGroup::RaftGroup(uint16_t group_id, std::string node_id, cluster::ClusterMan
       cluster_manager_(cluster_manager),
       rpc_server_(rpc_server),
       rng_(std::random_device{}()) {
-    // Initial state
     last_heartbeat_ = std::chrono::system_clock::now();
+    load_state();
 }
 
 RaftGroup::~RaftGroup() {
@@ -91,10 +110,8 @@ void RaftGroup::do_follower() {
     const auto timeout = get_random_timeout();
     std::unique_lock<std::mutex> lock(mutex_);
     if (!cv_.wait_for(lock, timeout, [this] { return !running_; })) {
-        // Condition variable timed out - check if we missed heartbeats
         auto now = std::chrono::system_clock::now();
         if (now - last_heartbeat_ >= timeout) {
-            std::cout << "[" << node_id_ << "] Election timeout, becoming Candidate\n";
             state_ = NodeState::Candidate;
         }
     }
@@ -146,7 +163,6 @@ void RaftGroup::do_candidate() {
     }
 
     if (votes >= needed) {
-        std::cout << "[" << node_id_ << "] Elected Leader for term " << persistent_state_.current_term << "\n";
         state_ = NodeState::Leader;
         cluster_manager_.set_leader(group_id_, node_id_);
         const std::scoped_lock<std::mutex> lock(mutex_);
@@ -286,8 +302,49 @@ std::chrono::milliseconds RaftGroup::get_random_timeout() const {
     return std::chrono::milliseconds(dist(mutable_rng));
 }
 
-void RaftGroup::persist_state() { /* TODO */ }
-void RaftGroup::load_state() { /* TODO */ }
+void RaftGroup::persist_state() {
+    std::string filename = "raft_group_" + std::to_string(group_id_) + ".state";
+    std::ofstream out(filename, std::ios::binary);
+    if (out.is_open()) {
+        out.write(reinterpret_cast<const char*>(&persistent_state_.current_term), 8);
+        uint64_t v_len = persistent_state_.voted_for.size();
+        out.write(reinterpret_cast<const char*>(&v_len), 8);
+        out.write(persistent_state_.voted_for.data(), v_len);
+        
+        uint64_t log_size = persistent_state_.log.size();
+        out.write(reinterpret_cast<const char*>(&log_size), 8);
+        for (const auto& entry : persistent_state_.log) {
+            std::vector<uint8_t> serialized;
+            serialize_entry(entry, serialized);
+            uint64_t entry_len = serialized.size();
+            out.write(reinterpret_cast<const char*>(&entry_len), 8);
+            out.write(reinterpret_cast<const char*>(serialized.data()), entry_len);
+        }
+    }
+}
+
+void RaftGroup::load_state() {
+    std::string filename = "raft_group_" + std::to_string(group_id_) + ".state";
+    std::ifstream in(filename, std::ios::binary);
+    if (in.is_open()) {
+        in.read(reinterpret_cast<char*>(&persistent_state_.current_term), 8);
+        uint64_t v_len = 0;
+        in.read(reinterpret_cast<char*>(&v_len), 8);
+        persistent_state_.voted_for.resize(v_len);
+        in.read(&persistent_state_.voted_for[0], v_len);
+        
+        uint64_t log_size = 0;
+        in.read(reinterpret_cast<char*>(&log_size), 8);
+        for (uint64_t i = 0; i < log_size; ++i) {
+            uint64_t entry_len = 0;
+            in.read(reinterpret_cast<char*>(&entry_len), 8);
+            std::vector<uint8_t> buf(entry_len);
+            in.read(reinterpret_cast<char*>(buf.data()), entry_len);
+            size_t offset = 0;
+            persistent_state_.log.push_back(deserialize_entry(buf.data(), offset, entry_len));
+        }
+    }
+}
 
 bool RaftGroup::replicate(const std::vector<uint8_t>& data) {
     if (state_.load() != NodeState::Leader) return false;
