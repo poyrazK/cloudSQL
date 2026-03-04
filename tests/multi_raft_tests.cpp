@@ -158,4 +158,4 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
     }
 }
 
-} // namespace
+}  // namespace

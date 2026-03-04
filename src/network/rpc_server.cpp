@@ -31,7 +31,7 @@ bool RpcServer::start() {
     int opt = 1;
     static_cast<void>(setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)));
 
-    struct sockaddr_in addr{};
+    struct sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
@@ -90,7 +90,9 @@ void RpcServer::accept_loop() {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(listen_fd_, &fds);
-        struct timeval tv{1, 0};
+        struct timeval tv {
+            1, 0
+        };
 
         if (select(listen_fd_ + 1, &fds, nullptr, nullptr, &tv) > 0) {
             const int client_fd = accept(listen_fd_, nullptr, nullptr);
