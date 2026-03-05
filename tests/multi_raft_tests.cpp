@@ -48,7 +48,7 @@ TEST(MultiRaftTests, GroupRoutingAndMultiplexing) {
     h.type = RpcType::AppendEntries;
     h.group_id = 1;
     std::vector<uint8_t> payload(8, 0);
-    h.payload_len = 8;
+    h.payload_len = RpcHeader::HEADER_SIZE;
 
     handler(h, payload, -1);
 

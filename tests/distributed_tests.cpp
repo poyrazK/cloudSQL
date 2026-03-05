@@ -77,9 +77,9 @@ TEST(DistributedExecutorTests, AggregationMerge) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        std::array<char, 8> h_buf{};
-        resp_h.encode(h_buf.data());
-        static_cast<void>(send(fd, h_buf.data(), 8, 0));
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -128,9 +128,9 @@ TEST(DistributedExecutorTests, ShardPruningSelect) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        std::array<char, 8> h_buf{};
-        resp_h.encode(h_buf.data());
-        static_cast<void>(send(fd, h_buf.data(), 8, 0));
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
     auto h2 = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
@@ -143,9 +143,9 @@ TEST(DistributedExecutorTests, ShardPruningSelect) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        std::array<char, 8> h_buf{};
-        resp_h.encode(h_buf.data());
-        static_cast<void>(send(fd, h_buf.data(), 8, 0));
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -194,9 +194,9 @@ TEST(DistributedExecutorTests, DataRedistributionShuffle) {
                                 RpcHeader resp_h;
                                 resp_h.type = RpcType::QueryResults;
                                 resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-                                std::array<char, 8> h_buf{};
-                                resp_h.encode(h_buf.data());
-                                static_cast<void>(send(fd, h_buf.data(), 8, 0));
+                                char h_buf[RpcHeader::HEADER_SIZE];
+                                resp_h.encode(h_buf);
+                                static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
                                 static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
                             });
     ASSERT_TRUE(target_node.start());
@@ -259,9 +259,9 @@ TEST(DistributedExecutorTests, BroadcastJoinOrchestration) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        std::array<char, 8> h_buf{};
-        resp_h.encode(h_buf.data());
-        static_cast<void>(send(fd, h_buf.data(), 8, 0));
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -321,9 +321,9 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        std::array<char, 8> h_buf{};
-        resp_h.encode(h_buf.data());
-        static_cast<void>(send(fd, h_buf.data(), 8, 0));
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
