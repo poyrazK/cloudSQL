@@ -9,9 +9,7 @@ namespace cloudsql::raft {
 
 RaftManager::RaftManager(std::string node_id, cluster::ClusterManager& cluster_manager,
                          network::RpcServer& rpc_server)
-    : node_id_(std::move(node_id)),
-      cluster_manager_(cluster_manager),
-      rpc_server_(rpc_server) {
+    : node_id_(std::move(node_id)), cluster_manager_(cluster_manager), rpc_server_(rpc_server) {
     // Register routing handlers
     rpc_server_.set_handler(network::RpcType::RequestVote,
                             [this](const network::RpcHeader& h, const std::vector<uint8_t>& p,
@@ -42,8 +40,7 @@ std::shared_ptr<RaftGroup> RaftManager::get_or_create_group(uint16_t group_id) {
         return it->second;
     }
 
-    auto group =
-        std::make_shared<RaftGroup>(group_id, node_id_, cluster_manager_, rpc_server_);
+    auto group = std::make_shared<RaftGroup>(group_id, node_id_, cluster_manager_, rpc_server_);
     groups_[group_id] = group;
     return group;
 }
@@ -58,7 +55,7 @@ std::shared_ptr<RaftGroup> RaftManager::get_group(uint16_t group_id) {
 }
 
 void RaftManager::handle_raft_rpc(const network::RpcHeader& header,
-                                 const std::vector<uint8_t>& payload, int client_fd) {
+                                  const std::vector<uint8_t>& payload, int client_fd) {
     std::shared_ptr<RaftGroup> group;
     {
         const std::scoped_lock<std::mutex> lock(mutex_);

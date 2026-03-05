@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(STRICT_LINT "Enable strict linting" ON)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+option(BUILD_COVERAGE "Enable code coverage reporting" OFF)
 
 # Add include directories
 include_directories(include)
@@ -42,6 +43,7 @@ set(CORE_SOURCES
     src/transaction/lock_manager.cpp
     src/transaction/transaction_manager.cpp
     src/recovery/log_manager.cpp
+    src/recovery/log_record.cpp
     src/recovery/recovery_manager.cpp
     src/distributed/raft_group.cpp
     src/distributed/raft_manager.cpp
@@ -49,6 +51,12 @@ set(CORE_SOURCES
 )
 
 add_library(sqlEngineCore ${CORE_SOURCES})
+
+# Coverage
+if(BUILD_COVERAGE)
+    target_compile_options(sqlEngineCore PUBLIC --coverage -O0)
+    target_link_libraries(sqlEngineCore PUBLIC --coverage)
+endif()
 
 # Sanitizers
 if(ENABLE_ASAN)
@@ -73,9 +81,10 @@ macro(add_cloudsql_test NAME SOURCE)
 endmacro()
 
 # Tests
-if(BUILD_TESTING)
+if(BUILD_TESTS)
     enable_testing()
     add_cloudsql_test(cloudSQL_tests tests/cloudSQL_tests.cpp)
+    add_cloudsql_test(server_tests tests/server_tests.cpp)
     add_cloudsql_test(statement_tests tests/statement_tests.cpp)
     add_cloudsql_test(transaction_manager_tests tests/transaction_manager_tests.cpp)
     add_cloudsql_test(lock_manager_tests tests/lock_manager_tests.cpp)

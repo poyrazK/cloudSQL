@@ -69,7 +69,7 @@ jobs:
     - name: Run Tests
       run: |
         cd build
-        ./sqlEngine_tests
+        ./cloudSQL_tests
         ./lock_manager_tests
         ./server_tests
         ./transaction_manager_tests
@@ -98,4 +98,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: cloudsql-bin-${{ matrix.compiler }}
-        path: build/sqlEngine
+        path: build/cloudSQL

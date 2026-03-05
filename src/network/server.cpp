@@ -270,6 +270,7 @@ void Server::accept_connections() {
 
         struct sockaddr_in client_addr {};
         socklen_t client_len = sizeof(client_addr);
+
         const int client_fd =
             accept(fd, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
 

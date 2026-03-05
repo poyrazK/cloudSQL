@@ -4,14 +4,15 @@
  */
 
 #include <gtest/gtest.h>
+
 #include <chrono>
 #include <thread>
 #include <vector>
 
-#include "distributed/raft_manager.hpp"
-#include "distributed/raft_group.hpp"
-#include "network/rpc_message.hpp"
 #include "common/cluster_manager.hpp"
+#include "distributed/raft_group.hpp"
+#include "distributed/raft_manager.hpp"
+#include "network/rpc_message.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::raft;
@@ -46,8 +47,8 @@ TEST(MultiRaftTests, GroupRoutingAndMultiplexing) {
     RpcHeader h;
     h.type = RpcType::AppendEntries;
     h.group_id = 1;
-    std::vector<uint8_t> payload(8, 0); 
-    h.payload_len = 8;
+    std::vector<uint8_t> payload(8, 0);
+    h.payload_len = RpcHeader::HEADER_SIZE;
 
     handler(h, payload, -1);
 
@@ -56,7 +57,7 @@ TEST(MultiRaftTests, GroupRoutingAndMultiplexing) {
 }
 
 class IntegrationStateMachine : public RaftStateMachine {
-public:
+   public:
     void apply(const LogEntry& entry) override {
         applied_count++;
         last_applied_data = entry.data;
@@ -69,13 +70,13 @@ TEST(MultiRaftTests, StateMachineIntegration) {
     config::Config config;
     cluster::ClusterManager cm(&config);
     RpcServer rpc(9001);
-    
+
     RaftGroup group(1, "node1", cm, rpc);
     IntegrationStateMachine sm;
     group.set_state_machine(&sm);
 
     std::vector<uint8_t> payload(8, 0);
-    payload[0] = 1; 
+    payload[0] = 1;
 
     RpcHeader h;
     h.type = RpcType::AppendEntries;
@@ -83,7 +84,7 @@ TEST(MultiRaftTests, StateMachineIntegration) {
     h.payload_len = static_cast<uint16_t>(payload.size());
 
     group.handle_append_entries(h, payload, -1);
-    EXPECT_EQ(sm.applied_count, 0); 
+    EXPECT_EQ(sm.applied_count, 0);
 }
 
 /**
@@ -93,7 +94,7 @@ TEST(MultiRaftTests, StateMachineIntegration) {
 TEST(MultiRaftTests, LeaderElectionAndFailover) {
     const int num_nodes = 3;
     const int base_port = 9200;
-    
+
     std::vector<std::unique_ptr<config::Config>> configs;
     std::vector<std::unique_ptr<cluster::ClusterManager>> cms;
     std::vector<std::unique_ptr<RpcServer>> rpcs;
@@ -104,7 +105,7 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
         cfg->mode = config::RunMode::Coordinator;
         cfg->cluster_port = base_port + i;
         configs.push_back(std::move(cfg));
-        
+
         cms.push_back(std::make_unique<cluster::ClusterManager>(configs.back().get()));
         rpcs.push_back(std::make_unique<RpcServer>(base_port + i));
         ASSERT_TRUE(rpcs.back()->start());
@@ -114,12 +115,13 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
         std::string node_id = "node" + std::to_string(i + 1);
         rms.push_back(std::make_unique<RaftManager>(node_id, *cms[i], *rpcs[i]));
         cms[i]->set_raft_manager(rms.back().get());
-        
+
         for (int j = 0; j < num_nodes; ++j) {
             std::string peer_id = "node" + std::to_string(j + 1);
-            cms[i]->register_node(peer_id, "127.0.0.1", base_port + j, config::RunMode::Coordinator);
+            cms[i]->register_node(peer_id, "127.0.0.1", base_port + j,
+                                  config::RunMode::Coordinator);
         }
-        
+
         rms[i]->get_or_create_group(0);
         rms[i]->start();
     }
@@ -134,7 +136,7 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
             leader_idx = i;
         }
     }
-    
+
     EXPECT_EQ(leaders, 1) << "Exactly one leader should emerge from the cluster";
 
     if (leaders == 1) {
@@ -158,4 +160,4 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
     }
 }
 
-} // namespace
+}  // namespace

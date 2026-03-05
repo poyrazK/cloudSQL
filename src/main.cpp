@@ -227,10 +227,10 @@ int main(int argc, char* argv[]) {
         if (config.mode != cloudsql::config::RunMode::Standalone) {
             cluster_manager = std::make_unique<cloudsql::cluster::ClusterManager>(&config);
             rpc_server = std::make_unique<cloudsql::network::RpcServer>(config.cluster_port);
-            
+
             const std::string node_id = "node_" + std::to_string(config.cluster_port);
             raft_manager = std::make_unique<cloudsql::raft::RaftManager>(node_id, *cluster_manager,
-                                                                   *rpc_server);
+                                                                         *rpc_server);
             cluster_manager->set_raft_manager(raft_manager.get());
 
             /* Every node in distributed mode participates in the Catalog group (ID 0) */
@@ -239,6 +239,12 @@ int main(int argc, char* argv[]) {
             catalog->set_raft_group(catalog_group.get());
 
             if (config.mode == cloudsql::config::RunMode::Data) {
+                // Data nodes also participate in shard consensus (e.g. Group 1)
+                auto shard_group = raft_manager->get_or_create_group(1);
+                // Mock state machine for shard 1
+                static cloudsql::executor::ShardStateMachine shard_sm("data", *bpm, *catalog);
+                shard_group->set_state_machine(&shard_sm);
+
                 // Register execution handler for Data nodes
                 rpc_server->set_handler(
                     cloudsql::network::RpcType::ExecuteFragment,
@@ -387,7 +393,8 @@ int main(int argc, char* argv[]) {
                         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
                         char h_buf[cloudsql::network::RpcHeader::HEADER_SIZE];
                         resp_h.encode(h_buf);
-                        static_cast<void>(send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
+                        static_cast<void>(
+                            send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
                         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
                     });
 
@@ -505,7 +512,8 @@ int main(int argc, char* argv[]) {
                         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
                         char h_buf[cloudsql::network::RpcHeader::HEADER_SIZE];
                         resp_h.encode(h_buf);
-                        static_cast<void>(send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
+                        static_cast<void>(
+                            send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
                         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
                     });
             }

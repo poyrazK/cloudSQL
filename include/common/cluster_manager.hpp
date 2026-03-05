@@ -38,7 +38,8 @@ struct NodeInfo {
  */
 class ClusterManager {
    public:
-    explicit ClusterManager(const config::Config* config) : config_(config), raft_manager_(nullptr) {
+    explicit ClusterManager(const config::Config* config)
+        : config_(config), raft_manager_(nullptr) {
         // Add self to node map if in distributed mode
         if (config_ != nullptr && config_->mode != config::RunMode::Standalone) {
             self_node_.id = "local_node";  // Will be replaced by unique ID later

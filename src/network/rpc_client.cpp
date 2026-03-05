@@ -63,7 +63,7 @@ void RpcClient::disconnect() {
 bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
                      std::vector<uint8_t>& response_out, uint16_t group_id) {
     const std::scoped_lock<std::mutex> lock(mutex_);
-    
+
     if (fd_ < 0 && !connect()) {
         return false;
     }
@@ -80,7 +80,7 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
     if (send(fd_, header_buf, RpcHeader::HEADER_SIZE, 0) <= 0) {
         return false;
     }
-    
+
     if (!payload.empty()) {
         if (send(fd_, payload.data(), payload.size(), 0) <= 0) {
             return false;
@@ -95,7 +95,7 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
 
     const RpcHeader resp_header = RpcHeader::decode(resp_buf.data());
     response_out.resize(resp_header.payload_len);
-    
+
     if (resp_header.payload_len > 0) {
         if (recv(fd_, response_out.data(), resp_header.payload_len, MSG_WAITALL) <= 0) {
             return false;
@@ -107,7 +107,7 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
 
 bool RpcClient::send_only(RpcType type, const std::vector<uint8_t>& payload, uint16_t group_id) {
     const std::scoped_lock<std::mutex> lock(mutex_);
-    
+
     if (fd_ < 0 && !connect()) {
         return false;
     }
@@ -123,7 +123,7 @@ bool RpcClient::send_only(RpcType type, const std::vector<uint8_t>& payload, uin
     if (send(fd_, header_buf, RpcHeader::HEADER_SIZE, 0) <= 0) {
         return false;
     }
-    
+
     if (!payload.empty()) {
         if (send(fd_, payload.data(), payload.size(), 0) <= 0) {
             return false;

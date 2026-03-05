@@ -77,23 +77,23 @@ oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInf
         // Multi-Raft: Replicate DDL via Catalog Raft Group (ID 0)
         // Serialize command: [Type:1][NameLen:4][Name][ColCount:4][Cols...]
         std::vector<uint8_t> cmd;
-        cmd.push_back(1); // Type 1: CreateTable
-        
+        cmd.push_back(1);  // Type 1: CreateTable
+
         uint32_t name_len = static_cast<uint32_t>(table_name.size());
         size_t offset = cmd.size();
         cmd.resize(offset + 4 + table_name.size());
         std::memcpy(cmd.data() + offset, &name_len, 4);
         std::memcpy(cmd.data() + offset + 4, table_name.data(), name_len);
-        
+
         uint32_t col_count = static_cast<uint32_t>(columns.size());
         offset = cmd.size();
         cmd.resize(offset + 4);
         std::memcpy(cmd.data() + offset, &col_count, 4);
-        
+
         for (const auto& col : columns) {
             uint32_t cname_len = static_cast<uint32_t>(col.name.size());
             offset = cmd.size();
-            cmd.resize(offset + 4 + col.name.size() + 1 + 2); // len + name + type + pos
+            cmd.resize(offset + 4 + col.name.size() + 1 + 2);  // len + name + type + pos
             std::memcpy(cmd.data() + offset, &cname_len, 4);
             std::memcpy(cmd.data() + offset + 4, col.name.data(), cname_len);
             cmd[offset + 4 + cname_len] = static_cast<uint8_t>(col.type);
@@ -110,10 +110,7 @@ oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInf
 
 oid_t Catalog::create_table_local(const std::string& table_name, std::vector<ColumnInfo> columns) {
     if (table_exists_by_name(table_name)) {
-        // Return existing OID if it exists (for idempotency in Raft replay)
-        for (auto& pair : tables_) {
-            if (pair.second->name == table_name) return pair.first;
-        }
+        throw std::runtime_error("Table already exists: " + table_name);
     }
 
     auto table = std::make_unique<TableInfo>();
@@ -141,10 +138,10 @@ oid_t Catalog::create_table_local(const std::string& table_name, std::vector<Col
 bool Catalog::drop_table(oid_t table_id) {
     if (raft_group_ != nullptr) {
         std::vector<uint8_t> cmd;
-        cmd.push_back(2); // Type 2: DropTable
+        cmd.push_back(2);  // Type 2: DropTable
         cmd.resize(cmd.size() + 4);
         std::memcpy(cmd.data() + 1, &table_id, 4);
-        
+
         if (raft_group_->replicate(cmd)) {
             return drop_table_local(table_id);
         }
@@ -164,20 +161,20 @@ bool Catalog::drop_table_local(oid_t table_id) {
 
 void Catalog::apply(const raft::LogEntry& entry) {
     if (entry.data.empty()) return;
-    
+
     uint8_t type = entry.data[0];
-    if (type == 1) { // CreateTable
+    if (type == 1) {  // CreateTable
         size_t offset = 1;
         uint32_t name_len = 0;
         std::memcpy(&name_len, entry.data.data() + offset, 4);
         offset += 4;
         std::string table_name(reinterpret_cast<const char*>(entry.data.data() + offset), name_len);
         offset += name_len;
-        
+
         uint32_t col_count = 0;
         std::memcpy(&col_count, entry.data.data() + offset, 4);
         offset += 4;
-        
+
         std::vector<ColumnInfo> columns;
         for (uint32_t i = 0; i < col_count; ++i) {
             uint32_t cname_len = 0;
@@ -191,9 +188,13 @@ void Catalog::apply(const raft::LogEntry& entry) {
             offset += 2;
             columns.emplace_back(cname, ctype, cpos);
         }
-        
-        create_table_local(table_name, std::move(columns));
-    } else if (type == 2) { // DropTable
+
+        try {
+            create_table_local(table_name, std::move(columns));
+        } catch (const std::exception& e) {
+            // Ignore duplicate table errors during Raft replay
+        }
+    } else if (type == 2) {  // DropTable
         oid_t table_id = 0;
         std::memcpy(&table_id, entry.data.data() + 1, 4);
         drop_table_local(table_id);

@@ -77,8 +77,8 @@ struct ShardInfo {
     uint32_t shard_id;
     std::string node_address;
     uint16_t port;
-    std::vector<std::string> replicas; // List of node IDs
-    std::string leader_id;             // Current Raft leader
+    std::vector<std::string> replicas;  // List of node IDs
+    std::string leader_id;              // Current Raft leader
 };
 
 /**
@@ -154,7 +154,7 @@ class Catalog : public raft::RaftStateMachine {
      * @brief Apply a committed log entry (from RaftStateMachine)
      */
     void apply(const raft::LogEntry& entry) override;
-    
+
     /**
      * @brief Default constructor
      */

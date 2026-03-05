@@ -1,4 +1,4 @@
-    /**
+/**
  * @file rpc_client.hpp
  * @brief Internal RPC client for node-to-node communication
  */
@@ -29,8 +29,8 @@ class RpcClient {
     /**
      * @brief Send a request and wait for a response
      */
-    bool call(RpcType type, const std::vector<uint8_t>& payload,
-              std::vector<uint8_t>& response_out, uint16_t group_id = 0);
+    bool call(RpcType type, const std::vector<uint8_t>& payload, std::vector<uint8_t>& response_out,
+              uint16_t group_id = 0);
 
     /**
      * @brief Send a request without waiting for a response

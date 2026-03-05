@@ -60,8 +60,8 @@ LogEntry deserialize_entry(const uint8_t* data, size_t& offset, size_t size) {
 
 }  // namespace
 
-RaftGroup::RaftGroup(uint16_t group_id, std::string node_id, cluster::ClusterManager& cluster_manager,
-                     network::RpcServer& rpc_server)
+RaftGroup::RaftGroup(uint16_t group_id, std::string node_id,
+                     cluster::ClusterManager& cluster_manager, network::RpcServer& rpc_server)
     : group_id_(group_id),
       node_id_(std::move(node_id)),
       cluster_manager_(cluster_manager),
@@ -146,7 +146,8 @@ void RaftGroup::do_candidate() {
         network::RpcClient client(peer.address, peer.cluster_port);
         if (client.connect()) {
             std::vector<uint8_t> reply_payload;
-            if (client.call(network::RpcType::RequestVote, args.serialize(), reply_payload, group_id_)) {
+            if (client.call(network::RpcType::RequestVote, args.serialize(), reply_payload,
+                            group_id_)) {
                 if (reply_payload.size() >= VOTE_REPLY_SIZE) {
                     term_t resp_term = 0;
                     std::memcpy(&resp_term, reply_payload.data(), 8);
@@ -191,7 +192,8 @@ void RaftGroup::do_leader() {
 
         network::RpcClient client(peer.address, peer.cluster_port);
         if (client.connect()) {
-            static_cast<void>(client.send_only(network::RpcType::AppendEntries, payload, group_id_));
+            static_cast<void>(
+                client.send_only(network::RpcType::AppendEntries, payload, group_id_));
         }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(HEARTBEAT_INTERVAL_MS));
@@ -310,7 +312,7 @@ void RaftGroup::persist_state() {
         uint64_t v_len = persistent_state_.voted_for.size();
         out.write(reinterpret_cast<const char*>(&v_len), 8);
         out.write(persistent_state_.voted_for.data(), v_len);
-        
+
         uint64_t log_size = persistent_state_.log.size();
         out.write(reinterpret_cast<const char*>(&log_size), 8);
         for (const auto& entry : persistent_state_.log) {
@@ -332,7 +334,7 @@ void RaftGroup::load_state() {
         in.read(reinterpret_cast<char*>(&v_len), 8);
         persistent_state_.voted_for.resize(v_len);
         in.read(&persistent_state_.voted_for[0], v_len);
-        
+
         uint64_t log_size = 0;
         in.read(reinterpret_cast<char*>(&log_size), 8);
         for (uint64_t i = 0; i < log_size; ++i) {
@@ -348,7 +350,7 @@ void RaftGroup::load_state() {
 
 bool RaftGroup::replicate(const std::vector<uint8_t>& data) {
     if (state_.load() != NodeState::Leader) return false;
-    
+
     std::scoped_lock<std::mutex> lock(mutex_);
     LogEntry entry;
     entry.term = persistent_state_.current_term;

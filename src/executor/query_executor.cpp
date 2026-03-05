@@ -68,10 +68,11 @@ void ShardStateMachine::apply(const raft::LogEntry& entry) {
     }
     storage::HeapTable table(table_name, bpm_, schema);
 
-    if (type == 1) { // INSERT
-        Tuple tuple = network::Serializer::deserialize_tuple(entry.data.data(), offset, entry.data.size());
+    if (type == 1) {  // INSERT
+        Tuple tuple =
+            network::Serializer::deserialize_tuple(entry.data.data(), offset, entry.data.size());
         table.insert(tuple, 0);
-    } else if (type == 2) { // DELETE
+    } else if (type == 2) {  // DELETE
         storage::HeapTable::TupleId rid;
         if (offset + 8 > entry.data.size()) return;
         std::memcpy(&rid.page_num, entry.data.data() + offset, 4);
@@ -307,24 +308,24 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
         // POC: Data Replication Logic
         if (cluster_manager_ != nullptr && cluster_manager_->get_raft_manager() != nullptr) {
             // Find shard group (assume shard 1 for POC)
-            auto shard_group = cluster_manager_->get_raft_manager()->get_group(1); 
+            auto shard_group = cluster_manager_->get_raft_manager()->get_group(1);
             if (shard_group && shard_group->is_leader()) {
                 std::vector<uint8_t> cmd;
-                cmd.push_back(1); // Type 1: INSERT
+                cmd.push_back(1);  // Type 1: INSERT
                 uint32_t tlen = static_cast<uint32_t>(table_name.size());
                 size_t off = cmd.size();
                 cmd.resize(off + 4 + tlen);
                 std::memcpy(cmd.data() + off, &tlen, 4);
                 std::memcpy(cmd.data() + off + 4, table_name.data(), tlen);
                 network::Serializer::serialize_tuple(tuple, cmd);
-                
+
                 if (!shard_group->replicate(cmd)) {
                     result.set_error("Replication failed for shard 1");
                     return result;
                 }
             }
         }
-        
+
         const auto tid = table.insert(tuple, xmin);
 
         /* Log INSERT */
@@ -390,10 +391,10 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt,
     for (const auto& rid : target_rids) {
         // POC: Replication Logic
         if (cluster_manager_ != nullptr && cluster_manager_->get_raft_manager() != nullptr) {
-            auto shard_group = cluster_manager_->get_raft_manager()->get_group(1); 
+            auto shard_group = cluster_manager_->get_raft_manager()->get_group(1);
             if (shard_group && shard_group->is_leader()) {
                 std::vector<uint8_t> cmd;
-                cmd.push_back(2); // Type 2: DELETE
+                cmd.push_back(2);  // Type 2: DELETE
                 uint32_t tlen = static_cast<uint32_t>(table_name.size());
                 size_t off = cmd.size();
                 cmd.resize(off + 4 + tlen + 8);
@@ -401,7 +402,7 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt,
                 std::memcpy(cmd.data() + off + 4, table_name.data(), tlen);
                 std::memcpy(cmd.data() + off + 4 + tlen, &rid.page_num, 4);
                 std::memcpy(cmd.data() + off + 4 + tlen + 4, &rid.slot_num, 4);
-                
+
                 if (!shard_group->replicate(cmd)) {
                     result.set_error("Replication failed for shard 1");
                     return result;

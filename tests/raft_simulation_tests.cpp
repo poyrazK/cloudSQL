@@ -9,7 +9,7 @@
 #include <thread>
 
 #include "common/cluster_manager.hpp"
-#include "distributed/raft_node.hpp"
+#include "distributed/raft_group.hpp"
 #include "network/rpc_server.hpp"
 
 using namespace cloudsql;
@@ -24,17 +24,16 @@ TEST(RaftSimulationTests, FollowerToCandidate) {
     cluster::ClusterManager cm(&config);
     network::RpcServer rpc(7000);
 
-    RaftNode node("node1", cm, rpc);
-    node.start();
+    RaftGroup group(1, "node1", cm, rpc);
+    group.start();
 
     // Initially Follower
-    EXPECT_FALSE(node.is_leader());
+    EXPECT_FALSE(group.is_leader());
 
     // Wait for election timeout (150-300ms)
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // Should have attempted to become candidate/leader
-    // Note: without actual peers, it will stay Candidate or become Leader if needed=1
 }
 
 TEST(RaftSimulationTests, HeartbeatReset) {
@@ -44,24 +43,22 @@ TEST(RaftSimulationTests, HeartbeatReset) {
     cluster::ClusterManager cm(&config);
     network::RpcServer rpc(7001);
 
-    RaftNode node("node1", cm, rpc);
-    node.start();
-
-    auto handler = rpc.get_handler(network::RpcType::AppendEntries);
-    ASSERT_NE(handler, nullptr);
+    RaftGroup group(1, "node1", cm, rpc);
+    group.start();
 
     // Send periodic heartbeats to prevent election
     for (int i = 0; i < 5; ++i) {
         std::vector<uint8_t> payload(8, 0);  // Term 0
         network::RpcHeader header;
         header.type = network::RpcType::AppendEntries;
+        header.group_id = 1;
         header.payload_len = 8;
 
-        handler(header, payload, -1);
+        group.handle_append_entries(header, payload, -1);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Should NOT be leader yet because heartbeats reset the timer
-        EXPECT_FALSE(node.is_leader());
+        EXPECT_FALSE(group.is_leader());
     }
 }
 

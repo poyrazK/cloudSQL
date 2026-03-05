@@ -7,7 +7,8 @@
 
 #include "common/cluster_manager.hpp"
 #include "common/config.hpp"
-#include "distributed/raft_node.hpp"
+#include "distributed/raft_group.hpp"
+#include "distributed/raft_manager.hpp"
 #include "network/rpc_server.hpp"
 
 using namespace cloudsql;
@@ -24,8 +25,8 @@ TEST(RaftTests, StateTransitions) {
     cluster::ClusterManager cm(&config);
     network::RpcServer rpc(TEST_PORT);
 
-    RaftNode node("node1", cm, rpc);
-    EXPECT_FALSE(node.is_leader());
+    RaftGroup group(1, "node1", cm, rpc);
+    EXPECT_FALSE(group.is_leader());
 }
 
 }  // namespace
