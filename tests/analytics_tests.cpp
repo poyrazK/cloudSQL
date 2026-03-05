@@ -97,7 +97,8 @@ TEST(AnalyticsTests, VectorizedExecutionPipeline) {
     // 3. Execute and Verify
     auto result_batch = VectorBatch::create(project.output_schema());
     int total_rows = 0;
-    while (project.next_batch(*result_batch)) { total_rows += result_batch->row_count();
+    while (project.next_batch(*result_batch)) {
+        total_rows += result_batch->row_count();
         // Verify values: id 501 -> val 1002, id 999 -> val 1998
         for (size_t i = 0; i < result_batch->row_count(); ++i) {
             int64_t val = result_batch->get_column(0).get(i).as_int64();
@@ -108,6 +109,44 @@ TEST(AnalyticsTests, VectorizedExecutionPipeline) {
     }
 
     EXPECT_EQ(total_rows, 499); // 501 to 999 inclusive
+}
+
+TEST(AnalyticsTests, VectorizedAggregation) {
+    StorageManager storage("./test_analytics");
+    Schema schema;
+    schema.add_column("val", common::ValueType::TYPE_INT64);
+    
+    auto table = std::make_shared<ColumnarTable>("agg_test", storage, schema);
+    ASSERT_TRUE(table->create());
+    ASSERT_TRUE(table->open());
+
+    // 1. Populate table with 10 rows: [1, 2, 3, ..., 10]
+    auto input_batch = VectorBatch::create(schema);
+    for (int64_t i = 1; i <= 10; ++i) {
+        input_batch->append_tuple(Tuple({common::Value::make_int64(i)}));
+    }
+    ASSERT_TRUE(table->append_batch(*input_batch));
+
+    // 2. Build Agg Pipeline: Scan -> Aggregate(COUNT(*), SUM(val))
+    auto scan = std::make_unique<VectorizedSeqScanOperator>("agg_test", table);
+    
+    Schema out_schema;
+    out_schema.add_column("count", common::ValueType::TYPE_INT64);
+    out_schema.add_column("sum", common::ValueType::TYPE_INT64);
+    
+    std::vector<VectorizedAggregateInfo> aggs = {
+        {AggregateType::Count, -1},
+        {AggregateType::Sum, 0}
+    };
+    
+    VectorizedAggregateOperator agg(std::move(scan), std::move(out_schema), aggs);
+
+    // 3. Execute and Verify
+    auto result_batch = VectorBatch::create(agg.output_schema());
+    ASSERT_TRUE(agg.next_batch(*result_batch));
+    EXPECT_EQ(result_batch->row_count(), 1);
+    EXPECT_EQ(result_batch->get_column(0).get(0).as_int64(), 10);    // COUNT
+    EXPECT_EQ(result_batch->get_column(1).get(0).as_int64(), 55);    // SUM (1..10)
 }
 
 } // namespace

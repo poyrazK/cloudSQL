@@ -162,23 +162,31 @@ class VectorizedProjectOperator : public VectorizedOperator {
 };
 
 /**
+ * @brief Aggregate specification for vectorized operator
+ */
+struct VectorizedAggregateInfo {
+    AggregateType type;
+    int32_t input_col_idx; // -1 for COUNT(*)
+};
+
+/**
  * @brief Vectorized global aggregate operator (no GROUP BY)
  */
 class VectorizedAggregateOperator : public VectorizedOperator {
    private:
     std::unique_ptr<VectorizedOperator> child_;
-    std::vector<AggregateType> agg_types_;
+    std::vector<VectorizedAggregateInfo> aggregates_;
     std::vector<int64_t> results_int_;
     std::unique_ptr<VectorBatch> input_batch_;
     bool done_ = false;
 
    public:
     VectorizedAggregateOperator(std::unique_ptr<VectorizedOperator> child, Schema out_schema,
-                                std::vector<AggregateType> types)
+                                std::vector<VectorizedAggregateInfo> aggregates)
         : VectorizedOperator(std::move(out_schema)),
           child_(std::move(child)),
-          agg_types_(std::move(types)) {
-        results_int_.assign(agg_types_.size(), 0);
+          aggregates_(std::move(aggregates)) {
+        results_int_.assign(aggregates_.size(), 0);
         input_batch_ = VectorBatch::create(child_->output_schema());
     }
 
@@ -187,11 +195,12 @@ class VectorizedAggregateOperator : public VectorizedOperator {
 
         // Process all input batches
         while (child_->next_batch(*input_batch_)) {
-            for (size_t i = 0; i < agg_types_.size(); ++i) {
-                if (agg_types_[i] == AggregateType::Count) {
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                const auto& agg = aggregates_[i];
+                if (agg.type == AggregateType::Count) {
                     results_int_[i] += input_batch_->row_count();
-                } else if (agg_types_[i] == AggregateType::Sum) {
-                    auto& col = input_batch_->get_column(i);
+                } else if (agg.type == AggregateType::Sum && agg.input_col_idx >= 0) {
+                    auto& col = input_batch_->get_column(agg.input_col_idx);
                     auto& num_col = dynamic_cast<NumericVector<int64_t>&>(col);
                     const int64_t* raw = num_col.raw_data();
                     for (size_t r = 0; r < input_batch_->row_count(); ++r) {
