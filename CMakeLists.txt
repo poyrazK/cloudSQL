@@ -74,7 +74,7 @@ macro(add_cloudsql_test NAME SOURCE)
 endmacro()
 
 # Tests
-if(BUILD_TESTING)
+if(BUILD_TESTS)
     enable_testing()
     add_cloudsql_test(cloudSQL_tests tests/cloudSQL_tests.cpp)
     add_cloudsql_test(statement_tests tests/statement_tests.cpp)
