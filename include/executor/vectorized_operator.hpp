@@ -166,7 +166,7 @@ class VectorizedProjectOperator : public VectorizedOperator {
  */
 struct VectorizedAggregateInfo {
     AggregateType type;
-    int32_t input_col_idx; // -1 for COUNT(*)
+    int32_t input_col_idx;  // -1 for COUNT(*)
 };
 
 /**

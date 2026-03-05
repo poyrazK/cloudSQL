@@ -6,9 +6,9 @@
 #ifndef CLOUDSQL_STORAGE_COLUMNAR_TABLE_HPP
 #define CLOUDSQL_STORAGE_COLUMNAR_TABLE_HPP
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
 #include "executor/types.hpp"
 #include "storage/storage_manager.hpp"
@@ -31,12 +31,12 @@ class ColumnarTable {
 
     bool create();
     bool open();
-    
+
     /**
      * @brief Load a batch of data from the table
      */
     bool read_batch(uint64_t start_row, uint32_t batch_size, executor::VectorBatch& out_batch);
-    
+
     /**
      * @brief Append a batch of data to the table
      */

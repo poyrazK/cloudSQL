@@ -4,13 +4,14 @@
  */
 
 #include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include "storage/columnar_table.hpp"
-#include "storage/storage_manager.hpp"
 #include "executor/vectorized_operator.hpp"
 #include "parser/expression.hpp"
+#include "storage/columnar_table.hpp"
+#include "storage/storage_manager.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::storage;
@@ -23,7 +24,7 @@ TEST(AnalyticsTests, ColumnarTableLifecycle) {
     StorageManager storage("./test_analytics");
     Schema schema;
     schema.add_column("id", common::ValueType::TYPE_INT64);
-    
+
     ColumnarTable table("analytics_test", storage, schema);
     ASSERT_TRUE(table.create());
     ASSERT_TRUE(table.open());
@@ -44,7 +45,7 @@ TEST(AnalyticsTests, ColumnarTableLifecycle) {
     // 3. Scan via vectorized operator
     auto table_ptr = std::make_shared<ColumnarTable>(table);
     VectorizedSeqScanOperator scan("analytics_test", table_ptr);
-    
+
     VectorBatch result_batch;
     auto res_col = std::make_unique<NumericVector<int64_t>>(common::ValueType::TYPE_INT64);
     result_batch.add_column(std::move(res_col));
@@ -59,7 +60,7 @@ TEST(AnalyticsTests, VectorizedExecutionPipeline) {
     Schema schema;
     schema.add_column("id", common::ValueType::TYPE_INT64);
     schema.add_column("val", common::ValueType::TYPE_INT64);
-    
+
     auto table = std::make_shared<ColumnarTable>("pipeline_test", storage, schema);
     ASSERT_TRUE(table->create());
     ASSERT_TRUE(table->open());
@@ -77,22 +78,25 @@ TEST(AnalyticsTests, VectorizedExecutionPipeline) {
 
     // 2. Build Pipeline: Scan -> Filter(id > 500) -> Project(val)
     auto scan = std::make_unique<VectorizedSeqScanOperator>("pipeline_test", table);
-    
+
     // Filter condition: id > 500
     auto col_expr = std::make_unique<ColumnExpr>("id");
     auto const_expr = std::make_unique<ConstantExpr>(common::Value::make_int64(500));
-    auto filter_cond = std::make_unique<BinaryExpr>(std::move(col_expr), TokenType::Gt, std::move(const_expr));
-    
-    auto filter = std::make_unique<VectorizedFilterOperator>(std::move(scan), std::move(filter_cond));
+    auto filter_cond =
+        std::make_unique<BinaryExpr>(std::move(col_expr), TokenType::Gt, std::move(const_expr));
+
+    auto filter =
+        std::make_unique<VectorizedFilterOperator>(std::move(scan), std::move(filter_cond));
 
     // Project expressions: just the second column (val)
     std::vector<std::unique_ptr<Expression>> project_exprs;
     project_exprs.push_back(std::make_unique<ColumnExpr>("val"));
-    
+
     Schema out_schema;
     out_schema.add_column("val", common::ValueType::TYPE_INT64);
-    
-    VectorizedProjectOperator project(std::move(filter), std::move(out_schema), std::move(project_exprs));
+
+    VectorizedProjectOperator project(std::move(filter), std::move(out_schema),
+                                      std::move(project_exprs));
 
     // 3. Execute and Verify
     auto result_batch = VectorBatch::create(project.output_schema());
@@ -108,14 +112,14 @@ TEST(AnalyticsTests, VectorizedExecutionPipeline) {
         result_batch->clear();
     }
 
-    EXPECT_EQ(total_rows, 499); // 501 to 999 inclusive
+    EXPECT_EQ(total_rows, 499);  // 501 to 999 inclusive
 }
 
 TEST(AnalyticsTests, VectorizedAggregation) {
     StorageManager storage("./test_analytics");
     Schema schema;
     schema.add_column("val", common::ValueType::TYPE_INT64);
-    
+
     auto table = std::make_shared<ColumnarTable>("agg_test", storage, schema);
     ASSERT_TRUE(table->create());
     ASSERT_TRUE(table->open());
@@ -129,24 +133,22 @@ TEST(AnalyticsTests, VectorizedAggregation) {
 
     // 2. Build Agg Pipeline: Scan -> Aggregate(COUNT(*), SUM(val))
     auto scan = std::make_unique<VectorizedSeqScanOperator>("agg_test", table);
-    
+
     Schema out_schema;
     out_schema.add_column("count", common::ValueType::TYPE_INT64);
     out_schema.add_column("sum", common::ValueType::TYPE_INT64);
-    
-    std::vector<VectorizedAggregateInfo> aggs = {
-        {AggregateType::Count, -1},
-        {AggregateType::Sum, 0}
-    };
-    
+
+    std::vector<VectorizedAggregateInfo> aggs = {{AggregateType::Count, -1},
+                                                 {AggregateType::Sum, 0}};
+
     VectorizedAggregateOperator agg(std::move(scan), std::move(out_schema), aggs);
 
     // 3. Execute and Verify
     auto result_batch = VectorBatch::create(agg.output_schema());
     ASSERT_TRUE(agg.next_batch(*result_batch));
     EXPECT_EQ(result_batch->row_count(), 1);
-    EXPECT_EQ(result_batch->get_column(0).get(0).as_int64(), 10);    // COUNT
-    EXPECT_EQ(result_batch->get_column(1).get(0).as_int64(), 55);    // SUM (1..10)
+    EXPECT_EQ(result_batch->get_column(0).get(0).as_int64(), 10);  // COUNT
+    EXPECT_EQ(result_batch->get_column(1).get(0).as_int64(), 55);  // SUM (1..10)
 }
 
-} // namespace
+}  // namespace

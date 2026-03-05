@@ -4,9 +4,10 @@
  */
 
 #include "storage/columnar_table.hpp"
-#include <fstream>
-#include <cstring>
+
 #include <algorithm>
+#include <cstring>
+#include <fstream>
 
 namespace cloudsql::storage {
 
@@ -14,7 +15,7 @@ bool ColumnarTable::create() {
     std::string meta_path = name_ + ".meta.bin";
     std::ofstream out(meta_path, std::ios::binary);
     if (!out.is_open()) return false;
-    
+
     uint64_t initial_rows = 0;
     out.write(reinterpret_cast<const char*>(&initial_rows), 8);
     out.close();
@@ -32,7 +33,7 @@ bool ColumnarTable::open() {
     std::string meta_path = name_ + ".meta.bin";
     std::ifstream in(meta_path, std::ios::binary);
     if (!in.is_open()) return false;
-    
+
     in.read(reinterpret_cast<char*>(&row_count_), 8);
     in.close();
     return true;
@@ -46,7 +47,7 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
         if (!n_out.is_open() || !d_out.is_open()) return false;
 
         auto& col_vec = const_cast<executor::VectorBatch&>(batch).get_column(i);
-        
+
         // Write null bitmap (1 byte per row for POC simplicity)
         for (size_t r = 0; r < batch.row_count(); ++r) {
             uint8_t is_null = col_vec.is_null(r) ? 1 : 0;
@@ -65,18 +66,20 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
     }
 
     row_count_ += batch.row_count();
-    
+
     std::string meta_path = name_ + ".meta.bin";
     std::ofstream out(meta_path, std::ios::binary | std::ios::in | std::ios::out);
     out.write(reinterpret_cast<const char*>(&row_count_), 8);
     return true;
 }
 
-bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size, executor::VectorBatch& out_batch) {
+bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
+                               executor::VectorBatch& out_batch) {
     if (start_row >= row_count_) return false;
-    
-    uint32_t actual_rows = static_cast<uint32_t>(std::min(static_cast<uint64_t>(batch_size), row_count_ - start_row));
-    out_batch.clear(); // Assume out_batch has correct column setup
+
+    uint32_t actual_rows =
+        static_cast<uint32_t>(std::min(static_cast<uint64_t>(batch_size), row_count_ - start_row));
+    out_batch.clear();  // Assume out_batch has correct column setup
 
     for (size_t i = 0; i < schema_.column_count(); ++i) {
         std::string base = name_ + ".col" + std::to_string(i);
@@ -89,7 +92,7 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size, executor
 
         if (type == common::ValueType::TYPE_INT64) {
             auto& num_vec = dynamic_cast<executor::NumericVector<int64_t>&>(target_col);
-            
+
             // Read nulls
             n_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
             std::vector<uint8_t> nulls(actual_rows);
@@ -113,4 +116,4 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size, executor
     return true;
 }
 
-} // namespace cloudsql::storage
+}  // namespace cloudsql::storage
