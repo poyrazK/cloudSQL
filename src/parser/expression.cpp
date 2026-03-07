@@ -67,6 +67,61 @@ common::Value BinaryExpr::evaluate(const executor::Tuple* tuple,
     }
 }
 
+void BinaryExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                     const executor::Schema& schema,
+                                     executor::ColumnVector& result) const {
+    const size_t row_count = batch.row_count();
+    result.clear();
+
+    // Try to optimize: Column op Constant
+    if (left_->type() == ExprType::Column && right_->type() == ExprType::Constant) {
+        const auto& col_expr = static_cast<const ColumnExpr&>(*left_);
+        const auto& const_expr = static_cast<const ConstantExpr&>(*right_);
+        const size_t col_idx = schema.find_column(col_expr.name());
+
+        if (col_idx != static_cast<size_t>(-1)) {
+            auto& src_col = const_cast<executor::VectorBatch&>(batch).get_column(col_idx);
+
+            // INT64 optimize
+            if (src_col.type() == common::ValueType::TYPE_INT64 &&
+                const_expr.value().type() == common::ValueType::TYPE_INT64) {
+                auto& num_src = dynamic_cast<executor::NumericVector<int64_t>&>(src_col);
+                const int64_t* src_data = num_src.raw_data();
+                const int64_t const_val = const_expr.value().as_int64();
+
+                if (op_ == TokenType::Gt) {
+                    auto& bool_res = dynamic_cast<executor::NumericVector<bool>&>(result);
+                    bool_res.resize(row_count);
+                    uint8_t* res_data = bool_res.raw_data_mut();
+                    for (size_t i = 0; i < row_count; ++i) {
+                        res_data[i] = static_cast<uint8_t>(src_data[i] > const_val);
+                    }
+                    return;
+                }
+                if (op_ == TokenType::Eq) {
+                    auto& bool_res = dynamic_cast<executor::NumericVector<bool>&>(result);
+                    bool_res.resize(row_count);
+                    uint8_t* res_data = bool_res.raw_data_mut();
+                    for (size_t i = 0; i < row_count; ++i) {
+                        res_data[i] = static_cast<uint8_t>(src_data[i] == const_val);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    // Fallback to row-by-row if not optimized
+    for (size_t i = 0; i < row_count; ++i) {
+        std::vector<common::Value> row_vals;
+        for (size_t c = 0; c < batch.column_count(); ++c) {
+            row_vals.push_back(const_cast<executor::VectorBatch&>(batch).get_column(c).get(i));
+        }
+        executor::Tuple t(std::move(row_vals));
+        result.append(evaluate(&t, &schema));
+    }
+}
+
 std::string BinaryExpr::to_string() const {
     std::string op_str;
     switch (op_) {
@@ -137,6 +192,21 @@ common::Value UnaryExpr::evaluate(const executor::Tuple* tuple,
     return common::Value::make_null();
 }
 
+void UnaryExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                    const executor::Schema& schema,
+                                    executor::ColumnVector& result) const {
+    const size_t row_count = batch.row_count();
+    result.clear();
+    for (size_t i = 0; i < row_count; ++i) {
+        std::vector<common::Value> row_vals;
+        for (size_t c = 0; c < batch.column_count(); ++c) {
+            row_vals.push_back(const_cast<executor::VectorBatch&>(batch).get_column(c).get(i));
+        }
+        executor::Tuple t(std::move(row_vals));
+        result.append(evaluate(&t, &schema));
+    }
+}
+
 std::string UnaryExpr::to_string() const {
     return (op_ == TokenType::Minus ? "-" : "NOT ") + expr_->to_string();
 }
@@ -162,6 +232,24 @@ common::Value ColumnExpr::evaluate(const executor::Tuple* tuple,
     return tuple->get(index);
 }
 
+void ColumnExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                     const executor::Schema& schema,
+                                     executor::ColumnVector& result) const {
+    const size_t index = schema.find_column(name_);
+    result.clear();
+    if (index == static_cast<size_t>(-1)) {
+        for (size_t i = 0; i < batch.row_count(); ++i) {
+            result.append(common::Value::make_null());
+        }
+        return;
+    }
+
+    auto& src_col = const_cast<executor::VectorBatch&>(batch).get_column(index);
+    for (size_t i = 0; i < batch.row_count(); ++i) {
+        result.append(src_col.get(i));
+    }
+}
+
 std::string ColumnExpr::to_string() const {
     return has_table() ? table_name_ + "." + name_ : name_;
 }
@@ -176,6 +264,16 @@ common::Value ConstantExpr::evaluate(const executor::Tuple* tuple,
     (void)tuple;
     (void)schema;
     return value_;
+}
+
+void ConstantExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                       const executor::Schema& schema,
+                                       executor::ColumnVector& result) const {
+    (void)schema;
+    result.clear();
+    for (size_t i = 0; i < batch.row_count(); ++i) {
+        result.append(value_);
+    }
 }
 
 std::string ConstantExpr::to_string() const {
@@ -205,6 +303,21 @@ common::Value FunctionExpr::evaluate(const executor::Tuple* tuple,
     }
 
     return common::Value::make_null();
+}
+
+void FunctionExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                       const executor::Schema& schema,
+                                       executor::ColumnVector& result) const {
+    const size_t row_count = batch.row_count();
+    result.clear();
+    for (size_t i = 0; i < row_count; ++i) {
+        std::vector<common::Value> row_vals;
+        for (size_t c = 0; c < batch.column_count(); ++c) {
+            row_vals.push_back(const_cast<executor::VectorBatch&>(batch).get_column(c).get(i));
+        }
+        executor::Tuple t(std::move(row_vals));
+        result.append(evaluate(&t, &schema));
+    }
 }
 
 std::string FunctionExpr::to_string() const {
@@ -249,6 +362,21 @@ common::Value InExpr::evaluate(const executor::Tuple* tuple, const executor::Sch
     return common::Value(not_flag_);
 }
 
+void InExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                 const executor::Schema& schema,
+                                 executor::ColumnVector& result) const {
+    const size_t row_count = batch.row_count();
+    result.clear();
+    for (size_t i = 0; i < row_count; ++i) {
+        std::vector<common::Value> row_vals;
+        for (size_t c = 0; c < batch.column_count(); ++c) {
+            row_vals.push_back(const_cast<executor::VectorBatch&>(batch).get_column(c).get(i));
+        }
+        executor::Tuple t(std::move(row_vals));
+        result.append(evaluate(&t, &schema));
+    }
+}
+
 std::string InExpr::to_string() const {
     std::string result = column_->to_string() + (not_flag_ ? " NOT IN (" : " IN (");
     bool first = true;
@@ -280,6 +408,21 @@ common::Value IsNullExpr::evaluate(const executor::Tuple* tuple,
     const common::Value val = expr_->evaluate(tuple, schema);
     const bool result = val.is_null();
     return common::Value(not_flag_ ? !result : result);
+}
+
+void IsNullExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                     const executor::Schema& schema,
+                                     executor::ColumnVector& result) const {
+    const size_t row_count = batch.row_count();
+    result.clear();
+    for (size_t i = 0; i < row_count; ++i) {
+        std::vector<common::Value> row_vals;
+        for (size_t c = 0; c < batch.column_count(); ++c) {
+            row_vals.push_back(const_cast<executor::VectorBatch&>(batch).get_column(c).get(i));
+        }
+        executor::Tuple t(std::move(row_vals));
+        result.append(evaluate(&t, &schema));
+    }
 }
 
 std::string IsNullExpr::to_string() const {

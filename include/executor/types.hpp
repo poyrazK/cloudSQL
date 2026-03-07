@@ -172,7 +172,8 @@ class ColumnVector {
 template <typename T>
 class NumericVector : public ColumnVector {
    private:
-    std::vector<T> data_;
+    using InternalType = std::conditional_t<std::is_same_v<T, bool>, uint8_t, T>;
+    std::vector<InternalType> data_;
 
    public:
     explicit NumericVector(common::ValueType type) : ColumnVector(type) {}
@@ -180,15 +181,15 @@ class NumericVector : public ColumnVector {
     void append(const common::Value& val) override {
         if (val.is_null()) {
             null_bitmap_.push_back(true);
-            data_.push_back(T{});
+            data_.push_back(InternalType{});
         } else {
             null_bitmap_.push_back(false);
             if constexpr (std::is_same_v<T, int64_t>) {
-                data_.push_back(val.as_int64());
+                data_.push_back(val.to_int64());
             } else if constexpr (std::is_same_v<T, double>) {
-                data_.push_back(val.as_float64());
+                data_.push_back(val.to_float64());
             } else if constexpr (std::is_same_v<T, bool>) {
-                data_.push_back(val.as_bool());
+                data_.push_back(static_cast<uint8_t>(val.as_bool()));
             }
         }
         size_++;
@@ -198,11 +199,20 @@ class NumericVector : public ColumnVector {
         if (null_bitmap_[index]) return common::Value::make_null();
         if constexpr (std::is_same_v<T, int64_t>) return common::Value::make_int64(data_[index]);
         if constexpr (std::is_same_v<T, double>) return common::Value::make_float64(data_[index]);
-        if constexpr (std::is_same_v<T, bool>) return common::Value::make_bool(data_[index]);
+        if constexpr (std::is_same_v<T, bool>)
+            return common::Value::make_bool(static_cast<bool>(data_[index]));
         return common::Value::make_null();
     }
 
-    const T* raw_data() const { return data_.data(); }
+    const InternalType* raw_data() const { return data_.data(); }
+    InternalType* raw_data_mut() { return data_.data(); }
+
+    void resize(size_t new_size) {
+        data_.resize(new_size);
+        null_bitmap_.resize(new_size, false);
+        size_ = new_size;
+    }
+
     void clear() override {
         ColumnVector::clear();
         data_.clear();
@@ -234,14 +244,25 @@ class VectorBatch {
     static std::unique_ptr<VectorBatch> create(const Schema& schema) {
         auto batch = std::make_unique<VectorBatch>();
         for (const auto& col : schema.columns()) {
-            if (col.type() == common::ValueType::TYPE_INT64) {
-                batch->add_column(std::make_unique<NumericVector<int64_t>>(col.type()));
-            } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
-                batch->add_column(std::make_unique<NumericVector<double>>(col.type()));
-            } else if (col.type() == common::ValueType::TYPE_BOOL) {
-                batch->add_column(std::make_unique<NumericVector<bool>>(col.type()));
+            switch (col.type()) {
+                case common::ValueType::TYPE_INT8:
+                case common::ValueType::TYPE_INT16:
+                case common::ValueType::TYPE_INT32:
+                case common::ValueType::TYPE_INT64:
+                    batch->add_column(std::make_unique<NumericVector<int64_t>>(col.type()));
+                    break;
+                case common::ValueType::TYPE_FLOAT32:
+                case common::ValueType::TYPE_FLOAT64:
+                    batch->add_column(std::make_unique<NumericVector<double>>(col.type()));
+                    break;
+                case common::ValueType::TYPE_BOOL:
+                    batch->add_column(std::make_unique<NumericVector<bool>>(col.type()));
+                    break;
+                default:
+                    // Fallback to INT64 for unknown numeric types
+                    batch->add_column(std::make_unique<NumericVector<int64_t>>(col.type()));
+                    break;
             }
-            // Add other types as needed
         }
         return batch;
     }

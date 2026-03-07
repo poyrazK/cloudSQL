@@ -88,6 +88,7 @@ class VectorizedFilterOperator : public VectorizedOperator {
     std::unique_ptr<VectorizedOperator> child_;
     std::unique_ptr<parser::Expression> condition_;
     std::unique_ptr<VectorBatch> input_batch_;
+    std::unique_ptr<ColumnVector> selection_mask_;
 
    public:
     VectorizedFilterOperator(std::unique_ptr<VectorizedOperator> child,
@@ -96,23 +97,29 @@ class VectorizedFilterOperator : public VectorizedOperator {
           child_(std::move(child)),
           condition_(std::move(condition)) {
         input_batch_ = VectorBatch::create(child_->output_schema());
+        selection_mask_ = std::make_unique<NumericVector<bool>>(common::ValueType::TYPE_BOOL);
     }
 
     bool next_batch(VectorBatch& out_batch) override {
         out_batch.clear();
         while (child_->next_batch(*input_batch_)) {
+            selection_mask_->clear();
+            condition_->evaluate_vectorized(*input_batch_, child_->output_schema(),
+                                            *selection_mask_);
+
             for (size_t r = 0; r < input_batch_->row_count(); ++r) {
-                // To evaluate row by row, we create a temporary Tuple for the expression
-                std::vector<common::Value> row_vals;
-                for (size_t c = 0; c < input_batch_->column_count(); ++c) {
-                    row_vals.push_back(input_batch_->get_column(c).get(r));
-                }
-                Tuple t(std::move(row_vals));
-                if (condition_->evaluate(&t, &child_->output_schema()).as_bool()) {
-                    out_batch.append_tuple(t);
+                if (selection_mask_->get(r).as_bool()) {
+                    // Optimized: append row from input_batch to out_batch
+                    std::vector<common::Value> row_vals;
+                    for (size_t c = 0; c < input_batch_->column_count(); ++c) {
+                        row_vals.push_back(input_batch_->get_column(c).get(r));
+                    }
+                    out_batch.append_tuple(Tuple(std::move(row_vals)));
                 }
             }
+
             if (out_batch.row_count() > 0) {
+                input_batch_->clear();
                 return true;
             }
             input_batch_->clear();
@@ -142,19 +149,26 @@ class VectorizedProjectOperator : public VectorizedOperator {
     bool next_batch(VectorBatch& out_batch) override {
         out_batch.clear();
         if (child_->next_batch(*input_batch_)) {
-            for (size_t r = 0; r < input_batch_->row_count(); ++r) {
-                std::vector<common::Value> row_vals;
-                for (size_t c = 0; c < input_batch_->column_count(); ++c) {
-                    row_vals.push_back(input_batch_->get_column(c).get(r));
+            // Pre-allocate result columns if out_batch is empty
+            if (out_batch.column_count() == 0) {
+                for (const auto& col : output_schema_.columns()) {
+                    if (col.type() == common::ValueType::TYPE_INT64) {
+                        out_batch.add_column(
+                            std::make_unique<NumericVector<int64_t>>(col.type()));
+                    } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                        out_batch.add_column(std::make_unique<NumericVector<double>>(col.type()));
+                    } else if (col.type() == common::ValueType::TYPE_BOOL) {
+                        out_batch.add_column(std::make_unique<NumericVector<bool>>(col.type()));
+                    }
                 }
-                Tuple t(std::move(row_vals));
-
-                std::vector<common::Value> projected_vals;
-                for (const auto& expr : expressions_) {
-                    projected_vals.push_back(expr->evaluate(&t, &child_->output_schema()));
-                }
-                out_batch.append_tuple(Tuple(std::move(projected_vals)));
             }
+
+            for (size_t i = 0; i < expressions_.size(); ++i) {
+                expressions_[i]->evaluate_vectorized(*input_batch_, child_->output_schema(),
+                                                     out_batch.get_column(i));
+            }
+            out_batch.set_row_count(input_batch_->row_count());
+            input_batch_->clear();
             return true;
         }
         return false;
