@@ -362,8 +362,7 @@ common::Value InExpr::evaluate(const executor::Tuple* tuple, const executor::Sch
     return common::Value(not_flag_);
 }
 
-void InExpr::evaluate_vectorized(const executor::VectorBatch& batch,
-                                 const executor::Schema& schema,
+void InExpr::evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                                  executor::ColumnVector& result) const {
     const size_t row_count = batch.row_count();
     result.clear();

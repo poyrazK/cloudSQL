@@ -153,8 +153,7 @@ class VectorizedProjectOperator : public VectorizedOperator {
             if (out_batch.column_count() == 0) {
                 for (const auto& col : output_schema_.columns()) {
                     if (col.type() == common::ValueType::TYPE_INT64) {
-                        out_batch.add_column(
-                            std::make_unique<NumericVector<int64_t>>(col.type()));
+                        out_batch.add_column(std::make_unique<NumericVector<int64_t>>(col.type()));
                     } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
                         out_batch.add_column(std::make_unique<NumericVector<double>>(col.type()));
                     } else if (col.type() == common::ValueType::TYPE_BOOL) {
