@@ -57,9 +57,9 @@ TEST(DistributedTxnTests, TwoPhaseCommitSuccess) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        char h_buf[8];
+        char h_buf[RpcHeader::HEADER_SIZE];
         resp_h.encode(h_buf);
-        static_cast<void>(send(fd, h_buf, 8, 0));
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -73,9 +73,9 @@ TEST(DistributedTxnTests, TwoPhaseCommitSuccess) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        char h_buf[8];
+        char h_buf[RpcHeader::HEADER_SIZE];
         resp_h.encode(h_buf);
-        static_cast<void>(send(fd, h_buf, 8, 0));
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -129,9 +129,9 @@ TEST(DistributedTxnTests, TwoPhaseCommitAbortOnFailure) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        char h_buf[8];
+        char h_buf[RpcHeader::HEADER_SIZE];
         resp_h.encode(h_buf);
-        static_cast<void>(send(fd, h_buf, 8, 0));
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -146,9 +146,9 @@ TEST(DistributedTxnTests, TwoPhaseCommitAbortOnFailure) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        char h_buf[8];
+        char h_buf[RpcHeader::HEADER_SIZE];
         resp_h.encode(h_buf);
-        static_cast<void>(send(fd, h_buf, 8, 0));
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -162,9 +162,9 @@ TEST(DistributedTxnTests, TwoPhaseCommitAbortOnFailure) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        char h_buf[8];
+        char h_buf[RpcHeader::HEADER_SIZE];
         resp_h.encode(h_buf);
-        static_cast<void>(send(fd, h_buf, 8, 0));
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
@@ -178,9 +178,9 @@ TEST(DistributedTxnTests, TwoPhaseCommitAbortOnFailure) {
         RpcHeader resp_h;
         resp_h.type = RpcType::QueryResults;
         resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
-        char h_buf[8];
+        char h_buf[RpcHeader::HEADER_SIZE];
         resp_h.encode(h_buf);
-        static_cast<void>(send(fd, h_buf, 8, 0));
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
