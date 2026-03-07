@@ -202,22 +202,41 @@ void RaftGroup::do_leader() {
 void RaftGroup::handle_request_vote(const network::RpcHeader& header,
                                     const std::vector<uint8_t>& payload, int client_fd) {
     (void)header;
-    if (payload.size() < 24) return;
+    if (payload.size() < 16) return;
 
     term_t term = 0;
     uint64_t id_len = 0;
     std::memcpy(&term, payload.data(), 8);
     std::memcpy(&id_len, payload.data() + 8, 8);
+
+    if (payload.size() < 32 + id_len) return;
+
     const std::string candidate_id(reinterpret_cast<const char*>(payload.data() + 16), id_len);
+    index_t last_log_index = 0;
+    term_t last_log_term = 0;
+    std::memcpy(&last_log_index, payload.data() + 16 + id_len, 8);
+    std::memcpy(&last_log_term, payload.data() + 24 + id_len, 8);
 
     std::scoped_lock<std::mutex> lock(mutex_);
     RequestVoteReply reply{};
     reply.term = persistent_state_.current_term;
     reply.vote_granted = false;
 
-    if (term > persistent_state_.current_term) step_down(term);
+    if (term > persistent_state_.current_term) {
+        step_down(term);
+    }
 
-    if (term == persistent_state_.current_term &&
+    // Raft Up-to-Date check
+    const index_t local_last_index =
+        persistent_state_.log.empty() ? 0 : persistent_state_.log.back().index;
+    const term_t local_last_term =
+        persistent_state_.log.empty() ? 0 : persistent_state_.log.back().term;
+
+    const bool up_to_date =
+        (last_log_term > local_last_term) ||
+        (last_log_term == local_last_term && last_log_index >= local_last_index);
+
+    if (term == persistent_state_.current_term && up_to_date &&
         (persistent_state_.voted_for.empty() || persistent_state_.voted_for == candidate_id)) {
         persistent_state_.voted_for = candidate_id;
         persist_state();

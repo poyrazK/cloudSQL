@@ -86,6 +86,13 @@ class StorageManager {
     static void deallocate_page(const std::string& filename, uint32_t page_num);
 
     /**
+     * @brief Resolves the full filesystem path for a given filename within the storage directory.
+     * @param filename The relative name of the file.
+     * @return The absolute or relative path from the process root.
+     */
+    [[nodiscard]] std::string get_full_path(const std::string& filename) const;
+
+    /**
      * @brief Check if a file exists
      */
     [[nodiscard]] bool file_exists(const std::string& filename) const;

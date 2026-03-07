@@ -43,11 +43,6 @@ enum class OperatorType : uint8_t {
 };
 
 /**
- * @brief Execution state
- */
-enum class ExecState : uint8_t { Init, Open, Executing, Done, Error };
-
-/**
  * @brief Base operator class (Volcano iterator model)
  */
 class Operator {
@@ -241,11 +236,6 @@ class SortOperator : public Operator {
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
 };
-
-/**
- * @brief Aggregate types
- */
-enum class AggregateType : uint8_t { Count, Sum, Avg, Min, Max };
 
 /**
  * @brief Aggregate specification

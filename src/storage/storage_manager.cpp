@@ -188,6 +188,21 @@ void StorageManager::deallocate_page(const std::string& filename, uint32_t page_
 }
 
 /**
+ * @brief Resolves the full filesystem path for a given filename.
+ */
+std::string StorageManager::get_full_path(const std::string& filename) const {
+    return data_dir_ + "/" + filename;
+}
+
+/**
+ * @brief Check if a file exists on disk.
+ */
+bool StorageManager::file_exists(const std::string& filename) const {
+    struct stat st {};
+    return stat(get_full_path(filename).c_str(), &st) == 0;
+}
+
+/**
  * @brief Create data directory if it doesn't exist
  */
 bool StorageManager::create_dir_if_not_exists() {

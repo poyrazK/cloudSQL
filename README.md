@@ -10,10 +10,14 @@ A lightweight, distributed SQL database engine. Designed for cloud environments 
 - **Distributed Query Optimization**: 
   - **Shard Pruning**: Intelligent routing to avoid cluster-wide broadcasts.
   - **Aggregation Merging**: Global coordination for `COUNT`, `SUM`, and other aggregates.
-  - **Broadcast Joins**: Optimized cross-shard joins for small-to-large table scenarios.
+  - **Broadcast & Shuffle Joins**: Optimized cross-shard joins for small-to-large and large-to-large table scenarios.
+- **Data Replication & HA**: Fully redundant data storage with multi-group Raft and automatic leader failover.
+- **Analytics Performance**: 
+  - **Columnar Storage**: Binary-per-column persistence for efficient analytical scanning.
+  - **Vectorized Execution**: Batch-at-a-time processing model for high-throughput query execution.
 - **Multi-Node Transactions**: ACID guarantees across the cluster via Two-Phase Commit (2PC).
 - **Type-Safe Value System**: Robust handling of SQL data types using `std::variant`.
-- **Volcano Execution Engine**: Iterator-based execution supporting sequential scans, index scans, filtering, projection, hash joins, sorting, and aggregation.
+- **Volcano & Vectorized Engine**: Flexible execution models supporting traditional row-based and high-performance columnar processing.
 - **PostgreSQL Wire Protocol**: Handshake and simple query protocol implementation for tool compatibility.
 
 ## Project Structure

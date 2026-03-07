@@ -36,6 +36,24 @@ This directory contains the technical documentation for the lifecycle of the clo
 - Broadcast Join orchestration.
 - Inter-node data redistribution (Shuffle infrastructure).
 
+### [Phase 6: Distributed Multi-Shard Joins](./PHASE_6_DISTRIBUTED_JOIN.md)
+**Focus**: High-throughput Data Redistribution.
+- Context-aware Shuffle infrastructure in `ClusterManager`.
+- Implementation of `ShuffleFragment` and `PushData` RPC protocols.
+- Two-phase Shuffle Join orchestration in `DistributedExecutor`.
+
+### [Phase 7: Replication & High Availability](./PHASE_7_REPLICATION_HA.md)
+**Focus**: Fault Tolerance & Data Redundancy.
+- Multi-Group Raft management via `RaftManager`.
+- Log-based data replication for DML operations.
+- Leader-aware query routing and automatic failover.
+
+### [Phase 8: Analytics Performance](./PHASE_8_ANALYTICS.md)
+**Focus**: Columnar Storage & Vectorized Execution.
+- Native Columnar storage implementation with binary persistence.
+- Batch-at-a-time vectorized execution model (Scan, Filter, Project, Aggregate).
+- High-performance `NumericVector` and `VectorBatch` data structures.
+
 ---
 
 ## Technical Standards

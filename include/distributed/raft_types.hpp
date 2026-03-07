@@ -57,7 +57,7 @@ struct RequestVoteArgs {
 
     [[nodiscard]] std::vector<uint8_t> serialize() const {
         std::vector<uint8_t> out;
-        constexpr size_t BASE_SIZE = 24;
+        constexpr size_t BASE_SIZE = 32;
         out.resize(BASE_SIZE + candidate_id.size());
         std::memcpy(out.data(), &term, sizeof(term_t));
         const uint64_t id_len = candidate_id.size();

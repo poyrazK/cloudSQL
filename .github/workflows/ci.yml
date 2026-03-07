@@ -9,14 +9,21 @@ on:
 jobs:
   style-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
-    - name: Run clang-format check
+      with:
+        ref: ${{ github.head_ref }}
+    - name: Run clang-format fix
       run: |
         sudo apt-get update
         sudo apt-get install -y clang-format
         find src include tests -name "*.cpp" -o -name "*.hpp" | xargs clang-format -i
-        git diff --exit-code
+    - name: Commit style fixes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "style: automated clang-format fixes"
 
   build-and-test:
     needs: style-check

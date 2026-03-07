@@ -48,6 +48,7 @@ set(CORE_SOURCES
     src/distributed/raft_group.cpp
     src/distributed/raft_manager.cpp
     src/distributed/distributed_executor.cpp
+    src/storage/columnar_table.cpp
 )
 
 add_library(sqlEngineCore ${CORE_SOURCES})
@@ -96,6 +97,7 @@ if(BUILD_TESTS)
     add_cloudsql_test(raft_sim_tests tests/raft_simulation_tests.cpp)
     add_cloudsql_test(multi_raft_tests tests/multi_raft_tests.cpp)
     add_cloudsql_test(distributed_txn_tests tests/distributed_txn_tests.cpp)
+    add_cloudsql_test(analytics_tests tests/analytics_tests.cpp)
 
     add_custom_target(run-tests
         COMMAND ${CMAKE_CTEST_COMMAND}
