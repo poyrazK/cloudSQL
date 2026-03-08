@@ -140,7 +140,7 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
 
         /* Check for sufficient free space in the current page */
         if (header.free_space_offset + required < Page::PAGE_SIZE &&
-            slot_array_end < header.free_space_offset) {
+            header.num_slots < DEFAULT_SLOT_COUNT) {
             const uint16_t offset = header.free_space_offset;
             std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)),
                         data_str.c_str(), data_str.size() + 1);
