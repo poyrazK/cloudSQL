@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -29,7 +30,15 @@ BufferPoolManager::BufferPoolManager(size_t pool_size, StorageManager& storage_m
 }
 
 BufferPoolManager::~BufferPoolManager() {
-    flush_all_pages();
+    try {
+        flush_all_pages();
+    } catch (const std::exception& e) {
+        // Log error to stderr; avoid throwing from destructor to prevent std::terminate
+        std::cerr << "[Error] Exception in BufferPoolManager destructor during flush_all_pages: " 
+                  << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "[Error] Unknown exception in BufferPoolManager destructor during flush_all_pages" << std::endl;
+    }
 }
 
 Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_id) {
