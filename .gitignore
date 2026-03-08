@@ -84,8 +84,11 @@ coverage/
 *.orig
 *.rej
 
+# Storage Files
+# ==============
+*.heap
+
 # ==============
 # Emacs
 # ==============
 .emacs.d/
-*.heap
