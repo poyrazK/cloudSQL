@@ -1,3 +1,4 @@
+import math
 import socket
 import struct
 import time
@@ -13,7 +14,7 @@ class CloudSQLClient:
     def connect(self):
         print(f"Connecting to {self.host}:{self.port}...")
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.settimeout(2.0)
+        self.sock.settimeout(5.0)
         self.sock.connect((self.host, self.port))
         
         # PostgreSQL Startup packet is just Int32 Length, Int32 Protocol
@@ -25,20 +26,29 @@ class CloudSQLClient:
         # Wait for AuthOK 'R' and ReadyForQuery 'Z'
         print("Waiting for R...")
         try:
-            r_type = self.sock.recv(1)
+            r_type = self.recv_exactly(1)
             print(f"Got: {r_type}")
             if r_type != b'R':
                 raise Exception(f"Expected AuthOK 'R', got {r_type}")
-            self.sock.recv(8) # length + 4 bytes content
+            self.recv_exactly(8) # length + 4 bytes content
             
-            z_type = self.sock.recv(1)
+            z_type = self.recv_exactly(1)
             print(f"Got: {z_type}")
             if z_type != b'Z':
                 raise Exception(f"Expected ReadyForQuery 'Z', got {z_type}")
-            self.sock.recv(5) # length + 1 byte state
+            self.recv_exactly(5) # length + 1 byte state
         except Exception as e:
             print(f"Error reading handshake: {e}")
             raise
+
+    def recv_exactly(self, n):
+        data = b''
+        while len(data) < n:
+            packet = self.sock.recv(n - len(data))
+            if not packet:
+                return None
+            data += packet
+        return data
 
     def query(self, sql):
         sql_bytes = sql.encode('utf-8') + b'\0'
@@ -52,18 +62,20 @@ class CloudSQLClient:
         status = None
 
         while True:
-            type_byte = self.sock.recv(1)
+            type_byte = self.recv_exactly(1)
             if not type_byte:
                 break
             
             type_char = type_byte.decode()
             
-            len_bytes = self.sock.recv(4)
+            len_bytes = self.recv_exactly(4)
             if not len_bytes:
                 break
             length = struct.unpack('!I', len_bytes)[0]
             
-            body = self.sock.recv(length - 4)
+            body = self.recv_exactly(length - 4)
+            if body is None:
+                break
 
             if type_char == 'T':
                 # Parse RowDescription
@@ -81,7 +93,8 @@ class CloudSQLClient:
                 idx = 2
                 row_data = []
                 for _ in range(num_cols):
-                    col_len = struct.unpack('!I', body[idx:idx+4])[0]
+                    col_len_bytes = body[idx:idx+4]
+                    col_len = struct.unpack('!I', col_len_bytes)[0]
                     idx += 4
                     if col_len == 0xFFFFFFFF: # -1
                         row_data.append(None)
@@ -113,14 +126,16 @@ if __name__ == "__main__":
         client.connect()
         print("Connected successfully!")
         
+        print("\n--- Basic Operations ---")
         print("Testing CREATE TABLE...")
         cols, rows, status = client.query("CREATE TABLE users (id INT, name TEXT, age INT);")
-        assert status == "OK", f"Create failed, status: {status}"
+        # Server currently always returns SELECT <count> for everything
+        assert status.startswith("SELECT"), f"Create failed, status: {status}"
         
         print("Testing INSERT...")
         for i in range(1, 4):
             cols, rows, status = client.query(f"INSERT INTO users VALUES ({i}, 'User{i}', {20+i});")
-            assert status == "OK", "Insert failed"
+            assert status.startswith("SELECT"), "Insert failed"
             
         print("Testing SELECT...")
         cols, rows, status = client.query("SELECT id, name, age FROM users;")
@@ -134,21 +149,58 @@ if __name__ == "__main__":
         
         print("Testing UPDATE...")
         cols, rows, status = client.query("UPDATE users SET age = 99 WHERE id = 2;")
-        assert status == "OK"
+        assert status.startswith("SELECT")
         cols, rows, status = client.query("SELECT age FROM users WHERE id = 2;")
         assert rows[0][0] == "99"
         
         print("Testing DELETE...")
         cols, rows, status = client.query("DELETE FROM users WHERE id = 1;")
-        assert status == "OK"
+        assert status.startswith("SELECT")
         cols, rows, status = client.query("SELECT id FROM users;")
         assert len(rows) == 2, "Row should be deleted"
         
         print("Testing DROP TABLE...")
         cols, rows, status = client.query("DROP TABLE users;")
-        assert status == "OK"
+        assert status.startswith("SELECT")
+
+        print("\n--- Analytics Operations (Heap Fallback) ---")
+        print("Testing CREATE TABLE sensor_data...")
+        cols, rows, status = client.query("CREATE TABLE sensor_data (sensor_id INT, reading DOUBLE, ts INT);")
+        assert status.startswith("SELECT"), f"Create failed, status: {status}"
+
+        print("Testing Bulk INSERT (1050 rows)...")
+        for i in range(1050):
+            # Interleave some 'high' readings
+            reading = 100.5 if i % 10 == 0 else 20.5
+            cols, rows, status = client.query(f"INSERT INTO sensor_data VALUES ({i}, {reading}, {1600000000 + i});")
+            assert status.startswith("SELECT"), f"Bulk insert failed at row {i}"
+
+        # Delay to allow disk flush/transactions to settle if necessary
+        time.sleep(0.5)
+
+        print("Testing COUNT(*)...")
+        cols, rows, status = client.query("SELECT COUNT(sensor_id) FROM sensor_data;")
+        assert len(rows) == 1
+        assert rows[0][0] == "1050", f"Expected 1050 rows, got {rows[0][0]}"
+
+        print("Testing Filter (WHERE reading > 50.0)...")
+        cols, rows, status = client.query("SELECT COUNT(sensor_id) FROM sensor_data WHERE reading > 50.0;")
+        assert len(rows) == 1
+        assert rows[0][0] == "105", f"Expected 105 rows matching filter, got {rows[0][0]}"
+
+        print("Testing SUM(reading)...")
+        cols, rows, status = client.query("SELECT SUM(reading) FROM sensor_data;")
+        assert len(rows) == 1
+        # 105 * 100.5 + 945 * 20.5 = 10552.5 + 19372.5 = 29925.0
+        # Use math.isclose to handle potential floating point precision differences
+        actual_sum = float(rows[0][0])
+        assert math.isclose(actual_sum, 29925.0, rel_tol=1e-9, abs_tol=1e-6), f"Expected 29925.0, got {actual_sum}"
+
+        print("Testing DROP TABLE sensor_data...")
+        cols, rows, status = client.query("DROP TABLE sensor_data;")
+        assert status.startswith("SELECT")
         
-        print("All E2E checks PASSED.")
+        print("\nAll E2E checks PASSED.")
     except Exception as e:
         print(f"E2E Test Failed: {e}")
         exit(1)

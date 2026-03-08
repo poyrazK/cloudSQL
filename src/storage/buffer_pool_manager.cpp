@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -28,7 +29,19 @@ BufferPoolManager::BufferPoolManager(size_t pool_size, StorageManager& storage_m
     }
 }
 
-BufferPoolManager::~BufferPoolManager() = default;
+BufferPoolManager::~BufferPoolManager() {
+    try {
+        flush_all_pages();
+    } catch (const std::exception& e) {
+        // Log error to stderr; avoid throwing from destructor to prevent std::terminate
+        std::cerr << "[Error] Exception in BufferPoolManager destructor during flush_all_pages: "
+                  << e.what() << std::endl;
+    } catch (...) {
+        std::cerr
+            << "[Error] Unknown exception in BufferPoolManager destructor during flush_all_pages"
+            << std::endl;
+    }
+}
 
 Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
@@ -62,7 +75,11 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
     page->file_name_ = file_name;
     page->pin_count_ = 1;
     page->is_dirty_ = false;
-    storage_manager_.read_page(file_name, page_id, page->get_data());
+
+    if (!storage_manager_.read_page(file_name, page_id, page->get_data())) {
+        // If read fails (e.g. file too short), initialize with zeros
+        std::memset(page->get_data(), 0, Page::PAGE_SIZE);
+    }
 
     replacer_.pin(frame_id);
     return page;

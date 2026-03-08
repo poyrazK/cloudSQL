@@ -219,4 +219,40 @@ TEST(AnalyticsTests, AggregateNullHandling) {
     EXPECT_TRUE(result_batch->get_column(1).is_null(0));
 }
 
+TEST(AnalyticsTests, VectorizedExpressionAdvanced) {
+    StorageManager storage("./test_analytics");
+    Schema schema;
+    schema.add_column("a", common::ValueType::TYPE_INT64, true);
+    schema.add_column("b", common::ValueType::TYPE_INT64, true);
+
+    auto batch = VectorBatch::create(schema);
+    // Row 0: (10, 20)
+    batch->append_tuple(Tuple({common::Value::make_int64(10), common::Value::make_int64(20)}));
+    // Row 1: (NULL, 30)
+    batch->append_tuple(Tuple({common::Value::make_null(), common::Value::make_int64(30)}));
+    // Row 2: (40, NULL)
+    batch->append_tuple(Tuple({common::Value::make_int64(40), common::Value::make_null()}));
+
+    // Test: (a IS NULL) OR (a > 20)
+    auto col_a = std::make_unique<ColumnExpr>("a");
+    auto is_null = std::make_unique<IsNullExpr>(std::move(col_a), false);
+    auto col_a_2 = std::make_unique<ColumnExpr>("a");
+    auto gt_20 =
+        std::make_unique<BinaryExpr>(std::move(col_a_2), TokenType::Gt,
+                                     std::make_unique<ConstantExpr>(common::Value::make_int64(20)));
+
+    BinaryExpr or_expr(std::move(is_null), TokenType::Or, std::move(gt_20));
+
+    NumericVector<bool> res(common::ValueType::TYPE_BOOL);
+    or_expr.evaluate_vectorized(*batch, schema, res);
+
+    ASSERT_EQ(res.size(), 3U);
+    // Row 0: (10 IS NULL) OR (10 > 20) -> FALSE OR FALSE -> FALSE
+    EXPECT_FALSE(res.get(0).as_bool());
+    // Row 1: (NULL IS NULL) OR (NULL > 20) -> TRUE OR NULL -> TRUE
+    EXPECT_TRUE(res.get(1).as_bool());
+    // Row 2: (40 IS NULL) OR (40 > 20) -> FALSE OR TRUE -> TRUE
+    EXPECT_TRUE(res.get(2).as_bool());
+}
+
 }  // namespace

@@ -32,6 +32,7 @@ namespace {
 constexpr uint16_t PORT_STATUS = 6001;
 constexpr uint16_t PORT_CONNECT = 6002;
 constexpr uint16_t PORT_STARTUP = 6003;
+constexpr uint16_t PORT_SSL = 6004;
 constexpr size_t STARTUP_PKT_LEN = 8;
 
 TEST(ServerTests, StatusStrings) {
@@ -115,6 +116,69 @@ TEST(ServerTests, Handshake) {
         n = recv(sock, buffer.data(), 6, 0);
         EXPECT_EQ(n, 6);
         EXPECT_EQ(buffer[0], 'Z');
+    }
+
+    close(sock);
+    static_cast<void>(server->stop());
+}
+
+TEST(ServerTests, SSLHandshake) {
+    auto catalog = Catalog::create();
+    StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager sm(128, disk_manager);
+    config::Config cfg;
+    uint16_t port = PORT_SSL;
+
+    auto server = Server::create(port, *catalog, sm, cfg, nullptr);
+    ASSERT_TRUE(server->start());
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+        // Send SSL Request: length=8, code=80877103
+        const std::array<uint32_t, 2> ssl_req = {htonl(8), htonl(80877103)};
+        send(sock, ssl_req.data(), 8, 0);
+
+        // Server should reply with 'N' (SSL not supported)
+        char reply = 0;
+        ssize_t n = recv(sock, &reply, 1, 0);
+        EXPECT_EQ(n, 1);
+        EXPECT_EQ(reply, 'N');
+    }
+
+    close(sock);
+    static_cast<void>(server->stop());
+}
+
+TEST(ServerTests, InvalidHandshake) {
+    auto catalog = Catalog::create();
+    StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager sm(128, disk_manager);
+    config::Config cfg;
+    uint16_t port = 6005;
+
+    auto server = Server::create(port, *catalog, sm, cfg, nullptr);
+    ASSERT_TRUE(server->start());
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+        // Send invalid length
+        const uint32_t invalid_len = htonl(3);
+        send(sock, &invalid_len, 4, 0);
+
+        // Server should close connection due to invalid length
+        char buf;
+        ssize_t n = recv(sock, &buf, 1, 0);
+        EXPECT_LE(n, 0);
     }
 
     close(sock);

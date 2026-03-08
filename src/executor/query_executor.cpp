@@ -716,6 +716,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         }
         current_root = std::make_unique<AggregateOperator>(std::move(current_root),
                                                            std::move(group_by), std::move(aggs));
+
+        /* 3.5. Having */
+        if (stmt.having()) {
+            current_root =
+                std::make_unique<FilterOperator>(std::move(current_root), stmt.having()->clone());
+        }
     }
 
     /* 4. Sort (ORDER BY) */

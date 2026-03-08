@@ -113,6 +113,31 @@ TEST(RecoveryTests, LogRecordAllTypes) {
     EXPECT_TRUE(deserialized.tuple_.get(6).is_null());
 }
 
+TEST(RecoveryTests, LogRecordVariants) {
+    /* Test BEGIN/COMMIT/ABORT which have no tuple/table */
+    {
+        LogRecord rec(1, -1, LogRecordType::BEGIN);
+        std::vector<char> buf(rec.get_size());
+        rec.serialize(buf.data());
+        auto d = LogRecord::deserialize(buf.data());
+        EXPECT_EQ(d.type_, LogRecordType::BEGIN);
+    }
+    {
+        LogRecord rec(1, 10, LogRecordType::COMMIT);
+        std::vector<char> buf(rec.get_size());
+        rec.serialize(buf.data());
+        auto d = LogRecord::deserialize(buf.data());
+        EXPECT_EQ(d.type_, LogRecordType::COMMIT);
+    }
+    {
+        LogRecord rec(1, 20, LogRecordType::ABORT);
+        std::vector<char> buf(rec.get_size());
+        rec.serialize(buf.data());
+        auto d = LogRecord::deserialize(buf.data());
+        EXPECT_EQ(d.type_, LogRecordType::ABORT);
+    }
+}
+
 TEST(RecoveryTests, LogManagerBasic) {
     const std::string log_file = "test_log_basic.log";
     cleanup(log_file);

@@ -778,4 +778,233 @@ TEST(CatalogTests, Stats) {
     catalog->print();
 }
 
+// ============= Parser Advanced Tests =============
+
+TEST(ParserAdvanced, JoinAndComplexSelect) {
+    /* 1. Left Join and multiple joins */
+    {
+        auto lexer = std::make_unique<Lexer>(
+            "SELECT a.id, b.val FROM t1 LEFT JOIN t2 ON a.id = b.id JOIN t3 ON b.x = t3.x WHERE "
+            "a.id > 10");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        ASSERT_NE(stmt, nullptr);
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        ASSERT_NE(select, nullptr);
+        EXPECT_EQ(select->joins().size(), 2U);
+        EXPECT_EQ(select->joins()[0].type, SelectStatement::JoinType::Left);
+        EXPECT_EQ(select->joins()[1].type, SelectStatement::JoinType::Inner);
+    }
+
+    /* 2. Group By and Having */
+    {
+        auto lexer = std::make_unique<Lexer>(
+            "SELECT cat, SUM(val) FROM items GROUP BY cat HAVING SUM(val) > 1000 ORDER BY cat "
+            "DESC");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        ASSERT_NE(stmt, nullptr);
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        ASSERT_NE(select, nullptr);
+        EXPECT_EQ(select->group_by().size(), 1U);
+        ASSERT_NE(select->having(), nullptr);
+        EXPECT_EQ(select->order_by().size(), 1U);
+    }
+
+    /* 3. Transaction Statements */
+    {
+        auto lexer = std::make_unique<Lexer>("BEGIN");
+        Parser parser(std::move(lexer));
+        auto s1 = parser.parse_statement();
+        ASSERT_NE(s1, nullptr);
+        EXPECT_EQ(s1->type(), StmtType::TransactionBegin);
+
+        auto lexer2 = std::make_unique<Lexer>("COMMIT");
+        Parser parser2(std::move(lexer2));
+        auto s2 = parser2.parse_statement();
+        ASSERT_NE(s2, nullptr);
+        EXPECT_EQ(s2->type(), StmtType::TransactionCommit);
+
+        auto lexer3 = std::make_unique<Lexer>("ROLLBACK");
+        Parser parser3(std::move(lexer3));
+        auto s3 = parser3.parse_statement();
+        ASSERT_NE(s3, nullptr);
+        EXPECT_EQ(s3->type(), StmtType::TransactionRollback);
+    }
+}
+
+TEST(ParserAdvanced, ParserErrorPaths) {
+    /* Invalid CREATE syntax */
+    {
+        auto lexer = std::make_unique<Lexer>("CREATE TABLE (id INT)");  // Missing table name
+        Parser parser(std::move(lexer));
+        EXPECT_EQ(parser.parse_statement(), nullptr);
+    }
+    /* Invalid JOIN syntax */
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 LEFT t2");  // Missing JOIN keyword
+        Parser parser(std::move(lexer));
+        EXPECT_EQ(parser.parse_statement(), nullptr);
+    }
+    /* Invalid GROUP BY syntax */
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 GROUP cat");  // Missing BY keyword
+        Parser parser(std::move(lexer));
+        EXPECT_EQ(parser.parse_statement(), nullptr);
+    }
+}
+
+// ============= Execution Advanced Tests =============
+
+TEST(ExecutionTests, AggregationHaving) {
+    static_cast<void>(std::remove("./test_data/having_test.heap"));
+    StorageManager disk_manager("./test_data");
+    BufferPoolManager sm(128, disk_manager);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, nullptr);
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE having_test (grp INT, val INT)"))
+                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO having_test VALUES (1, 10), (1, 20), (2, 5)"))
+             .parse_statement()));
+
+    // SELECT grp, SUM(val) FROM having_test GROUP BY grp HAVING SUM(val) > 10
+    auto res = exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "SELECT grp, SUM(val) FROM having_test GROUP BY grp HAVING SUM(val) > 10"))
+             .parse_statement());
+
+    EXPECT_TRUE(res.success());
+    ASSERT_EQ(res.row_count(), 1U);  // Only group 1 should pass (sum=30)
+    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "1");
+    static_cast<void>(std::remove("./test_data/having_test.heap"));
+}
+
+TEST(OperatorTests, AggregateTypes) {
+    static_cast<void>(std::remove("./test_data/agg_types.heap"));
+    StorageManager disk_manager("./test_data");
+    BufferPoolManager sm(128, disk_manager);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, nullptr);
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE agg_types (val DOUBLE)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO agg_types VALUES (10.0), (20.0), (30.0)"))
+             .parse_statement()));
+
+    auto res = exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "SELECT MIN(val), MAX(val), AVG(val), SUM(val), COUNT(val) FROM agg_types"))
+             .parse_statement());
+    EXPECT_TRUE(res.success());
+    ASSERT_EQ(res.row_count(), 1U);
+    EXPECT_DOUBLE_EQ(res.rows()[0].get(0).to_float64(), 10.0);
+    EXPECT_DOUBLE_EQ(res.rows()[0].get(1).to_float64(), 30.0);
+    EXPECT_DOUBLE_EQ(res.rows()[0].get(2).to_float64(), 20.0);
+    EXPECT_DOUBLE_EQ(res.rows()[0].get(3).to_float64(), 60.0);
+    EXPECT_EQ(res.rows()[0].get(4).to_int64(), 3);
+    static_cast<void>(std::remove("./test_data/agg_types.heap"));
+}
+
+TEST(OperatorTests, LimitOffset) {
+    static_cast<void>(std::remove("./test_data/lim_off.heap"));
+    StorageManager disk_manager("./test_data");
+    BufferPoolManager sm(128, disk_manager);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, nullptr);
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE lim_off (val INT)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO lim_off VALUES (1), (2), (3), (4), (5)"))
+             .parse_statement()));
+
+    auto res = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT val FROM lim_off ORDER BY val LIMIT 2 OFFSET 2"))
+             .parse_statement());
+    EXPECT_TRUE(res.success());
+    ASSERT_EQ(res.row_count(), 2U);
+    EXPECT_EQ(res.rows()[0].get(0).to_int64(), 3);
+    EXPECT_EQ(res.rows()[1].get(0).to_int64(), 4);
+    static_cast<void>(std::remove("./test_data/lim_off.heap"));
+}
+
+TEST(OperatorTests, SeqScanVisibility) {
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(128, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, nullptr);
+    Schema schema;
+    schema.add_column("v", ValueType::TYPE_INT64);
+
+    HeapTable table("vis_test", sm, schema);
+    table.create();
+
+    // Use a transaction to insert, ensuring xmin > 0
+    auto* txn_setup = tm.begin();
+    table.insert(Tuple({Value::make_int64(1)}), txn_setup->get_id());
+    tm.commit(txn_setup);
+
+    auto* txn = tm.begin();
+    SeqScanOperator scan(std::make_unique<HeapTable>("vis_test", sm, schema), txn, nullptr);
+    scan.init();
+    scan.open();
+
+    Tuple t;
+    int count = 0;
+    while (scan.next(t)) {
+        count++;
+    }
+    EXPECT_GE(count, 1);
+
+    static_cast<void>(std::remove("./test_data/vis_test.heap"));
+}
+
+TEST(ParserTests, CreateIndexAndAlter) {
+    {
+        auto lexer = std::make_unique<Lexer>("CREATE INDEX idx_name ON users (col1)");
+        Parser parser(std::move(lexer));
+    }
+    {
+        auto lexer =
+            std::make_unique<Lexer>("SELECT * FROM t WHERE col IS NOT NULL AND id IN (1, 2, 3)");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        ASSERT_NE(stmt, nullptr);
+    }
+}
+
+TEST(ParserTests, ExhaustiveParserErrors) {
+    // 1. Invalid Table Name in CREATE
+    {
+        Parser p(std::make_unique<Lexer>("CREATE TABLE (id INT)"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+    // 2. Invalid Column list in INSERT
+    {
+        Parser p(std::make_unique<Lexer>("INSERT INTO t ( ) VALUES (1)"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+    // 3. Missing JOIN keyword
+    {
+        Parser p(std::make_unique<Lexer>("SELECT * FROM t1 LEFT t2 ON 1=1"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+    // 4. Missing BY in GROUP BY
+    {
+        Parser p(std::make_unique<Lexer>("SELECT a FROM t GROUP a"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+}
+
 }  // namespace

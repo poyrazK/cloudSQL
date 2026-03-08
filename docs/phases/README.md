@@ -54,6 +54,13 @@ This directory contains the technical documentation for the lifecycle of the clo
 - Batch-at-a-time vectorized execution model (Scan, Filter, Project, Aggregate).
 - High-performance `NumericVector` and `VectorBatch` data structures.
 
+### Phase 9 — Stability & Testing Refinement
+**Focus**: Engine Robustness & E2E Validation.
+- Slotted-page layout fixes for large table support.
+- Buffer Pool Manager lifecycle management (destructor flushing).
+- Robust Python E2E client with partial-read handling and numeric validation.
+- Standardized test orchestration via `run_test.sh`.
+
 ---
 
 ## Technical Standards

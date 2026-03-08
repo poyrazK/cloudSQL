@@ -81,7 +81,8 @@ std::map<std::string, TokenType> Lexer::init_keywords() {
             {"CHAR", TokenType::TypeChar},
             {"BOOL", TokenType::TypeBool},
             {"BOOLEAN", TokenType::TypeBool},
-            {"DISTINCT", TokenType::Distinct}};
+            {"DISTINCT", TokenType::Distinct},
+            {"HAVING", TokenType::Having}};
 }
 
 Token Lexer::next_token() {
