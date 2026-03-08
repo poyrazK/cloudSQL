@@ -893,10 +893,16 @@ TEST(OperatorTests, AggregateTypes) {
     TransactionManager tm(lm, *catalog, sm, nullptr);
     QueryExecutor exec(*catalog, sm, lm, tm);
 
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE agg_types (val DOUBLE)")).parse_statement()));
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO agg_types VALUES (10.0), (20.0), (30.0)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE agg_types (val DOUBLE)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO agg_types VALUES (10.0), (20.0), (30.0)"))
+             .parse_statement()));
 
-    auto res = exec.execute(*Parser(std::make_unique<Lexer>("SELECT MIN(val), MAX(val), AVG(val), SUM(val), COUNT(val) FROM agg_types")).parse_statement());
+    auto res = exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "SELECT MIN(val), MAX(val), AVG(val), SUM(val), COUNT(val) FROM agg_types"))
+             .parse_statement());
     EXPECT_TRUE(res.success());
     ASSERT_EQ(res.row_count(), 1U);
     EXPECT_DOUBLE_EQ(res.rows()[0].get(0).to_float64(), 10.0);
@@ -916,10 +922,15 @@ TEST(OperatorTests, LimitOffset) {
     TransactionManager tm(lm, *catalog, sm, nullptr);
     QueryExecutor exec(*catalog, sm, lm, tm);
 
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE lim_off (val INT)")).parse_statement()));
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO lim_off VALUES (1), (2), (3), (4), (5)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE lim_off (val INT)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO lim_off VALUES (1), (2), (3), (4), (5)"))
+             .parse_statement()));
 
-    auto res = exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM lim_off ORDER BY val LIMIT 2 OFFSET 2")).parse_statement());
+    auto res = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT val FROM lim_off ORDER BY val LIMIT 2 OFFSET 2"))
+             .parse_statement());
     EXPECT_TRUE(res.success());
     ASSERT_EQ(res.row_count(), 2U);
     EXPECT_EQ(res.rows()[0].get(0).to_int64(), 3);
