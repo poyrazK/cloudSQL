@@ -237,9 +237,9 @@ TEST(AnalyticsTests, VectorizedExpressionAdvanced) {
     auto col_a = std::make_unique<ColumnExpr>("a");
     auto is_null = std::make_unique<IsNullExpr>(std::move(col_a), false);
     auto col_a_2 = std::make_unique<ColumnExpr>("a");
-    auto gt_20 =
-        std::make_unique<BinaryExpr>(std::move(col_a_2), TokenType::Gt,
-                                     std::make_unique<ConstantExpr>(common::Value::make_int64(20)));
+    auto gt_20 = std::make_unique<BinaryExpr>(
+        std::move(col_a_2), TokenType::Gt,
+        std::make_unique<ConstantExpr>(common::Value::make_int64(20)));
 
     BinaryExpr or_expr(std::move(is_null), TokenType::Or, std::move(gt_20));
 
