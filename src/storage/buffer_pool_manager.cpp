@@ -34,10 +34,12 @@ BufferPoolManager::~BufferPoolManager() {
         flush_all_pages();
     } catch (const std::exception& e) {
         // Log error to stderr; avoid throwing from destructor to prevent std::terminate
-        std::cerr << "[Error] Exception in BufferPoolManager destructor during flush_all_pages: " 
+        std::cerr << "[Error] Exception in BufferPoolManager destructor during flush_all_pages: "
                   << e.what() << std::endl;
     } catch (...) {
-        std::cerr << "[Error] Unknown exception in BufferPoolManager destructor during flush_all_pages" << std::endl;
+        std::cerr
+            << "[Error] Unknown exception in BufferPoolManager destructor during flush_all_pages"
+            << std::endl;
     }
 }
 
