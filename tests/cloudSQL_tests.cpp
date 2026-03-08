@@ -778,4 +778,99 @@ TEST(CatalogTests, Stats) {
     catalog->print();
 }
 
+// ============= Parser Advanced Tests =============
+
+TEST(ParserAdvanced, JoinAndComplexSelect) {
+    /* 1. Left Join and multiple joins */
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT a.id, b.val FROM t1 LEFT JOIN t2 ON a.id = b.id JOIN t3 ON b.x = t3.x WHERE a.id > 10");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        ASSERT_NE(stmt, nullptr);
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        ASSERT_NE(select, nullptr);
+        EXPECT_EQ(select->joins().size(), 2U);
+        EXPECT_EQ(select->joins()[0].type, SelectStatement::JoinType::Left);
+        EXPECT_EQ(select->joins()[1].type, SelectStatement::JoinType::Inner);
+    }
+
+    /* 2. Group By and Having */
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT cat, SUM(val) FROM items GROUP BY cat HAVING SUM(val) > 1000 ORDER BY cat DESC");
+        Parser parser(std::move(lexer));
+        auto stmt = parser.parse_statement();
+        ASSERT_NE(stmt, nullptr);
+        const auto* const select = dynamic_cast<const SelectStatement*>(stmt.get());
+        ASSERT_NE(select, nullptr);
+        EXPECT_EQ(select->group_by().size(), 1U);
+        ASSERT_NE(select->having(), nullptr);
+        EXPECT_EQ(select->order_by().size(), 1U);
+    }
+
+    /* 3. Transaction Statements */
+    {
+        auto lexer = std::make_unique<Lexer>("BEGIN");
+        Parser parser(std::move(lexer));
+        auto s1 = parser.parse_statement();
+        ASSERT_NE(s1, nullptr);
+        EXPECT_EQ(s1->type(), StmtType::TransactionBegin);
+        
+        auto lexer2 = std::make_unique<Lexer>("COMMIT");
+        Parser parser2(std::move(lexer2));
+        auto s2 = parser2.parse_statement();
+        ASSERT_NE(s2, nullptr);
+        EXPECT_EQ(s2->type(), StmtType::TransactionCommit);
+        
+        auto lexer3 = std::make_unique<Lexer>("ROLLBACK");
+        Parser parser3(std::move(lexer3));
+        auto s3 = parser3.parse_statement();
+        ASSERT_NE(s3, nullptr);
+        EXPECT_EQ(s3->type(), StmtType::TransactionRollback);
+    }
+}
+
+TEST(ParserAdvanced, ParserErrorPaths) {
+    /* Invalid CREATE syntax */
+    {
+        auto lexer = std::make_unique<Lexer>("CREATE TABLE (id INT)"); // Missing table name
+        Parser parser(std::move(lexer));
+        EXPECT_EQ(parser.parse_statement(), nullptr);
+    }
+    /* Invalid JOIN syntax */
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 LEFT t2"); // Missing JOIN keyword
+        Parser parser(std::move(lexer));
+        EXPECT_EQ(parser.parse_statement(), nullptr);
+    }
+    /* Invalid GROUP BY syntax */
+    {
+        auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 GROUP cat"); // Missing BY keyword
+        Parser parser(std::move(lexer));
+        EXPECT_EQ(parser.parse_statement(), nullptr);
+    }
+}
+
+// ============= Execution Advanced Tests =============
+
+TEST(ExecutionTests, AggregationHaving) {
+    static_cast<void>(std::remove("./test_data/having_test.heap"));
+    StorageManager disk_manager("./test_data");
+    BufferPoolManager sm(128, disk_manager);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, nullptr);
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE having_test (grp INT, val INT)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO having_test VALUES (1, 10), (1, 20), (2, 5)")).parse_statement()));
+
+    // SELECT grp, SUM(val) FROM having_test GROUP BY grp HAVING SUM(val) > 10
+    auto res = exec.execute(*Parser(std::make_unique<Lexer>("SELECT grp, SUM(val) FROM having_test GROUP BY grp HAVING SUM(val) > 10")).parse_statement());
+    
+    EXPECT_TRUE(res.success());
+    ASSERT_EQ(res.row_count(), 1U); // Only group 1 should pass (sum=30)
+    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "1");
+    static_cast<void>(std::remove("./test_data/having_test.heap"));
+}
+
 }  // namespace
