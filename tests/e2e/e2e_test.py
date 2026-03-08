@@ -1,3 +1,4 @@
+import math
 import socket
 import struct
 import time
@@ -35,7 +36,7 @@ class CloudSQLClient:
             print(f"Got: {z_type}")
             if z_type != b'Z':
                 raise Exception(f"Expected ReadyForQuery 'Z', got {z_type}")
-            self.sock.recv(5) # length + 1 byte state
+            self.recv_exactly(5) # length + 1 byte state
         except Exception as e:
             print(f"Error reading handshake: {e}")
             raise
@@ -191,8 +192,9 @@ if __name__ == "__main__":
         cols, rows, status = client.query("SELECT SUM(reading) FROM sensor_data;")
         assert len(rows) == 1
         # 105 * 100.5 + 945 * 20.5 = 10552.5 + 19372.5 = 29925.0
-        # Compare as float to avoid formatting issues
-        assert float(rows[0][0]) == 29925.0, f"Expected 29925.0, got {rows[0][0]}"
+        # Use math.isclose to handle potential floating point precision differences
+        actual_sum = float(rows[0][0])
+        assert math.isclose(actual_sum, 29925.0, rel_tol=1e-9, abs_tol=1e-6), f"Expected 29925.0, got {actual_sum}"
 
         print("Testing DROP TABLE sensor_data...")
         cols, rows, status = client.query("DROP TABLE sensor_data;")
