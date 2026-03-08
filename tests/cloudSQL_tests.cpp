@@ -984,4 +984,27 @@ TEST(ParserTests, CreateIndexAndAlter) {
     }
 }
 
+TEST(ParserTests, ExhaustiveParserErrors) {
+    // 1. Invalid Table Name in CREATE
+    {
+        Parser p(std::make_unique<Lexer>("CREATE TABLE (id INT)"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+    // 2. Invalid Column list in INSERT
+    {
+        Parser p(std::make_unique<Lexer>("INSERT INTO t ( ) VALUES (1)"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+    // 3. Missing JOIN keyword
+    {
+        Parser p(std::make_unique<Lexer>("SELECT * FROM t1 LEFT t2 ON 1=1"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+    // 4. Missing BY in GROUP BY
+    {
+        Parser p(std::make_unique<Lexer>("SELECT a FROM t GROUP a"));
+        EXPECT_EQ(p.parse_statement(), nullptr);
+    }
+}
+
 }  // namespace
