@@ -3,7 +3,7 @@ rm -rf ../test_data || true
 mkdir -p ../test_data
 cd ../build
 make -j4
-./sqlEngine -p 5438 -d ../test_data &
+./cloudSQL -p 5438 -d ../test_data &
 SQL_PID=$!
 sleep 2
 echo "Running E2E"
