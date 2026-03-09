@@ -126,7 +126,7 @@ def run_slt(file_path, port):
             # query <types> [sort]
             parts = line.split()
             types = parts[1]
-            # TODO: handle sort option
+            sort_mode = parts[2] if len(parts) > 2 else None
             
             sql_lines = []
             line_idx += 1
@@ -152,6 +152,19 @@ def run_slt(file_path, port):
                 failed_tests += 1
                 continue
 
+            # Apply sort mode
+            if sort_mode == 'rowsort':
+                actual_rows.sort()
+                expected_rows.sort()
+            elif sort_mode == 'valuesort':
+                actual_values = sorted([str(val) if val is not None else "NULL" for row in actual_rows for val in row])
+                expected_values = sorted([val for row in expected_rows for val in row])
+                actual_rows = [[v] for v in actual_values]
+                expected_rows = [[v] for v in expected_values]
+            elif sort_mode:
+                print(f"ERROR: Unsupported sort mode: {sort_mode}")
+                sys.exit(1)
+
             # Compare results
             if len(actual_rows) != len(expected_rows):
                 print(f"FAILURE at {file_path}:{line_idx}")
@@ -176,7 +189,7 @@ def run_slt(file_path, port):
                         continue
                     
                     # Basic numeric normalization for float comparison
-                    if types[j] == 'R':
+                    if types[j] == 'R' and sort_mode != 'valuesort':
                         try:
                             if not math.isclose(float(act), float(exp), rel_tol=1e-6):
                                 match = False
