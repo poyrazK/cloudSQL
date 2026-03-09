@@ -784,8 +784,9 @@ TEST(ParserAdvanced, JoinAndComplexSelect) {
     /* 1. Left Join and multiple joins */
     {
         auto lexer = std::make_unique<Lexer>(
-            "SELECT a.id, b.val FROM t1 LEFT JOIN t2 ON a.id = b.id JOIN t3 ON b.x = t3.x WHERE "
-            "a.id > 10");
+            "SELECT t1.id, t2.val FROM t1 LEFT JOIN t2 ON t1.id = t2.id JOIN t3 ON t2.x = t3.x "
+            "WHERE "
+            "t1.id > 10");
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
         ASSERT_NE(stmt, nullptr);

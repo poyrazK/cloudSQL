@@ -1,0 +1,42 @@
+# Join Operations Tests
+
+statement ok
+CREATE TABLE users_j (id INT, name TEXT);
+
+statement ok
+CREATE TABLE orders_j (id INT, user_id INT, amount DOUBLE);
+
+statement ok
+INSERT INTO users_j VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');
+
+statement ok
+INSERT INTO orders_j VALUES (101, 1, 50.0), (102, 1, 25.0), (103, 2, 100.0);
+
+# Inner Join
+query TR
+SELECT users_j.name, orders_j.amount FROM users_j JOIN orders_j ON users_j.id = orders_j.user_id ORDER BY orders_j.amount;
+----
+Alice 25.0
+Alice 50.0
+Bob 100.0
+
+# Join with where
+query TI
+SELECT users_j.name, orders_j.id FROM users_j JOIN orders_j ON users_j.id = orders_j.user_id WHERE orders_j.amount > 60;
+----
+Bob 103
+
+# Left Join (Charlie has no orders)
+query TR
+SELECT users_j.name, orders_j.amount FROM users_j LEFT JOIN orders_j ON users_j.id = orders_j.user_id ORDER BY users_j.name, orders_j.amount;
+----
+Alice 25.0
+Alice 50.0
+Bob 100.0
+Charlie NULL
+
+statement ok
+DROP TABLE users_j;
+
+statement ok
+DROP TABLE orders_j;

@@ -26,6 +26,11 @@ namespace cloudsql::executor {
 enum class ExecState : uint8_t { Init, Open, Executing, Done, Error };
 
 /**
+ * @brief Supported join types for relation merging.
+ */
+enum class JoinType : uint8_t { Inner, Left, Right, Full };
+
+/**
  * @brief Supported aggregation functions for analytical queries.
  */
 enum class AggregateType : uint8_t { Count, Sum, Avg, Min, Max };

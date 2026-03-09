@@ -1,0 +1,57 @@
+# Basic SLT Test
+
+statement ok
+CREATE TABLE test_slt (id INT, name TEXT, val DOUBLE);
+
+statement ok
+INSERT INTO test_slt VALUES (1, 'Alice', 10.5);
+
+statement ok
+INSERT INTO test_slt VALUES (2, 'Bob', 20.0);
+
+statement ok
+INSERT INTO test_slt VALUES (3, 'Charlie', 30.75);
+
+# Basic Select
+query ITR
+SELECT id, name, val FROM test_slt ORDER BY id;
+----
+1 Alice 10.5
+2 Bob 20.0
+3 Charlie 30.75
+
+# Filtered Select
+query T
+SELECT name FROM test_slt WHERE id = 2;
+----
+Bob
+
+# Null handling (if supported by server responses)
+statement ok
+INSERT INTO test_slt VALUES (4, 'NULL_TEST', NULL);
+
+query I
+SELECT id FROM test_slt WHERE val IS NULL;
+----
+4
+
+# Update
+statement ok
+UPDATE test_slt SET val = 15.0 WHERE id = 1;
+
+query R
+SELECT val FROM test_slt WHERE id = 1;
+----
+15.0
+
+# Delete
+statement ok
+DELETE FROM test_slt WHERE id = 3;
+
+query I
+SELECT COUNT(id) FROM test_slt;
+----
+3
+
+statement ok
+DROP TABLE test_slt;

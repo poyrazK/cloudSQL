@@ -649,9 +649,18 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         }
 
         if (use_hash_join) {
-            current_root =
-                std::make_unique<HashJoinOperator>(std::move(current_root), std::move(join_scan),
-                                                   std::move(left_key), std::move(right_key));
+            executor::JoinType exec_join_type = executor::JoinType::Inner;
+            if (join.type == parser::SelectStatement::JoinType::Left) {
+                exec_join_type = executor::JoinType::Left;
+            } else if (join.type == parser::SelectStatement::JoinType::Right) {
+                exec_join_type = executor::JoinType::Right;
+            } else if (join.type == parser::SelectStatement::JoinType::Full) {
+                exec_join_type = executor::JoinType::Full;
+            }
+
+            current_root = std::make_unique<HashJoinOperator>(
+                std::move(current_root), std::move(join_scan), std::move(left_key),
+                std::move(right_key), exec_join_type);
         } else {
             /* TODO: Implement NestedLoopJoin for non-equality or missing conditions */
             return nullptr;

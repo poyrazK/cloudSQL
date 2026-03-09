@@ -414,12 +414,24 @@ void Server::handle_connection(int client_fd) {
                             for (const auto& row : res.rows()) {
                                 const char d_type = 'D';
                                 uint32_t d_len = 4 + 2;  // len + num_cols
-                                std::vector<std::string> str_vals;
+
+                                struct ColValue {
+                                    bool is_null;
+                                    std::string val;
+                                };
+                                std::vector<ColValue> col_vals;
+                                col_vals.reserve(num_cols);
+
                                 for (uint32_t i = 0; i < num_cols; ++i) {
-                                    const std::string s_val = row.get(i).to_string();
-                                    str_vals.push_back(s_val);
-                                    d_len +=
-                                        4 + static_cast<uint32_t>(s_val.size());  // len + value
+                                    const auto& v = row.get(i);
+                                    if (v.is_null()) {
+                                        col_vals.push_back({true, ""});
+                                        d_len += 4;
+                                    } else {
+                                        std::string s_val = v.to_string();
+                                        d_len += 4 + static_cast<uint32_t>(s_val.size());
+                                        col_vals.push_back({false, std::move(s_val)});
+                                    }
                                 }
 
                                 const uint32_t net_d_len = htonl(d_len);
@@ -427,12 +439,17 @@ void Server::handle_connection(int client_fd) {
                                 static_cast<void>(send(client_fd, &net_d_len, 4, 0));
                                 static_cast<void>(send(client_fd, &net_num_cols, 2, 0));
 
-                                for (const auto& s_val : str_vals) {
-                                    const uint32_t val_len =
-                                        htonl(static_cast<uint32_t>(s_val.size()));
-                                    static_cast<void>(send(client_fd, &val_len, 4, 0));
-                                    static_cast<void>(
-                                        send(client_fd, s_val.c_str(), s_val.size(), 0));
+                                for (const auto& cv : col_vals) {
+                                    if (cv.is_null) {
+                                        const uint32_t null_len = 0xFFFFFFFF;
+                                        static_cast<void>(send(client_fd, &null_len, 4, 0));
+                                    } else {
+                                        const uint32_t val_len =
+                                            htonl(static_cast<uint32_t>(cv.val.size()));
+                                        static_cast<void>(send(client_fd, &val_len, 4, 0));
+                                        static_cast<void>(
+                                            send(client_fd, cv.val.c_str(), cv.val.size(), 0));
+                                    }
                                 }
                             }
                         }

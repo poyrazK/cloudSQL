@@ -1,0 +1,49 @@
+# Expression Logic Tests
+
+statement ok
+CREATE TABLE expr_test (a INT, b INT, c DOUBLE);
+
+statement ok
+INSERT INTO expr_test VALUES (10, 20, 30.5), (5, 5, 5.0), (0, 100, -1.5);
+
+# Arithmetic
+query R
+SELECT a + b + c FROM expr_test ORDER BY a;
+----
+98.5
+15.0
+60.5
+
+# Comparison & Logic
+query I
+SELECT a FROM expr_test WHERE a < b AND b > 50;
+----
+0
+
+query I
+SELECT COUNT(a) FROM expr_test WHERE (a + b) = 10;
+----
+1
+
+# NULL Logic
+statement ok
+INSERT INTO expr_test VALUES (NULL, 1, 1.0);
+
+query I
+SELECT b FROM expr_test WHERE a IS NULL;
+----
+1
+
+query I
+SELECT COUNT(b) FROM expr_test WHERE a IS NOT NULL;
+----
+3
+
+# Complex Binary
+query I
+SELECT a FROM expr_test WHERE a * 2 = b;
+----
+10
+
+statement ok
+DROP TABLE expr_test;

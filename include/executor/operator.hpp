@@ -275,28 +275,42 @@ class AggregateOperator : public Operator {
  * @brief Hash join operator
  */
 class HashJoinOperator : public Operator {
+   public:
+    using JoinType = cloudsql::executor::JoinType;
+
    private:
+    struct BuildTuple {
+        Tuple tuple;
+        bool matched = false;
+    };
+
     std::unique_ptr<Operator> left_;
     std::unique_ptr<Operator> right_;
     std::unique_ptr<parser::Expression> left_key_;
     std::unique_ptr<parser::Expression> right_key_;
+    JoinType join_type_;
     Schema schema_;
 
     /* In-memory hash table for the right side */
-    std::unordered_multimap<std::string, Tuple> hash_table_;
+    std::unordered_multimap<std::string, BuildTuple> hash_table_;
 
     /* Probe phase state */
     std::optional<Tuple> left_tuple_;
+    bool left_had_match_ = false;
     struct MatchIterator {
-        std::unordered_multimap<std::string, Tuple>::iterator current;
-        std::unordered_multimap<std::string, Tuple>::iterator end;
+        std::unordered_multimap<std::string, BuildTuple>::iterator current;
+        std::unordered_multimap<std::string, BuildTuple>::iterator end;
     };
     std::optional<MatchIterator> match_iter_;
+
+    /* Final phase for RIGHT/FULL joins */
+    std::optional<std::unordered_multimap<std::string, BuildTuple>::iterator> right_idx_iter_;
 
    public:
     HashJoinOperator(std::unique_ptr<Operator> left, std::unique_ptr<Operator> right,
                      std::unique_ptr<parser::Expression> left_key,
-                     std::unique_ptr<parser::Expression> right_key);
+                     std::unique_ptr<parser::Expression> right_key,
+                     JoinType join_type = JoinType::Inner);
 
     bool init() override;
     bool open() override;
