@@ -420,6 +420,7 @@ void Server::handle_connection(int client_fd) {
                                     std::string val;
                                 };
                                 std::vector<ColValue> col_vals;
+                                col_vals.reserve(num_cols);
 
                                 for (uint32_t i = 0; i < num_cols; ++i) {
                                     const auto& v = row.get(i);
