@@ -665,7 +665,6 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             /* TODO: Implement NestedLoopJoin for non-equality or missing conditions */
             return nullptr;
         }
-
     }
 
     /* 3. Filter (WHERE) */

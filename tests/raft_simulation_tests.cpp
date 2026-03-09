@@ -57,7 +57,7 @@ TEST(RaftSimulationTests, HeartbeatReset) {
         // Use a high term to ensure it's accepted
         term_t term = 100;
         std::memcpy(payload.data(), &term, 8);
-        
+
         network::RpcHeader header;
         header.type = network::RpcType::AppendEntries;
         header.group_id = 2;

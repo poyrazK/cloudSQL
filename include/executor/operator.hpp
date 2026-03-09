@@ -276,7 +276,8 @@ class AggregateOperator : public Operator {
  */
 class HashJoinOperator : public Operator {
    public:
-   using JoinType = cloudsql::executor::JoinType;
+    using JoinType = cloudsql::executor::JoinType;
+
    private:
     std::unique_ptr<Operator> left_;
     std::unique_ptr<Operator> right_;

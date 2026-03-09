@@ -44,7 +44,8 @@ std::unique_ptr<Statement> Parser::parse_statement() {
             static_cast<void>(next_token());  // consume CREATE
             if (peek_token().type() == TokenType::Table) {
                 stmt = parse_create_table();
-            } else if (peek_token().type() == TokenType::Index || peek_token().type() == TokenType::Unique) {
+            } else if (peek_token().type() == TokenType::Index ||
+                       peek_token().type() == TokenType::Unique) {
                 stmt = parse_create_index();
             }
             break;

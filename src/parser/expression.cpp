@@ -235,10 +235,10 @@ common::Value ColumnExpr::evaluate(const executor::Tuple* tuple,
     }
 
     size_t index = static_cast<size_t>(-1);
-    
+
     /* 1. Try exact match (either fully qualified or just name) */
     index = schema->find_column(this->to_string());
-    
+
     /* 2. If not found and it's qualified, try just the column name */
     if (index == static_cast<size_t>(-1) && has_table()) {
         index = schema->find_column(name_);

@@ -414,7 +414,7 @@ void Server::handle_connection(int client_fd) {
                             for (const auto& row : res.rows()) {
                                 const char d_type = 'D';
                                 uint32_t d_len = 4 + 2;  // len + num_cols
-                                
+
                                 struct ColValue {
                                     bool is_null;
                                     std::string val;
