@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <csignal>
 #include <thread>
 #include <vector>
 
@@ -92,6 +93,7 @@ TEST(MultiRaftTests, StateMachineIntegration) {
  * This ensures high availability by validating consensus emergence.
  */
 TEST(MultiRaftTests, LeaderElectionAndFailover) {
+    signal(SIGPIPE, SIG_IGN);
     const int num_nodes = 3;
     const int base_port = 9200;
 
