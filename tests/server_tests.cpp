@@ -33,6 +33,7 @@ constexpr uint16_t PORT_STATUS = 6001;
 constexpr uint16_t PORT_CONNECT = 6002;
 constexpr uint16_t PORT_STARTUP = 6003;
 constexpr uint16_t PORT_SSL = 6004;
+constexpr uint16_t PORT_INVALID = 6005;
 constexpr size_t STARTUP_PKT_LEN = 8;
 
 TEST(ServerTests, StatusStrings) {
@@ -100,23 +101,32 @@ TEST(ServerTests, Handshake) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
-        // Send startup packet
-        const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
-                                                 htonl(196608)};
-        send(sock, startup.data(), startup.size() * 4, 0);
-
-        // Receive Auth OK
-        std::array<char, 9> buffer{};
-        ssize_t n = recv(sock, buffer.data(), 9, 0);
-        EXPECT_EQ(n, 9);
-        EXPECT_EQ(buffer[0], 'R');
-
-        // Receive ReadyForQuery
-        n = recv(sock, buffer.data(), 6, 0);
-        EXPECT_EQ(n, 6);
-        EXPECT_EQ(buffer[0], 'Z');
+    // Wait for server to be ready
+    bool connected = false;
+    for (int i = 0; i < 5; ++i) {
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+            connected = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    ASSERT_TRUE(connected);
+
+    // Send startup packet
+    const std::array<uint32_t, 2> startup = {htonl(static_cast<uint32_t>(STARTUP_PKT_LEN)),
+                                             htonl(196608)};
+    send(sock, startup.data(), startup.size() * 4, 0);
+
+    // Receive Auth OK
+    std::array<char, 9> buffer{};
+    ssize_t n = recv(sock, buffer.data(), 9, 0);
+    EXPECT_EQ(n, 9);
+    EXPECT_EQ(buffer[0], 'R');
+
+    // Receive ReadyForQuery
+    n = recv(sock, buffer.data(), 6, 0);
+    EXPECT_EQ(n, 6);
+    EXPECT_EQ(buffer[0], 'Z');
 
     close(sock);
     static_cast<void>(server->stop());
@@ -125,7 +135,7 @@ TEST(ServerTests, Handshake) {
 TEST(ServerTests, SSLHandshake) {
     auto catalog = Catalog::create();
     StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager sm(128, disk_manager);
+    storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     config::Config cfg;
     uint16_t port = PORT_SSL;
 
@@ -138,17 +148,26 @@ TEST(ServerTests, SSLHandshake) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
-        // Send SSL Request: length=8, code=80877103
-        const std::array<uint32_t, 2> ssl_req = {htonl(8), htonl(80877103)};
-        send(sock, ssl_req.data(), 8, 0);
-
-        // Server should reply with 'N' (SSL not supported)
-        char reply = 0;
-        ssize_t n = recv(sock, &reply, 1, 0);
-        EXPECT_EQ(n, 1);
-        EXPECT_EQ(reply, 'N');
+    // Wait for server to be ready
+    bool connected = false;
+    for (int i = 0; i < 5; ++i) {
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+            connected = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    ASSERT_TRUE(connected);
+
+    // Send SSL Request: length=8, code=80877103
+    const std::array<uint32_t, 2> ssl_req = {htonl(8), htonl(80877103)};
+    send(sock, ssl_req.data(), 8, 0);
+
+    // Server should reply with 'N' (SSL not supported)
+    char reply = 0;
+    ssize_t n = recv(sock, &reply, 1, 0);
+    EXPECT_EQ(n, 1);
+    EXPECT_EQ(reply, 'N');
 
     close(sock);
     static_cast<void>(server->stop());
@@ -157,9 +176,9 @@ TEST(ServerTests, SSLHandshake) {
 TEST(ServerTests, InvalidHandshake) {
     auto catalog = Catalog::create();
     StorageManager disk_manager("./test_data");
-    storage::BufferPoolManager sm(128, disk_manager);
+    storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     config::Config cfg;
-    uint16_t port = 6005;
+    uint16_t port = PORT_INVALID;
 
     auto server = Server::create(port, *catalog, sm, cfg, nullptr);
     ASSERT_TRUE(server->start());
@@ -170,16 +189,25 @@ TEST(ServerTests, InvalidHandshake) {
     addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
-        // Send invalid length
-        const uint32_t invalid_len = htonl(3);
-        send(sock, &invalid_len, 4, 0);
-
-        // Server should close connection due to invalid length
-        char buf;
-        ssize_t n = recv(sock, &buf, 1, 0);
-        EXPECT_LE(n, 0);
+    // Wait for server to be ready
+    bool connected = false;
+    for (int i = 0; i < 5; ++i) {
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+            connected = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    ASSERT_TRUE(connected);
+
+    // Send invalid length
+    const uint32_t invalid_len = htonl(3);
+    send(sock, &invalid_len, 4, 0);
+
+    // Server should close connection due to invalid length
+    char buf;
+    ssize_t n = recv(sock, &buf, 1, 0);
+    EXPECT_LE(n, 0);
 
     close(sock);
     static_cast<void>(server->stop());

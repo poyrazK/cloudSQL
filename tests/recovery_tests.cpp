@@ -121,20 +121,26 @@ TEST(RecoveryTests, LogRecordVariants) {
         rec.serialize(buf.data());
         auto d = LogRecord::deserialize(buf.data());
         EXPECT_EQ(d.type_, LogRecordType::BEGIN);
+        EXPECT_EQ(d.txn_id_, 1);
+        EXPECT_EQ(d.prev_lsn_, -1);
     }
     {
-        LogRecord rec(1, 10, LogRecordType::COMMIT);
+        LogRecord rec(2, 10, LogRecordType::COMMIT);
         std::vector<char> buf(rec.get_size());
         rec.serialize(buf.data());
         auto d = LogRecord::deserialize(buf.data());
         EXPECT_EQ(d.type_, LogRecordType::COMMIT);
+        EXPECT_EQ(d.txn_id_, 2);
+        EXPECT_EQ(d.prev_lsn_, 10);
     }
     {
-        LogRecord rec(1, 20, LogRecordType::ABORT);
+        LogRecord rec(3, 20, LogRecordType::ABORT);
         std::vector<char> buf(rec.get_size());
         rec.serialize(buf.data());
         auto d = LogRecord::deserialize(buf.data());
         EXPECT_EQ(d.type_, LogRecordType::ABORT);
+        EXPECT_EQ(d.txn_id_, 3);
+        EXPECT_EQ(d.prev_lsn_, 20);
     }
 }
 
