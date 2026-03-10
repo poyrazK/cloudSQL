@@ -187,7 +187,7 @@ def run_slt(file_path, port):
             if status == "ERROR":
                 print(f"FAILURE at {file_path}:{start_line}")
                 print(f"  SQL: {sql}")
-                print(f"  Query failed with ERROR status")
+                print("  Query failed with ERROR status")
                 failed_tests += 1
                 continue
 

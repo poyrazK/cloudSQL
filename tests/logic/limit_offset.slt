@@ -7,7 +7,7 @@ statement ok
 INSERT INTO lim_off_test VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');
 
 # 1. Simple Limit
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id LIMIT 3;
 ----
 1
@@ -15,7 +15,7 @@ SELECT id FROM lim_off_test ORDER BY id LIMIT 3;
 3
 
 # 2. Simple Offset
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id OFFSET 2;
 ----
 3
@@ -23,36 +23,36 @@ SELECT id FROM lim_off_test ORDER BY id OFFSET 2;
 5
 
 # 3. Limit and Offset combined
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id LIMIT 2 OFFSET 1;
 ----
 2
 3
 
 # 4. Limit 0 (should return empty)
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id LIMIT 0;
 ----
 
 # 5. Offset equal to row count
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id OFFSET 5;
 ----
 
 # 6. Offset greater than row count
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id OFFSET 10;
 ----
 
 # 7. Limit greater than available rows
-query IT
+query I
 SELECT id FROM lim_off_test ORDER BY id OFFSET 3 LIMIT 10;
 ----
 4
 5
 
 # 8. Limit and Offset with Filter (OFFSET 3 LIMIT 1)
-query IT
+query I
 SELECT id FROM lim_off_test WHERE id > 0 ORDER BY id OFFSET 3 LIMIT 1;
 ----
 4

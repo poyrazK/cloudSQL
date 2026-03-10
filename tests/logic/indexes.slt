@@ -17,12 +17,12 @@ SELECT id, val FROM idx_test WHERE id = 3;
 3 three
 
 # 3. Point lookup with no match
-query IT
-SELECT id, val FROM idx_test WHERE id = 10;
+query I
+SELECT id FROM idx_test WHERE id = 10;
 ----
 
 # 4. Range-like query (if supported, but usually SeqScan fallback)
-query IT
+query I
 SELECT id FROM idx_test WHERE id > 2 ORDER BY id;
 ----
 3
