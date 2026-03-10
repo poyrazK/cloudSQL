@@ -49,6 +49,7 @@ enum class TokenType : uint8_t {
     Join,
     Left,
     Right,
+    Full,
     Inner,
     Outer,
     Order,

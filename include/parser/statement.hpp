@@ -73,8 +73,8 @@ class SelectStatement : public Statement {
     std::vector<std::unique_ptr<Expression>> group_by_;
     std::unique_ptr<Expression> having_;
     std::vector<std::unique_ptr<Expression>> order_by_;
-    int64_t limit_ = 0;
-    int64_t offset_ = 0;
+    int64_t limit_ = -1;
+    int64_t offset_ = -1;
     bool distinct_ = false;
 
    public:
@@ -112,7 +112,7 @@ class SelectStatement : public Statement {
     [[nodiscard]] int64_t limit() const { return limit_; }
     [[nodiscard]] int64_t offset() const { return offset_; }
     [[nodiscard]] bool distinct() const { return distinct_; }
-    [[nodiscard]] bool has_limit() const { return limit_ > 0; }
+    [[nodiscard]] bool has_limit() const { return limit_ >= 0; }
     [[nodiscard]] bool has_offset() const { return offset_ > 0; }
 
     [[nodiscard]] std::string to_string() const override;
