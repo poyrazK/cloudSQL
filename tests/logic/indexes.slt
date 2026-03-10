@@ -29,7 +29,13 @@ SELECT id FROM idx_test WHERE id > 2 ORDER BY id;
 4
 5
 
-# 5. Drop index and verify it still works
+# 5. Drop index and verify it can be recreated (proving it was actually dropped)
+statement ok
+DROP INDEX idx_id;
+
+statement ok
+CREATE INDEX idx_id ON idx_test (id);
+
 statement ok
 DROP INDEX idx_id;
 

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -38,6 +39,29 @@
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
+
+namespace {
+enum class IndexOp { Insert, Remove };
+
+/**
+ * @brief Helper to perform index writes and check for success
+ */
+bool apply_index_write(storage::BTreeIndex& index, const common::Value& key,
+                       const storage::HeapTable::TupleId& rid, IndexOp op, std::string& error_msg) {
+    bool success = false;
+    if (op == IndexOp::Insert) {
+        success = index.insert(key, rid);
+    } else {
+        success = index.remove(key, rid);
+    }
+
+    if (!success) {
+        error_msg = "Index operation failed for key: " + key.to_string();
+        return false;
+    }
+    return true;
+}
+}  // namespace
 
 void ShardStateMachine::apply(const raft::LogEntry& entry) {
     if (entry.data.empty()) return;
@@ -92,6 +116,12 @@ QueryExecutor::QueryExecutor(Catalog& catalog, storage::BufferPoolManager& bpm,
       transaction_manager_(transaction_manager),
       log_manager_(log_manager),
       cluster_manager_(cluster_manager) {}
+
+QueryExecutor::~QueryExecutor() {
+    if (current_txn_ != nullptr) {
+        transaction_manager_.abort(current_txn_);
+    }
+}
 
 QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     const auto start = std::chrono::high_resolution_clock::now();
@@ -272,6 +302,13 @@ QueryResult QueryExecutor::execute_create_table(const parser::CreateTableStateme
 
 QueryResult QueryExecutor::execute_create_index(const parser::CreateIndexStatement& stmt) {
     QueryResult result;
+
+    /* Reject composite indexes */
+    if (stmt.columns().size() != 1) {
+        result.set_error("Composite indexes not supported");
+        return result;
+    }
+
     auto table_meta_opt = catalog_.get_table_by_name(stmt.table_name());
     if (!table_meta_opt.has_value()) {
         result.set_error("Table not found: " + stmt.table_name());
@@ -282,20 +319,19 @@ QueryResult QueryExecutor::execute_create_index(const parser::CreateIndexStateme
     std::vector<uint16_t> col_positions;
     common::ValueType key_type = common::ValueType::TYPE_NULL;
 
-    for (const auto& col_name : stmt.columns()) {
-        bool found = false;
-        for (const auto& col : table_meta->columns) {
-            if (col.name == col_name) {
-                col_positions.push_back(col.position);
-                key_type = col.type;
-                found = true;
-                break;
-            }
+    const auto& col_name = stmt.columns()[0];
+    bool found = false;
+    for (const auto& col : table_meta->columns) {
+        if (col.name == col_name) {
+            col_positions.push_back(col.position);
+            key_type = col.type;
+            found = true;
+            break;
         }
-        if (!found) {
-            result.set_error("Column not found: " + col_name);
-            return result;
-        }
+    }
+    if (!found) {
+        result.set_error("Column not found: " + col_name);
+        return result;
     }
 
     /* Update Catalog */
@@ -314,7 +350,7 @@ QueryResult QueryExecutor::execute_create_index(const parser::CreateIndexStateme
         return result;
     }
 
-    /* Populate Index with existing data */
+    /* Populate Index with existing data (Backfill) */
     Schema schema;
     for (const auto& col : table_meta->columns) {
         schema.add_column(col.name, col.type);
@@ -322,12 +358,16 @@ QueryResult QueryExecutor::execute_create_index(const parser::CreateIndexStateme
     storage::HeapTable table(stmt.table_name(), bpm_, schema);
     auto iter = table.scan();
     storage::HeapTable::TupleMeta meta;
+    std::string err;
     while (iter.next_meta(meta)) {
         if (meta.xmax == 0) {
             /* Extract key from tuple */
-            if (!col_positions.empty()) {
-                const common::Value& key = meta.tuple.get(col_positions[0]);
-                index.insert(key, iter.current_id());
+            const common::Value& key = meta.tuple.get(col_positions[0]);
+            if (!apply_index_write(index, key, iter.current_id(), IndexOp::Insert, err)) {
+                static_cast<void>(index.drop());
+                static_cast<void>(catalog_.drop_index(index_id));
+                result.set_error(err);
+                return result;
             }
         }
     }
@@ -397,12 +437,15 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
         const auto tid = table.insert(tuple, xmin);
 
         /* Update Indexes */
+        std::string err;
         for (const auto& idx_info : table_meta->indexes) {
             if (!idx_info.column_positions.empty()) {
                 uint16_t pos = idx_info.column_positions[0];
                 common::ValueType ktype = table_meta->columns[pos].type;
                 storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                index.insert(tuple.get(pos), tid);
+                if (!apply_index_write(index, tuple.get(pos), tid, IndexOp::Insert, err)) {
+                    throw std::runtime_error(err);
+                }
             }
         }
 
@@ -488,21 +531,22 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt,
             }
         }
 
-        /* Retrieve old tuple for logging */
+        /* Retrieve old tuple for logging and index maintenance (unconditional) */
         Tuple old_tuple;
-        if (log_manager_ != nullptr && txn != nullptr) {
-            static_cast<void>(table.get(rid, old_tuple));
-        }
+        static_cast<void>(table.get(rid, old_tuple));
 
         if (table.remove(rid, xmax)) {
             /* Update Indexes */
+            std::string err;
             if (!old_tuple.empty()) {
                 for (const auto& idx_info : table_meta->indexes) {
                     if (!idx_info.column_positions.empty()) {
                         uint16_t pos = idx_info.column_positions[0];
                         common::ValueType ktype = table_meta->columns[pos].type;
                         storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                        index.remove(old_tuple.get(pos), rid);
+                        if (!apply_index_write(index, old_tuple.get(pos), rid, IndexOp::Remove, err)) {
+                            throw std::runtime_error(err);
+                        }
                     }
                 }
             }
@@ -581,12 +625,15 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
     for (const auto& op : updates) {
         if (table.remove(op.rid, txn_id)) {
             /* Update Indexes - Remove old, Insert new */
+            std::string err;
             for (const auto& idx_info : table_meta->indexes) {
                 if (!idx_info.column_positions.empty()) {
                     uint16_t pos = idx_info.column_positions[0];
                     common::ValueType ktype = table_meta->columns[pos].type;
                     storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                    index.remove(op.old_tuple.get(pos), op.rid);
+                    if (!apply_index_write(index, op.old_tuple.get(pos), op.rid, IndexOp::Remove, err)) {
+                        throw std::runtime_error(err);
+                    }
                 }
             }
 
@@ -607,7 +654,9 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
                     uint16_t pos = idx_info.column_positions[0];
                     common::ValueType ktype = table_meta->columns[pos].type;
                     storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                    index.insert(op.new_tuple.get(pos), new_tid);
+                    if (!apply_index_write(index, op.new_tuple.get(pos), new_tid, IndexOp::Insert, err)) {
+                        throw std::runtime_error(err);
+                    }
                 }
             }
 

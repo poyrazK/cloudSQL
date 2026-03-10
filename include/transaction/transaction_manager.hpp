@@ -82,7 +82,7 @@ class TransactionManager {
     /**
      * @brief Undo changes made by a transaction
      */
-    void undo_transaction(Transaction* txn);
+    bool undo_transaction(Transaction* txn);
 };
 
 }  // namespace cloudsql::transaction

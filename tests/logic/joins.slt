@@ -40,23 +40,23 @@ statement ok
 INSERT INTO orders_j VALUES (104, 99, 75.0);
 
 # 5. Right Join (User 99 doesn't exist)
-query TR
-SELECT users_j.name, orders_j.amount FROM users_j RIGHT JOIN orders_j ON users_j.id = orders_j.user_id ORDER BY orders_j.amount;
+query TRR
+SELECT users_j.name, orders_j.amount, orders_j.id FROM users_j RIGHT JOIN orders_j ON users_j.id = orders_j.user_id ORDER BY orders_j.amount;
 ----
-Alice 25.0
-Alice 50.0
-NULL 75.0
-Bob 100.0
+Alice 25.0 102
+Alice 50.0 101
+NULL 75.0 104
+Bob 100.0 103
 
 # 6. Full Join (Charlie has no orders, User 99 doesn't exist)
-query TR
-SELECT users_j.name, orders_j.amount FROM users_j FULL JOIN orders_j ON users_j.id = orders_j.user_id ORDER BY users_j.name, orders_j.amount;
+query TRR
+SELECT users_j.name, orders_j.amount, orders_j.id FROM users_j FULL JOIN orders_j ON users_j.id = orders_j.user_id ORDER BY users_j.name, orders_j.amount;
 ----
-Alice 25.0
-Alice 50.0
-Bob 100.0
-Charlie NULL
-NULL 75.0
+Alice 25.0 102
+Alice 50.0 101
+Bob 100.0 103
+Charlie NULL NULL
+NULL 75.0 104
 
 statement ok
 DROP TABLE users_j;

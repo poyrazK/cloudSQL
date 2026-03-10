@@ -51,9 +51,9 @@ SELECT id FROM lim_off_test ORDER BY id OFFSET 3 LIMIT 10;
 4
 5
 
-# 8. Limit and Offset with Filter
+# 8. Limit and Offset with Filter (OFFSET 3 LIMIT 1)
 query IT
-SELECT id FROM lim_off_test WHERE id > 2 ORDER BY id LIMIT 1 OFFSET 1;
+SELECT id FROM lim_off_test WHERE id > 0 ORDER BY id OFFSET 3 LIMIT 1;
 ----
 4
 

@@ -1,7 +1,7 @@
 import socket
 import struct
 import sys
-import time
+import os
 import math
 
 PROTOCOL_VERSION_3 = 196608
@@ -17,6 +17,7 @@ class CloudSQLClient:
         self.sock.settimeout(5.0)
         self.sock.connect((self.host, self.port))
         
+        # PostgreSQL Startup Message
         length = 8
         packet = struct.pack('!II', length, PROTOCOL_VERSION_3)
         self.sock.sendall(packet)
@@ -79,7 +80,7 @@ class CloudSQLClient:
                         idx += col_len
                 rows.append(row_data)
             elif type_char == 'C':
-                pass # CommandComplete
+                status = body.decode('utf-8').strip('\0')
             elif type_char == 'E':
                 status = "ERROR"
             elif type_char == 'Z':
@@ -87,9 +88,36 @@ class CloudSQLClient:
 
         return rows, status
 
+def normalize_value(val):
+    if val is None:
+        return "NULL"
+    return str(val)
+
+def compare_values(actual, expected, col_type):
+    if expected == "NULL":
+        return actual is None
+    if actual is None:
+        return expected == "NULL"
+    
+    if col_type == 'R': # Float/Real
+        try:
+            return math.isclose(float(actual), float(expected), rel_tol=1e-6)
+        except (ValueError, TypeError):
+            return str(actual) == str(expected)
+    
+    return str(actual) == str(expected)
+
 def run_slt(file_path, port):
     client = CloudSQLClient(port=port)
-    client.connect()
+    try:
+        client.connect()
+    except Exception as e:
+        print(f"ERROR: Connection failed: {e}")
+        return False
+
+    if not os.path.exists(file_path):
+        print(f"ERROR: File not found: {file_path}")
+        return False
 
     with open(file_path, 'r') as f:
         lines = f.readlines()
@@ -104,8 +132,12 @@ def run_slt(file_path, port):
             line_idx += 1
             continue
 
+        start_line = line_idx + 1
+
         if line.startswith('statement'):
-            expected_status = line.split()[1] # ok or error
+            parts = line.split()
+            expected_status = parts[1] # ok or error
+            
             sql_lines = []
             line_idx += 1
             while line_idx < len(lines) and lines[line_idx].strip():
@@ -116,8 +148,11 @@ def run_slt(file_path, port):
             total_tests += 1
             _, actual_status = client.query(sql)
             
-            if actual_status.lower() != expected_status.lower():
-                print(f"FAILURE at {file_path}:{line_idx}")
+            is_error = actual_status == "ERROR"
+            matches = (expected_status == "error" and is_error) or (expected_status == "ok" and not is_error)
+            
+            if not matches:
+                print(f"FAILURE at {file_path}:{start_line}")
                 print(f"  SQL: {sql}")
                 print(f"  Expected status: {expected_status}, got: {actual_status}")
                 failed_tests += 1
@@ -127,6 +162,10 @@ def run_slt(file_path, port):
             parts = line.split()
             types = parts[1]
             sort_mode = parts[2] if len(parts) > 2 else None
+            
+            if sort_mode and sort_mode not in ['rowsort', 'valuesort']:
+                print(f"ERROR at {file_path}:{start_line}: Unsupported sort mode '{sort_mode}'")
+                sys.exit(1)
             
             sql_lines = []
             line_idx += 1
@@ -146,36 +185,38 @@ def run_slt(file_path, port):
             actual_rows, status = client.query(sql)
             
             if status == "ERROR":
-                print(f"FAILURE at {file_path}:{line_idx}")
+                print(f"FAILURE at {file_path}:{start_line}")
                 print(f"  SQL: {sql}")
                 print(f"  Query failed with ERROR status")
                 failed_tests += 1
                 continue
 
-            # Apply sort mode
+            # Apply SLT sort modes
             if sort_mode == 'rowsort':
                 actual_rows.sort()
                 expected_rows.sort()
             elif sort_mode == 'valuesort':
-                actual_values = sorted([str(val) if val is not None else "NULL" for row in actual_rows for val in row])
-                expected_values = sorted([val for row in expected_rows for val in row])
-                actual_rows = [[v] for v in actual_values]
-                expected_rows = [[v] for v in expected_values]
-            elif sort_mode:
-                print(f"ERROR: Unsupported sort mode: {sort_mode}")
-                sys.exit(1)
+                # Valuesort sorts every individual value in the result set
+                actual_vals = sorted([normalize_value(v) for row in actual_rows for v in row])
+                expected_vals = sorted([v for row in expected_rows for v in row])
+                actual_rows = [[v] for v in actual_vals]
+                expected_rows = [[v] for v in expected_vals]
+                # Update types to all be 'T' since we flattened everything to strings for valuesort
+                types = 'T' * len(actual_vals)
 
-            # Compare results
+            # Compare row counts
             if len(actual_rows) != len(expected_rows):
-                print(f"FAILURE at {file_path}:{line_idx}")
+                print(f"FAILURE at {file_path}:{start_line}")
                 print(f"  SQL: {sql}")
                 print(f"  Expected {len(expected_rows)} rows, got {len(actual_rows)}")
+                print(f"  Actual rows: {actual_rows}")
                 failed_tests += 1
                 continue
 
+            # Compare cell by cell
             for i in range(len(actual_rows)):
                 if len(actual_rows[i]) != len(expected_rows[i]):
-                    print(f"FAILURE at {file_path}:{line_idx}, row {i}")
+                    print(f"FAILURE at {file_path}:{start_line}, row {i}")
                     print(f"  Expected {len(expected_rows[i])} columns, got {len(actual_rows[i])}")
                     failed_tests += 1
                     break
@@ -184,28 +225,18 @@ def run_slt(file_path, port):
                 for j in range(len(actual_rows[i])):
                     act = actual_rows[i][j]
                     exp = expected_rows[i][j]
+                    col_type = types[j] if j < len(types) else 'T'
                     
-                    if exp == "NULL" and act is None:
-                        continue
-                    
-                    # Basic numeric normalization for float comparison
-                    if types[j] == 'R' and sort_mode != 'valuesort':
-                        try:
-                            if not math.isclose(float(act), float(exp), rel_tol=1e-6):
-                                match = False
-                        except:
-                            match = False
-                    else:
-                        if str(act) != str(exp):
-                            match = False
-                    
-                    if not match:
-                        print(f"FAILURE at {file_path}:{line_idx}, row {i} col {j}")
-                        print(f"  Expected '{exp}', got '{act}'")
-                        failed_tests += 1
+                    if not compare_values(act, exp, col_type):
+                        print(f"FAILURE at {file_path}:{start_line}, row {i} col {j}")
+                        print(f"  SQL: {sql}")
+                        print(f"  Expected '{exp}', got '{normalize_value(act)}'")
+                        print(f"  Full row: {[normalize_value(v) for v in actual_rows[i]]}")
+                        match = False
                         break
-                if not match: break
-
+                if not match:
+                    failed_tests += 1
+                    break
         else:
             line_idx += 1
 

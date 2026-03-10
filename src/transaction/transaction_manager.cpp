@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -15,6 +16,7 @@
 #include "executor/types.hpp"
 #include "recovery/log_manager.hpp"
 #include "recovery/log_record.hpp"
+#include "storage/btree_index.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "transaction/lock_manager.hpp"
@@ -155,40 +157,107 @@ void TransactionManager::abort(Transaction* txn) {
     }
 }
 
-void TransactionManager::undo_transaction(Transaction* txn) {
+bool TransactionManager::undo_transaction(Transaction* txn) {
     const auto& logs = txn->get_undo_logs();
+    bool success = true;
     /* Undo in reverse order */
     for (auto it = logs.rbegin(); it != logs.rend(); ++it) {
         const auto& log = *it;
-        auto table_meta = catalog_.get_table_by_name(log.table_name);
-        if (!table_meta) {
+        auto table_meta_opt = catalog_.get_table_by_name(log.table_name);
+        if (!table_meta_opt) {
             continue;
         }
+        const auto* table_meta = table_meta_opt.value();
 
         /* Reconstruct schema for HeapTable */
         executor::Schema schema;
-        for (const auto& col : (*table_meta)->columns) {
+        for (const auto& col : table_meta->columns) {
             schema.add_column(col.name, col.type);
         }
 
         storage::HeapTable table(log.table_name, bpm_, schema);
 
         switch (log.type) {
-            case UndoLog::Type::INSERT:
-                static_cast<void>(table.physical_remove(log.rid));
-                break;
-            case UndoLog::Type::DELETE:
-                static_cast<void>(table.undo_remove(log.rid));
-                break;
-            case UndoLog::Type::UPDATE:
-                /* For update, we physically remove the new version and reset xmax on the old one */
-                static_cast<void>(table.physical_remove(log.rid));
-                if (log.old_rid.has_value()) {
-                    static_cast<void>(table.undo_remove(log.old_rid.value()));
+            case UndoLog::Type::INSERT: {
+                /* For INSERT undo, remove from indexes and then physical remove from heap */
+                executor::Tuple tuple;
+                if (table.get(log.rid, tuple)) {
+                    for (const auto& idx_info : table_meta->indexes) {
+                        if (!idx_info.column_positions.empty()) {
+                            uint16_t pos = idx_info.column_positions[0];
+                            common::ValueType ktype = table_meta->columns[pos].type;
+                            storage::BTreeIndex index(idx_info.name, bpm_, ktype);
+                            static_cast<void>(index.remove(tuple.get(pos), log.rid));
+                        }
+                    }
+                }
+                if (!table.physical_remove(log.rid)) {
+                    std::cerr << "Rollback ERROR: physical_remove failed for INSERT undo\n";
+                    success = false;
                 }
                 break;
+            }
+            case UndoLog::Type::DELETE: {
+                /* For DELETE undo, reset xmax and re-insert into indexes */
+                if (!table.undo_remove(log.rid)) {
+                    std::cerr << "Rollback ERROR: undo_remove failed for DELETE undo\n";
+                    success = false;
+                } else {
+                    executor::Tuple tuple;
+                    if (table.get(log.rid, tuple)) {
+                        for (const auto& idx_info : table_meta->indexes) {
+                            if (!idx_info.column_positions.empty()) {
+                                uint16_t pos = idx_info.column_positions[0];
+                                common::ValueType ktype = table_meta->columns[pos].type;
+                                storage::BTreeIndex index(idx_info.name, bpm_, ktype);
+                                static_cast<void>(index.insert(tuple.get(pos), log.rid));
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            case UndoLog::Type::UPDATE: {
+                /* For UPDATE undo, remove new version from indexes/heap and restore old version's xmax/indexes */
+                executor::Tuple new_tuple;
+                if (table.get(log.rid, new_tuple)) {
+                    for (const auto& idx_info : table_meta->indexes) {
+                        if (!idx_info.column_positions.empty()) {
+                            uint16_t pos = idx_info.column_positions[0];
+                            common::ValueType ktype = table_meta->columns[pos].type;
+                            storage::BTreeIndex index(idx_info.name, bpm_, ktype);
+                            static_cast<void>(index.remove(new_tuple.get(pos), log.rid));
+                        }
+                    }
+                }
+                if (!table.physical_remove(log.rid)) {
+                    std::cerr << "Rollback ERROR: physical_remove failed for new version in UPDATE undo\n";
+                    success = false;
+                }
+
+                if (log.old_rid.has_value()) {
+                    if (!table.undo_remove(log.old_rid.value())) {
+                        std::cerr << "Rollback ERROR: undo_remove failed for old version in UPDATE undo\n";
+                        success = false;
+                    } else {
+                        executor::Tuple old_tuple;
+                        if (table.get(log.old_rid.value(), old_tuple)) {
+                            for (const auto& idx_info : table_meta->indexes) {
+                                if (!idx_info.column_positions.empty()) {
+                                    uint16_t pos = idx_info.column_positions[0];
+                                    common::ValueType ktype = table_meta->columns[pos].type;
+                                    storage::BTreeIndex index(idx_info.name, bpm_, ktype);
+                                    static_cast<void>(index.insert(old_tuple.get(pos), log.old_rid.value()));
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
         }
     }
+    return success;
 }
 
 Transaction* TransactionManager::get_transaction(txn_id_t txn_id) {

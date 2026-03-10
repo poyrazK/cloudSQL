@@ -121,8 +121,15 @@ class Transaction {
     }
 
     void add_undo_log(UndoLog::Type type, const std::string& table_name,
+                      const storage::HeapTable::TupleId& rid) {
+        /* Enforce invariant: non-UPDATE types should not provide old_rid through this overload */
+        undo_logs_.push_back({type, table_name, rid, std::nullopt});
+    }
+
+    void add_undo_log(UndoLog::Type type, const std::string& table_name,
                       const storage::HeapTable::TupleId& rid,
-                      std::optional<storage::HeapTable::TupleId> old_rid = std::nullopt) {
+                      const storage::HeapTable::TupleId& old_rid) {
+        /* Enforce invariant: this overload is primarily for UPDATE types providing old_rid */
         undo_logs_.push_back({type, table_name, rid, old_rid});
     }
 

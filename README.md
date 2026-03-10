@@ -49,7 +49,7 @@ A lightweight, distributed SQL database engine. Designed for cloud environments 
 mkdir build
 cd build
 cmake ..
-make -j$(nproc) # Or ./tests/run_test.sh for automated multi-OS build
+make -j$(nproc) # Or ../tests/run_test.sh for automated multi-OS build
 ```
 
 ### Running Tests

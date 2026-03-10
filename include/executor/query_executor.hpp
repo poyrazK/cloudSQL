@@ -44,7 +44,7 @@ class QueryExecutor {
                   transaction::TransactionManager& transaction_manager,
                   recovery::LogManager* log_manager = nullptr,
                   cluster::ClusterManager* cluster_manager = nullptr);
-    ~QueryExecutor() = default;
+    ~QueryExecutor();
 
     // Disable copy/move for executor
     QueryExecutor(const QueryExecutor&) = delete;
