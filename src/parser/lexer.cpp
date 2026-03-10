@@ -58,6 +58,7 @@ std::map<std::string, TokenType> Lexer::init_keywords() {
             {"RIGHT", TokenType::Right},
             {"INNER", TokenType::Inner},
             {"OUTER", TokenType::Outer},
+            {"FULL", TokenType::Full},
             {"GROUP", TokenType::Group},
             {"BY", TokenType::By},
             {"ORDER", TokenType::Order},

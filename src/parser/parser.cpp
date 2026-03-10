@@ -133,6 +133,16 @@ std::unique_ptr<Statement> Parser::parse_select() {
                     return nullptr;
                 }
                 join_type = SelectStatement::JoinType::Left;
+            } else if (consume(TokenType::Right)) {
+                if (!consume(TokenType::Join)) {
+                    return nullptr;
+                }
+                join_type = SelectStatement::JoinType::Right;
+            } else if (consume(TokenType::Full)) {
+                if (!consume(TokenType::Join)) {
+                    return nullptr;
+                }
+                join_type = SelectStatement::JoinType::Full;
             } else {
                 break;
             }
