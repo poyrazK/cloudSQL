@@ -56,10 +56,10 @@ This directory contains the technical documentation for the lifecycle of the clo
 
 ### Phase 9 — Stability & Testing Refinement
 **Focus**: Engine Robustness & E2E Validation.
-- Slotted-page layout fixes for large table support.
-- Buffer Pool Manager lifecycle management (destructor flushing).
-- Robust Python E2E client with partial-read handling and numeric validation.
-- Standardized test orchestration via `run_test.sh`.
+- **Advanced Execution**: Full support for `LEFT`, `RIGHT`, and `FULL` outer joins.
+- **Transactional Integrity**: Persistent connection-based execution state and comprehensive `ROLLBACK` support for all DML operations.
+- **Logic Validation**: Integration of the SqlLogicTest (SLT) suite with 80+ logic test cases covering Joins, Transactions, Aggregates, and Indexes.
+- **Automation**: Standardized cross-platform test orchestration via `run_test.sh` with automatic CPU detection.
 
 ---
 
