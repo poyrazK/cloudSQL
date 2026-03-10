@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -55,6 +56,7 @@ struct UndoLog {
     Type type = Type::INSERT;
     std::string table_name;
     storage::HeapTable::TupleId rid;
+    std::optional<storage::HeapTable::TupleId> old_rid;
 };
 
 /**
@@ -119,8 +121,9 @@ class Transaction {
     }
 
     void add_undo_log(UndoLog::Type type, const std::string& table_name,
-                      const storage::HeapTable::TupleId& rid) {
-        undo_logs_.push_back({type, table_name, rid});
+                      const storage::HeapTable::TupleId& rid,
+                      std::optional<storage::HeapTable::TupleId> old_rid = std::nullopt) {
+        undo_logs_.push_back({type, table_name, rid, old_rid});
     }
 
     [[nodiscard]] const std::vector<UndoLog>& get_undo_logs() const { return undo_logs_; }

@@ -171,6 +171,12 @@ class HeapTable {
     bool physical_remove(const TupleId& tuple_id);
 
     /**
+     * @brief Resets xmax to 0 (used for rollback of a DELETE)
+     * @return true on success
+     */
+    bool undo_remove(const TupleId& tuple_id);
+
+    /**
      * @brief Replaces an existing record with new data
      * @param tuple_id The record to update
      * @param tuple The new data

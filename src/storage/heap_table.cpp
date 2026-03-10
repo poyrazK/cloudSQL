@@ -306,6 +306,13 @@ bool HeapTable::physical_remove(const TupleId& tuple_id) {
     return write_page(tuple_id.page_num, buffer.data());
 }
 
+/**
+ * @brief Reset xmax to 0 (used for rollback of a DELETE)
+ */
+bool HeapTable::undo_remove(const TupleId& tuple_id) {
+    return remove(tuple_id, 0);
+}
+
 bool HeapTable::update(const TupleId& tuple_id, const executor::Tuple& tuple, uint64_t txn_id) {
     if (!remove(tuple_id, txn_id)) {
         return false;
