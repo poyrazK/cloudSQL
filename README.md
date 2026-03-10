@@ -15,7 +15,10 @@ A lightweight, distributed SQL database engine. Designed for cloud environments 
 - **Analytics Performance**: 
   - **Columnar Storage**: Binary-per-column persistence for efficient analytical scanning.
   - **Vectorized Execution**: Batch-at-a-time processing model for high-throughput query execution.
-- **Multi-Node Transactions**: ACID guarantees across the cluster via Two-Phase Commit (2PC).
+- **Multi-Node Transactions**: ACID guarantees across the cluster via Two-Phase Commit (2PC) and connection-aware execution state supporting `BEGIN`, `COMMIT`, and `ROLLBACK`.
+- **Advanced Execution Engine**: 
+  - **Full Outer Join Support**: Specialized `HashJoinOperator` implementing `LEFT`, `RIGHT`, and `FULL` outer join semantics with automatic null-padding.
+  - **B+ Tree Indexing**: Persistent indexing for high-speed point lookups and optimized query planning.
 - **Type-Safe Value System**: Robust handling of SQL data types using `std::variant`.
 - **Volcano & Vectorized Engine**: Flexible execution models supporting traditional row-based and high-performance columnar processing.
 - **PostgreSQL Wire Protocol**: Handshake and simple query protocol implementation for tool compatibility.
@@ -46,17 +49,18 @@ A lightweight, distributed SQL database engine. Designed for cloud environments 
 mkdir build
 cd build
 cmake ..
-make -j$(nproc)
+make -j$(nproc) # Or ./tests/run_test.sh for automated multi-OS build
 ```
 
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run the integrated test suite (Unit + E2E + Logic)
+./tests/run_test.sh
+
+# Or run individual binaries
 ./build/sqlEngine_tests
-# Run distributed-specific tests
 ./build/distributed_tests
-./build/distributed_txn_tests
 ```
 
 ### Starting the Cluster
