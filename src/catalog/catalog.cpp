@@ -145,10 +145,7 @@ oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInf
 oid_t Catalog::create_table_local(const std::string& table_name, std::vector<ColumnInfo> columns,
                                   std::vector<ShardInfo> shards) {
     if (table_exists_by_name(table_name)) {
-        std::cerr << "--- [Catalog] create_table_local: Table already exists " << table_name
-                  << " ---" << std::endl;
-        auto meta_opt = get_table_by_name(table_name);
-        return (*meta_opt)->table_id;
+        throw std::runtime_error("Table already exists: " + table_name);
     }
 
     auto table = std::make_unique<TableInfo>();

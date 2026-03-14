@@ -670,7 +670,7 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
             if (log_manager_ != nullptr && txn != nullptr) {
                 recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
                                         recovery::LogRecordType::MARK_DELETE, table_name, op.rid,
-                                        op.old_tuple);
+                                        old_tuple);
                 const auto lsn = log_manager_->append_log_record(log);
                 txn->set_prev_lsn(lsn);
             }
@@ -724,12 +724,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     if (cluster_manager_ != nullptr &&
         cluster_manager_->has_shuffle_data(context_id_, base_table_name)) {
         auto data = cluster_manager_->fetch_shuffle_data(context_id_, base_table_name);
-        /* We need a schema for the buffered data. */
+        /* We need a schema for the buffered data. Use unqualified names as BufferScan will qualify them. */
         auto meta_opt = catalog_.get_table_by_name(base_table_name);
         Schema buffer_schema;
         if (meta_opt.has_value()) {
             for (const auto& col : meta_opt.value()->columns) {
-                buffer_schema.add_column(base_table_name + "." + col.name, col.type);
+                buffer_schema.add_column(col.name, col.type);
             }
         }
         std::cerr << "--- [BuildPlan] Table " << base_table_name
@@ -746,7 +746,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
         Schema base_schema;
         for (const auto& col : base_table_meta->columns) {
-            base_schema.add_column(base_table_name + "." + col.name, col.type);
+            base_schema.add_column(col.name, col.type);
         }
 
         /* Index Selection Optimization:
@@ -825,7 +825,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             Schema buffer_schema;
             if (meta_opt.has_value()) {
                 for (const auto& col : meta_opt.value()->columns) {
-                    buffer_schema.add_column(join_table_name + "." + col.name, col.type);
+                    buffer_schema.add_column(col.name, col.type);
                 }
             }
             std::cerr << "--- [BuildPlan] JOIN Table " << join_table_name
@@ -842,7 +842,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
             Schema join_schema;
             for (const auto& col : join_table_meta->columns) {
-                join_schema.add_column(join_table_name + "." + col.name, col.type);
+                join_schema.add_column(col.name, col.type);
             }
 
             join_scan = std::make_unique<SeqScanOperator>(

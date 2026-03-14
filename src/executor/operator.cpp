@@ -108,8 +108,12 @@ BufferScanOperator::BufferScanOperator(std::string context_id, std::string table
     : Operator(OperatorType::BufferScan),
       context_id_(std::move(context_id)),
       table_name_(std::move(table_name)),
-      data_(std::move(data)),
-      schema_(std::move(schema)) {}
+      data_(std::move(data)) {
+    /* Qualify columns in buffer schema */
+    for (const auto& col : schema.columns()) {
+        schema_.add_column(table_name_ + "." + col.name(), col.type(), col.nullable());
+    }
+}
 
 bool BufferScanOperator::next(Tuple& out_tuple) {
     if (current_index_ >= data_.size()) {
@@ -675,7 +679,6 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             left_tuple_ = std::move(next_left);
             left_had_match_ = false;
             const common::Value key = left_key_->evaluate(&(left_tuple_.value()), &left_schema);
-            std::cerr << "--- [HashJoin] Probing: key=" << key.to_string() << " ---" << std::endl;
 
             /* Look up in hash table */
             auto range = hash_table_.equal_range(key.to_string());
