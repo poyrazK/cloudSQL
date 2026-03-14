@@ -24,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <sstream>
 
 #include "catalog/catalog.hpp"
 #include "common/cluster_manager.hpp"
