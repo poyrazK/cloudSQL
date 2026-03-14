@@ -84,6 +84,7 @@ endmacro()
 # Tests
 if(BUILD_TESTS)
     enable_testing()
+    add_cloudsql_test(catalog_coverage_tests tests/catalog_coverage_tests.cpp)
     add_cloudsql_test(cloudSQL_tests tests/cloudSQL_tests.cpp)
     add_cloudsql_test(server_tests tests/server_tests.cpp)
     add_cloudsql_test(statement_tests tests/statement_tests.cpp)
