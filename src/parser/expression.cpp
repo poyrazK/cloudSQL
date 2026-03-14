@@ -6,6 +6,7 @@
 #include "parser/expression.hpp"
 
 #include <cstddef>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>

@@ -8,11 +8,11 @@ INSERT INTO expr_test VALUES (10, 20, 30.5), (5, 5, 5.0), (0, 100, -1.5);
 
 # Arithmetic
 query R
-SELECT a + b + c FROM expr_test ORDER BY a;
+SELECT a + b + c FROM expr_test ORDER BY a + b + c;
 ----
-98.5
 15.0
 60.5
+98.5
 
 # Comparison & Logic
 query I
