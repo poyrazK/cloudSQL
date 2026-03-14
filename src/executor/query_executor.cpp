@@ -724,7 +724,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     if (cluster_manager_ != nullptr &&
         cluster_manager_->has_shuffle_data(context_id_, base_table_name)) {
         auto data = cluster_manager_->fetch_shuffle_data(context_id_, base_table_name);
-        /* We need a schema for the buffered data. Use unqualified names as BufferScan will qualify them. */
+        /* We need a schema for the buffered data. Use unqualified names as BufferScan will qualify
+         * them. */
         auto meta_opt = catalog_.get_table_by_name(base_table_name);
         Schema buffer_schema;
         if (meta_opt.has_value()) {
