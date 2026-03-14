@@ -23,7 +23,9 @@
 #include "common/value.hpp"
 #include "distributed/raft_group.hpp"
 #include "distributed/raft_manager.hpp"
+#include "distributed/shard_manager.hpp"
 #include "executor/operator.hpp"
+
 #include "executor/types.hpp"
 #include "network/rpc_message.hpp"
 #include "parser/expression.hpp"
@@ -276,7 +278,13 @@ QueryResult QueryExecutor::execute_create_table(const parser::CreateTableStateme
     }
 
     /* Update catalog */
-    const oid_t table_id = catalog_.create_table(stmt.table_name(), std::move(catalog_cols));
+    oid_t table_id = 0;
+    if (is_local_only_) {
+        table_id = catalog_.create_table_local(stmt.table_name(), std::move(catalog_cols));
+    } else {
+        table_id = catalog_.create_table(stmt.table_name(), std::move(catalog_cols));
+    }
+
     if (table_id == 0) {
         result.set_error("Failed to create table in catalog");
         return result;
@@ -413,23 +421,36 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
 
         const Tuple tuple(std::move(values));
 
-        // POC: Data Replication Logic
-        if (cluster_manager_ != nullptr && cluster_manager_->get_raft_manager() != nullptr) {
-            // Find shard group (assume shard 1 for POC)
-            auto shard_group = cluster_manager_->get_raft_manager()->get_group(1);
-            if (shard_group && shard_group->is_leader()) {
-                std::vector<uint8_t> cmd;
-                cmd.push_back(1);  // Type 1: INSERT
-                uint32_t tlen = static_cast<uint32_t>(table_name.size());
-                size_t off = cmd.size();
-                cmd.resize(off + 4 + tlen);
-                std::memcpy(cmd.data() + off, &tlen, 4);
-                std::memcpy(cmd.data() + off + 4, table_name.data(), tlen);
-                network::Serializer::serialize_tuple(tuple, cmd);
-
-                if (!shard_group->replicate(cmd)) {
-                    result.set_error("Replication failed for shard 1");
-                    return result;
+        // Distributed Routing: Skip if is_local_only_
+        if (!is_local_only_ && cluster_manager_ != nullptr && !table_meta->shards.empty()) {
+            uint32_t shard_id = 0;
+            if (!tuple.empty()) {
+                shard_id = cluster::ShardManager::compute_shard(tuple.get(0), static_cast<uint32_t>(table_meta->shards.size()));
+            }
+            auto shard_info_opt = cluster::ShardManager::get_target_node(*table_meta, shard_id);
+            
+            if (shard_info_opt.has_value()) {
+                const auto& shard_info = shard_info_opt.value();
+                std::cerr << "--- [QueryExecutor] Routing tuple to data node " << shard_info.node_address << " ---" << std::endl;
+                network::RpcClient client(shard_info.node_address, shard_info.port);
+                if (client.connect()) {
+                    network::ExecuteFragmentArgs args;
+                    args.context_id = context_id_;
+                    // Optimization: Only forward the current row
+                    args.sql = "INSERT INTO " + table_name + " VALUES " + tuple.to_string() + ";";
+                    
+                    std::vector<uint8_t> resp;
+                    if (!client.call(network::RpcType::ExecuteFragment, args.serialize(), resp)) {
+                        result.set_error("Failed to forward INSERT to data node " + shard_info.node_address);
+                        return result;
+                    }
+                    auto reply = network::QueryResultsReply::deserialize(resp);
+                    if (!reply.success) {
+                        result.set_error("Remote INSERT failed: " + reply.error_msg);
+                        return result;
+                    }
+                    rows_inserted++;
+                    continue;
                 }
             }
         }
@@ -695,6 +716,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     }
 
     const std::string base_table_name = stmt.from()->to_string();
+    std::unique_ptr<Operator> current_root = nullptr;
 
     /* Check if table is in cluster shuffle buffers (e.g. Broadcast or Shuffle Join) */
     if (cluster_manager_ != nullptr &&
@@ -708,75 +730,79 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 buffer_schema.add_column(base_table_name + "." + col.name, col.type);
             }
         }
-        return std::make_unique<BufferScanOperator>(context_id_, base_table_name, std::move(data),
-                                                    std::move(buffer_schema));
-    }
+        std::cerr << "--- [BuildPlan] Table " << base_table_name << " found in SHUFFLE buffer. Schema size=" << buffer_schema.column_count() << " ---" << std::endl;
+        current_root = std::make_unique<BufferScanOperator>(context_id_, base_table_name, std::move(data),
+                                                            std::move(buffer_schema));
+    } else {
+        auto base_table_meta_opt = catalog_.get_table_by_name(base_table_name);
+        if (!base_table_meta_opt.has_value()) {
+            return nullptr;
+        }
+        const auto* base_table_meta = base_table_meta_opt.value();
 
-    auto base_table_meta_opt = catalog_.get_table_by_name(base_table_name);
-    if (!base_table_meta_opt.has_value()) {
-        return nullptr;
-    }
-    const auto* base_table_meta = base_table_meta_opt.value();
+        Schema base_schema;
+        for (const auto& col : base_table_meta->columns) {
+            base_schema.add_column(base_table_name + "." + col.name, col.type);
+        }
 
-    Schema base_schema;
-    for (const auto& col : base_table_meta->columns) {
-        base_schema.add_column(col.name, col.type);
-    }
+        /* Index Selection Optimization:
+         * If there's a simple equality filter on an indexed column, use IndexScanOperator.
+         */
+        bool index_used = false;
 
-    /* Index Selection Optimization:
-     * If there's a simple equality filter on an indexed column, use IndexScanOperator.
-     */
-    std::unique_ptr<Operator> current_root = nullptr;
-    bool index_used = false;
+        if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary && stmt.joins().empty()) {
+            const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(stmt.where());
+            if (bin_expr->op() == parser::TokenType::Eq) {
+                std::string col_name;
+                common::Value const_val;
+                bool eligible = false;
 
-    if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary && stmt.joins().empty()) {
-        const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(stmt.where());
-        if (bin_expr->op() == parser::TokenType::Eq) {
-            std::string col_name;
-            common::Value const_val;
-            bool eligible = false;
+                if (bin_expr->left().type() == parser::ExprType::Column &&
+                    bin_expr->right().type() == parser::ExprType::Constant) {
+                    col_name = bin_expr->left().to_string();
+                    const_val = bin_expr->right().evaluate();
+                    eligible = true;
+                } else if (bin_expr->right().type() == parser::ExprType::Column &&
+                           bin_expr->left().type() == parser::ExprType::Constant) {
+                    col_name = bin_expr->right().to_string();
+                    const_val = bin_expr->left().evaluate();
+                    eligible = true;
+                }
 
-            if (bin_expr->left().type() == parser::ExprType::Column &&
-                bin_expr->right().type() == parser::ExprType::Constant) {
-                col_name = bin_expr->left().to_string();
-                const_val = bin_expr->right().evaluate();
-                eligible = true;
-            } else if (bin_expr->right().type() == parser::ExprType::Column &&
-                       bin_expr->left().type() == parser::ExprType::Constant) {
-                col_name = bin_expr->right().to_string();
-                const_val = bin_expr->left().evaluate();
-                eligible = true;
-            }
-
-            if (eligible) {
-                /* Check if col_name is indexed */
-                for (const auto& idx_info : base_table_meta->indexes) {
-                    if (!idx_info.column_positions.empty()) {
-                        uint16_t pos = idx_info.column_positions[0];
-                        /* Handle both qualified and unqualified names */
-                        if (base_table_meta->columns[pos].name == col_name ||
-                            (base_table_name + "." + base_table_meta->columns[pos].name) ==
-                                col_name) {
-                            common::ValueType ktype = base_table_meta->columns[pos].type;
-                            current_root = std::make_unique<IndexScanOperator>(
-                                std::make_unique<storage::HeapTable>(base_table_name, bpm_,
-                                                                     base_schema),
-                                std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_, ktype),
-                                std::move(const_val), txn, &lock_manager_);
-                            index_used = true;
-                            break;
+                if (eligible) {
+                    /* Check if col_name is indexed */
+                    for (const auto& idx_info : base_table_meta->indexes) {
+                        if (!idx_info.column_positions.empty()) {
+                            uint16_t pos = idx_info.column_positions[0];
+                            /* Handle both qualified and unqualified names */
+                            if (base_table_meta->columns[pos].name == col_name ||
+                                (base_table_name + "." + base_table_meta->columns[pos].name) ==
+                                    col_name) {
+                                common::ValueType ktype = base_table_meta->columns[pos].type;
+                                current_root = std::make_unique<IndexScanOperator>(
+                                    std::make_unique<storage::HeapTable>(base_table_name, bpm_,
+                                                                         base_schema),
+                                    std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_, ktype),
+                                    std::move(const_val), txn, &lock_manager_);
+                                index_used = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
+
+        if (!index_used) {
+            current_root = std::make_unique<SeqScanOperator>(
+                std::make_unique<storage::HeapTable>(base_table_name, bpm_, base_schema), txn,
+                &lock_manager_);
+        }
     }
 
-    if (!index_used) {
-        current_root = std::make_unique<SeqScanOperator>(
-            std::make_unique<storage::HeapTable>(base_table_name, bpm_, base_schema), txn,
-            &lock_manager_);
-    }
+    if (!current_root) return nullptr;
+
+    std::cerr << "--- [BuildPlan] Base root schema size=" << current_root->output_schema().column_count() << " ---" << std::endl;
 
     /* 2. Add JOINs */
     for (const auto& join : stmt.joins()) {
@@ -795,6 +821,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                     buffer_schema.add_column(join_table_name + "." + col.name, col.type);
                 }
             }
+            std::cerr << "--- [BuildPlan] JOIN Table " << join_table_name << " found in SHUFFLE buffer. Schema size=" << buffer_schema.column_count() << " ---" << std::endl;
             join_scan = std::make_unique<BufferScanOperator>(
                 context_id_, join_table_name, std::move(data), std::move(buffer_schema));
         } else {
@@ -806,12 +833,13 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
             Schema join_schema;
             for (const auto& col : join_table_meta->columns) {
-                join_schema.add_column(col.name, col.type);
+                join_schema.add_column(join_table_name + "." + col.name, col.type);
             }
 
             join_scan = std::make_unique<SeqScanOperator>(
                 std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema), txn,
                 &lock_manager_);
+            std::cerr << "--- [BuildPlan] JOIN Table " << join_table_name << " from LOCAL. Schema size=" << join_scan->output_schema().column_count() << " ---" << std::endl;
         }
 
         bool use_hash_join = false;
@@ -865,6 +893,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             current_root = std::make_unique<HashJoinOperator>(
                 std::move(current_root), std::move(join_scan), std::move(left_key),
                 std::move(right_key), exec_join_type);
+            std::cerr << "--- [BuildPlan] Added HashJoin. Combined schema size=" << current_root->output_schema().column_count() << " ---" << std::endl;
         } else {
             /* TODO: Implement NestedLoopJoin for non-equality or missing conditions */
             return nullptr;
@@ -872,7 +901,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     }
 
     /* 3. Filter (WHERE) - Only if not already handled by IndexScan */
-    if (stmt.where() && !index_used) {
+    if (stmt.where()) {
         current_root =
             std::make_unique<FilterOperator>(std::move(current_root), stmt.where()->clone());
     }
@@ -957,6 +986,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         }
         current_root =
             std::make_unique<ProjectOperator>(std::move(current_root), std::move(projection));
+        std::cerr << "--- [BuildPlan] Added Projection. Result schema size=" << current_root->output_schema().column_count() << " ---" << std::endl;
     }
 
     /* 6. Limit */
@@ -996,9 +1026,16 @@ QueryResult QueryExecutor::execute_drop_table(const parser::DropTableStatement& 
     static_cast<void>(table.drop());
 
     /* 3. Update catalog */
-    if (!catalog_.drop_table(table_id)) {
-        result.set_error("Failed to drop table from catalog");
-        return result;
+    if (is_local_only_) {
+        if (!catalog_.drop_table_local(table_id)) {
+            result.set_error("Failed to drop table from local catalog");
+            return result;
+        }
+    } else {
+        if (!catalog_.drop_table(table_id)) {
+            result.set_error("Failed to drop table from catalog");
+            return result;
+        }
     }
 
     result.set_rows_affected(1);

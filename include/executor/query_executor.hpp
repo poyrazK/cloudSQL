@@ -58,6 +58,11 @@ class QueryExecutor {
     void set_context_id(const std::string& ctx_id) { context_id_ = ctx_id; }
 
     /**
+     * @brief Set local-only mode (bypass distributed routing)
+     */
+    void set_local_only(bool local) { is_local_only_ = local; }
+
+    /**
      * @brief Execute a SQL statement and return results
      */
     QueryResult execute(const parser::Statement& stmt);
@@ -71,6 +76,7 @@ class QueryExecutor {
     cluster::ClusterManager* cluster_manager_;
     std::string context_id_;
     transaction::Transaction* current_txn_ = nullptr;
+    bool is_local_only_ = false;
 
     QueryResult execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn);
     QueryResult execute_create_table(const parser::CreateTableStatement& stmt);
