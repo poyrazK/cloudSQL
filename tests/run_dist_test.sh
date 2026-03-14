@@ -45,21 +45,29 @@ mkdir -p "$DIST_DATA_DIR/coord" "$DIST_DATA_DIR/data1" "$DIST_DATA_DIR/data2"
 # Ensure build directory exists
 mkdir -p "$BUILD_DIR"
 
-# Detect CPU count for parallel build
-if command -v nproc >/dev/null 2>&1; then
-    CPU_COUNT=$(nproc)
-elif command -v sysctl >/dev/null 2>&1; then
-    CPU_COUNT=$(sysctl -n hw.ncpu)
-else
-    CPU_COUNT=1
+# Skip build if binary exists (useful for CI)
+if [ ! -f "$BUILD_DIR/cloudSQL" ]; then
+    # Detect CPU count for parallel build
+    if command -v nproc >/dev/null 2>&1; then
+        CPU_COUNT=$(nproc)
+    elif command -v sysctl >/dev/null 2>&1; then
+        CPU_COUNT=$(sysctl -n hw.ncpu)
+    else
+        CPU_COUNT=1
+    fi
+
+    echo "--- Building Engine ---"
+    cd "$BUILD_DIR" || exit 1
+    cmake -DBUILD_COVERAGE=OFF ..
+    if command -v ninja >/dev/null 2>&1; then
+        ninja
+    else
+        make -j"$CPU_COUNT"
+    fi
 fi
 
-echo "--- Building Engine ---"
-cd "$BUILD_DIR" || exit 1
-cmake -DBUILD_COVERAGE=OFF ..
-make -j"$CPU_COUNT"
-
 echo "--- Launching Cluster ---"
+cd "$BUILD_DIR" || exit 1
 
 # 1. Start Data Node 1
 echo "Starting Data Node 1 on port 5441..."
