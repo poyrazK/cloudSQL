@@ -670,7 +670,7 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
             if (log_manager_ != nullptr && txn != nullptr) {
                 recovery::LogRecord log(txn->get_id(), txn->get_prev_lsn(),
                                         recovery::LogRecordType::MARK_DELETE, table_name, op.rid,
-                                        old_tuple);
+                                        op.old_tuple);
                 const auto lsn = log_manager_->append_log_record(log);
                 txn->set_prev_lsn(lsn);
             }
@@ -733,6 +733,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 buffer_schema.add_column(col.name, col.type);
             }
         }
+
         std::cerr << "--- [BuildPlan] Table " << base_table_name
                   << " found in SHUFFLE buffer. Schema size=" << buffer_schema.column_count()
                   << " ---" << std::endl;
@@ -829,6 +830,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                     buffer_schema.add_column(col.name, col.type);
                 }
             }
+
             std::cerr << "--- [BuildPlan] JOIN Table " << join_table_name
                       << " found in SHUFFLE buffer. Schema size=" << buffer_schema.column_count()
                       << " ---" << std::endl;
