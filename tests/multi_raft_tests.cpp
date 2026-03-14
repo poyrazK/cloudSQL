@@ -122,6 +122,7 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
             std::string peer_id = "node" + std::to_string(j + 1);
             cms[i]->register_node(peer_id, "127.0.0.1", base_port + j,
                                   config::RunMode::Coordinator);
+            cms[i]->add_node_to_group(0, peer_id);
         }
 
         rms[i]->get_or_create_group(0);
