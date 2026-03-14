@@ -42,11 +42,12 @@ class ClusterManager {
         : config_(config), raft_manager_(nullptr) {
         // Add self to node map if in distributed mode
         if (config_ != nullptr && config_->mode != config::RunMode::Standalone) {
-            self_node_.id = "local_node";  // Will be replaced by unique ID later
+            self_node_.id = "node_" + std::to_string(config_->cluster_port);
             self_node_.address = "127.0.0.1";
             self_node_.cluster_port = config_->cluster_port;
             self_node_.role = config_->mode;
             self_node_.last_heartbeat = std::chrono::system_clock::now();
+            self_node_.is_active = true;
         }
     }
 
@@ -106,8 +107,11 @@ class ClusterManager {
     [[nodiscard]] std::vector<NodeInfo> get_data_nodes() const {
         const std::scoped_lock<std::mutex> lock(mutex_);
         std::vector<NodeInfo> data_nodes;
+        if (self_node_.role == config::RunMode::Data && self_node_.is_active) {
+            data_nodes.push_back(self_node_);
+        }
         for (const auto& [id, info] : nodes_) {
-            if (info.role == config::RunMode::Data && info.is_active) {
+            if (info.role == config::RunMode::Data && info.is_active && id != self_node_.id) {
                 data_nodes.push_back(info);
             }
         }
@@ -120,12 +124,45 @@ class ClusterManager {
     [[nodiscard]] std::vector<NodeInfo> get_coordinators() const {
         const std::scoped_lock<std::mutex> lock(mutex_);
         std::vector<NodeInfo> coordinators;
+        if (self_node_.role == config::RunMode::Coordinator && self_node_.is_active) {
+            coordinators.push_back(self_node_);
+        }
         for (const auto& [id, info] : nodes_) {
-            if (info.role == config::RunMode::Coordinator && info.is_active) {
+            if (info.role == config::RunMode::Coordinator && info.is_active && id != self_node_.id) {
                 coordinators.push_back(info);
             }
         }
         return coordinators;
+    }
+
+    /**
+     * @brief Add a node to a specific Raft group
+     */
+    void add_node_to_group(uint16_t group_id, const std::string& node_id) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto& members = group_membership_[group_id];
+        if (std::find(members.begin(), members.end(), node_id) == members.end()) {
+            members.push_back(node_id);
+        }
+    }
+
+    /**
+     * @brief Get all members of a specific Raft group
+     */
+    [[nodiscard]] std::vector<NodeInfo> get_group_members(uint16_t group_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        std::vector<NodeInfo> members;
+        auto it = group_membership_.find(group_id);
+        if (it != group_membership_.end()) {
+            for (const auto& node_id : it->second) {
+                if (nodes_.count(node_id) != 0U) {
+                    members.push_back(nodes_.at(node_id));
+                } else if (node_id == self_node_.id) {
+                    members.push_back(self_node_);
+                }
+            }
+        }
+        return members;
     }
 
     /**
@@ -177,6 +214,7 @@ class ClusterManager {
     NodeInfo self_node_;
     std::unordered_map<std::string, NodeInfo> nodes_;
     std::unordered_map<uint16_t, std::string> group_leaders_;
+    std::unordered_map<uint16_t, std::vector<std::string>> group_membership_;
     /* context_id -> table_name -> rows */
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
         shuffle_buffers_;

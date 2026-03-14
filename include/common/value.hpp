@@ -302,6 +302,12 @@ inline bool Value::operator==(const Value& other) const {
 }
 
 inline bool Value::operator<(const Value& other) const {
+    if (std::holds_alternative<std::monostate>(data_)) {
+        return false; /* NULL is not less than anything */
+    }
+    if (std::holds_alternative<std::monostate>(other.data_)) {
+        return true; /* non-NULL is less than NULL */
+    }
     if (is_numeric() && other.is_numeric()) {
         return to_float64() < other.to_float64();
     }
