@@ -22,6 +22,10 @@
 
 namespace cloudsql {
 
+namespace cluster {
+class ClusterManager;
+}
+
 namespace raft {
 class RaftGroup;
 }
@@ -189,7 +193,7 @@ class Catalog : public raft::RaftStateMachine {
     /**
      * @brief Local-only table creation (called by Raft)
      */
-    oid_t create_table_local(const std::string& table_name, std::vector<ColumnInfo> columns);
+    oid_t create_table_local(const std::string& table_name, std::vector<ColumnInfo> columns, std::vector<ShardInfo> shards = {});
 
     /**
      * @brief Drop a table
@@ -265,6 +269,11 @@ class Catalog : public raft::RaftStateMachine {
     void set_database(const DatabaseInfo& db) { database_ = db; }
 
     /**
+     * @brief Set the Cluster Manager for dynamic sharding
+     */
+    void set_cluster_manager(cluster::ClusterManager* cm) { cluster_manager_ = cm; }
+
+    /**
      * @brief Print catalog contents
      */
     void print() const;
@@ -280,6 +289,7 @@ class Catalog : public raft::RaftStateMachine {
     oid_t next_oid_ = 1;
     uint64_t version_ = 1;
     raft::RaftGroup* raft_group_ = nullptr;
+    cluster::ClusterManager* cluster_manager_ = nullptr;
 
     [[nodiscard]] static uint64_t get_current_time();
 };
