@@ -6,12 +6,12 @@
 #ifndef SQL_ENGINE_COMMON_CLUSTER_MANAGER_HPP
 #define SQL_ENGINE_COMMON_CLUSTER_MANAGER_HPP
 
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <algorithm>
 
 #include "common/config.hpp"
 #include "executor/types.hpp"
