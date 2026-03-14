@@ -328,7 +328,8 @@ class LimitOperator : public Operator {
     std::unique_ptr<Operator> child_;
     int64_t limit_;
     int64_t offset_;
-    uint64_t current_count_ = 0;
+    uint64_t current_offset_ = 0;
+    uint64_t count_ = 0;
 
    public:
     LimitOperator(std::unique_ptr<Operator> child, int64_t limit, int64_t offset = 0);

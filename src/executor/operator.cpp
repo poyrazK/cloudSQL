@@ -1,9 +1,6 @@
 /**
  * @file operator.cpp
- * @brief Query Executor Operators implementation
- *
- * @defgroup executor Query Executor
- * @{
+ * @brief Relational operator implementations
  */
 
 #include "executor/operator.hpp"
@@ -19,6 +16,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <iostream>
 
 #include "common/value.hpp"
 #include "executor/types.hpp"
@@ -268,8 +266,20 @@ ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child,
       columns_(std::move(columns)) {
     if (child_) {
         /* Result schema: use the name of the expression (e.g. column name) */
+        const auto& child_schema = child_->output_schema();
         for (const auto& col : columns_) {
-            schema_.add_column(col->to_string(), common::ValueType::TYPE_TEXT);
+            common::ValueType type = common::ValueType::TYPE_TEXT;
+            if (col->type() == parser::ExprType::Column) {
+                const auto* c_expr = dynamic_cast<const parser::ColumnExpr*>(col.get());
+                size_t idx = child_schema.find_column(c_expr->to_string());
+                if (idx == static_cast<size_t>(-1)) idx = child_schema.find_column(c_expr->name());
+                if (idx != static_cast<size_t>(-1)) {
+                    type = child_schema.get_column(idx).type();
+                }
+            } else if (col->type() == parser::ExprType::Binary) {
+                type = common::ValueType::TYPE_FLOAT64;
+            }
+            schema_.add_column(col->to_string(), type);
         }
     }
 }
@@ -665,6 +675,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             left_tuple_ = std::move(next_left);
             left_had_match_ = false;
             const common::Value key = left_key_->evaluate(&(left_tuple_.value()), &left_schema);
+            std::cerr << "--- [HashJoin] Probing: key=" << key.to_string() << " ---" << std::endl;
 
             /* Look up in hash table */
             auto range = hash_table_.equal_range(key.to_string());
@@ -741,8 +752,8 @@ void HashJoinOperator::add_child(std::unique_ptr<Operator> child) {
 LimitOperator::LimitOperator(std::unique_ptr<Operator> child, int64_t limit, int64_t offset)
     : Operator(OperatorType::Limit, child->get_txn(), child->get_lock_manager()),
       child_(std::move(child)),
-      limit_(limit),
-      offset_(offset) {}
+      limit_(limit < 0 ? -1 : limit),
+      offset_(offset < 0 ? 0 : offset) {}
 
 bool LimitOperator::init() {
     return child_->init();
@@ -752,33 +763,34 @@ bool LimitOperator::open() {
     if (!child_->open()) {
         return false;
     }
-
-    /* Skip offset rows */
-    current_count_ = 0;
-    Tuple tuple;
-    if (offset_ > 0) {
-        while (current_count_ < static_cast<uint64_t>(offset_) && child_->next(tuple)) {
-            current_count_++;
-        }
-    }
-    current_count_ = 0;
+    current_offset_ = 0;
+    count_ = 0;
     set_state(ExecState::Open);
     return true;
 }
 
 bool LimitOperator::next(Tuple& out_tuple) {
-    if (limit_ >= 0 && current_count_ >= static_cast<uint64_t>(limit_)) {
+    while (current_offset_ < static_cast<uint64_t>(offset_)) {
+        Tuple t;
+        if (!child_->next(t)) {
+            set_state(ExecState::Done);
+            return false;
+        }
+        current_offset_++;
+    }
+
+    if (limit_ >= 0 && count_ >= static_cast<uint64_t>(limit_)) {
         set_state(ExecState::Done);
         return false;
     }
 
-    if (!child_->next(out_tuple)) {
-        set_state(ExecState::Done);
-        return false;
+    if (child_->next(out_tuple)) {
+        count_++;
+        return true;
     }
 
-    current_count_++;
-    return true;
+    set_state(ExecState::Done);
+    return false;
 }
 
 void LimitOperator::close() {
@@ -795,5 +807,3 @@ void LimitOperator::add_child(std::unique_ptr<Operator> child) {
 }
 
 }  // namespace cloudsql::executor
-
-/** @} */ /* executor */
