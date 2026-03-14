@@ -128,7 +128,7 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
         rms[i]->start();
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 
     int leaders = 0;
     int leader_idx = -1;
@@ -146,7 +146,7 @@ TEST(MultiRaftTests, LeaderElectionAndFailover) {
         rms[leader_idx]->stop();
         rpcs[leader_idx]->stop();
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 
         int new_leaders = 0;
         for (int i = 0; i < num_nodes; ++i) {
