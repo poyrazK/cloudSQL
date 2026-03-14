@@ -92,3 +92,5 @@ coverage/
 # Emacs
 # ==============
 .emacs.d/
+*.state
+*.idx
