@@ -4,17 +4,17 @@
  */
 
 #include <gtest/gtest.h>
-
 #include <atomic>
 #include <chrono>
 #include <thread>
 #include <vector>
+#include <cstdio>
 
 #include "catalog/catalog.hpp"
 #include "common/config.hpp"
 #include "storage/buffer_pool_manager.hpp"
-#include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
+#include "storage/heap_table.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 #include "transaction/transaction_manager.hpp"
@@ -26,9 +26,59 @@ using namespace cloudsql::storage;
 namespace {
 
 /**
+ * @class TransactionCoverageTests
+ * @brief Fixture for transaction-related coverage tests to ensure proper resource management.
+ */
+class TransactionCoverageTests : public ::testing::Test {
+protected:
+    void SetUp() override {
+        catalog = Catalog::create();
+        disk_manager = std::make_unique<StorageManager>("./test_data");
+        bpm = std::make_unique<BufferPoolManager>(config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
+        lm = std::make_unique<LockManager>();
+        tm = std::make_unique<TransactionManager>(*lm, *catalog, *bpm, nullptr);
+
+        std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0},
+                                        {"val", common::ValueType::TYPE_TEXT, 1}};
+        catalog->create_table("rollback_stress", cols);
+        
+        executor::Schema schema;
+        schema.add_column("id", common::ValueType::TYPE_INT64);
+        schema.add_column("val", common::ValueType::TYPE_TEXT);
+        
+        table = std::make_unique<HeapTable>("rollback_stress", *bpm, schema);
+        table->create();
+        
+        txn = nullptr;
+    }
+
+    void TearDown() override {
+        if (txn != nullptr) {
+            tm->abort(txn);
+        }
+        table.reset();
+        tm.reset();
+        lm.reset();
+        bpm.reset();
+        disk_manager.reset();
+        catalog.reset();
+        
+        static_cast<void>(std::remove("./test_data/rollback_stress.heap"));
+    }
+
+    std::unique_ptr<Catalog> catalog;
+    std::unique_ptr<StorageManager> disk_manager;
+    std::unique_ptr<BufferPoolManager> bpm;
+    std::unique_ptr<LockManager> lm;
+    std::unique_ptr<TransactionManager> tm;
+    std::unique_ptr<HeapTable> table;
+    Transaction* txn;
+};
+
+/**
  * @brief Stress tests the LockManager with concurrent shared and exclusive requests.
  */
-TEST(TransactionCoverageTests, LockManagerConcurrency) {
+TEST(TransactionCoverageTestsStandalone, LockManagerConcurrency) {
     LockManager lm;
     const int num_readers = 5;
     std::vector<std::thread> readers;
@@ -36,7 +86,7 @@ TEST(TransactionCoverageTests, LockManagerConcurrency) {
     std::atomic<bool> stop{false};
 
     Transaction writer_txn(100);
-
+    
     // Writers holds exclusive lock initially
     ASSERT_TRUE(lm.acquire_exclusive(&writer_txn, "RESOURCE"));
 
@@ -59,7 +109,7 @@ TEST(TransactionCoverageTests, LockManagerConcurrency) {
 
     // Release writer lock, readers should proceed
     lm.unlock(&writer_txn, "RESOURCE");
-
+    
     // Wait for all readers to get the lock
     for (int i = 0; i < 50 && shared_granted.load() < num_readers; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -75,63 +125,38 @@ TEST(TransactionCoverageTests, LockManagerConcurrency) {
 /**
  * @brief Tests deep rollback functionality via the Undo Log.
  */
-TEST(TransactionCoverageTests, DeepRollback) {
-    auto catalog = Catalog::create();
-    StorageManager disk_manager("./test_data");
-    BufferPoolManager bpm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
-    LockManager lm;
-    TransactionManager tm(lm, *catalog, bpm, nullptr);
-
-    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0},
-                                    {"val", common::ValueType::TYPE_TEXT, 1}};
-    oid_t tid = catalog->create_table("rollback_stress", cols);
-
-    executor::Schema schema;
-    schema.add_column("id", common::ValueType::TYPE_INT64);
-    schema.add_column("val", common::ValueType::TYPE_TEXT);
-
-    HeapTable table("rollback_stress", bpm, schema);
-    table.create();
-
-    Transaction* txn = tm.begin();
-
+TEST_F(TransactionCoverageTests, DeepRollback) {
+    txn = tm->begin();
+    
     // 1. Insert some data
-    auto rid1 =
-        table.insert(executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A")}),
-                     txn->get_id());
+    auto rid1 = table->insert(executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A")}), txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid1);
-
-    auto rid2 =
-        table.insert(executor::Tuple({common::Value::make_int64(2), common::Value::make_text("B")}),
-                     txn->get_id());
+    
+    auto rid2 = table->insert(executor::Tuple({common::Value::make_int64(2), common::Value::make_text("B")}), txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid2);
 
     // 2. Update data
-    table.remove(rid1, txn->get_id());  // Mark old version deleted
-    auto rid1_new = table.insert(
-        executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A_NEW")}),
-        txn->get_id());
+    table->remove(rid1, txn->get_id()); // Mark old version deleted
+    auto rid1_new = table->insert(executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A_NEW")}), txn->get_id());
     txn->add_undo_log(UndoLog::Type::UPDATE, "rollback_stress", rid1_new, rid1);
 
     // 3. Delete data
-    table.remove(rid2, txn->get_id());
+    table->remove(rid2, txn->get_id());
     txn->add_undo_log(UndoLog::Type::DELETE, "rollback_stress", rid2);
 
-    EXPECT_EQ(table.tuple_count(), 1U);  // rid1_new is active, rid1 and rid2 are logically deleted
+    EXPECT_EQ(table->tuple_count(), 1U); // rid1_new is active, rid1 and rid2 are logically deleted
 
     // 4. Abort
-    tm.abort(txn);
+    tm->abort(txn);
+    txn = nullptr; // Marked as aborted and handled by TearDown if still set
 
     // 5. Verify restoration
-    EXPECT_EQ(table.tuple_count(),
-              0U);  // Inserted rows should be physically removed or logically invisible
-
+    EXPECT_EQ(table->tuple_count(), 0U); // Inserted rows should be physically removed or logically invisible
+    
     // The table should be empty because we aborted the inserts
-    auto iter = table.scan();
+    auto iter = table->scan();
     executor::Tuple t;
     EXPECT_FALSE(iter.next(t));
-
-    static_cast<void>(std::remove("./test_data/rollback_stress.heap"));
 }
 
-}  // namespace
+} // namespace
