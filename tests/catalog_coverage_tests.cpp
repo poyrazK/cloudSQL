@@ -4,8 +4,10 @@
  */
 
 #include <gtest/gtest.h>
+
 #include <cstring>
 #include <vector>
+
 #include "catalog/catalog.hpp"
 #include "common/value.hpp"
 #include "distributed/raft_types.hpp"
@@ -19,7 +21,7 @@ namespace {
  */
 TEST(CatalogCoverageTests, MissingEntities) {
     auto catalog = Catalog::create();
-    
+
     // Invalid table lookup
     EXPECT_FALSE(catalog->get_table(9999).has_value());
     EXPECT_FALSE(catalog->table_exists(9999));
@@ -56,7 +58,8 @@ TEST(CatalogCoverageTests, DuplicateEntities) {
     ASSERT_NE(iid, 0);
 
     // Duplicate index creation should throw
-    EXPECT_THROW(catalog->create_index("idx_id", tid, {0}, IndexType::BTree, true), std::runtime_error);
+    EXPECT_THROW(catalog->create_index("idx_id", tid, {0}, IndexType::BTree, true),
+                 std::runtime_error);
 
     // Creating index on missing table
     EXPECT_EQ(catalog->create_index("idx_missing", 9999, {0}, IndexType::BTree, false), 0);
@@ -65,9 +68,10 @@ TEST(CatalogCoverageTests, DuplicateEntities) {
 /**
  * @brief Helper to serialize CreateTable command for Raft simulation
  */
-std::vector<uint8_t> serialize_create_table(const std::string& name, const std::vector<ColumnInfo>& columns) {
+std::vector<uint8_t> serialize_create_table(const std::string& name,
+                                            const std::vector<ColumnInfo>& columns) {
     std::vector<uint8_t> data;
-    data.push_back(1); // Type 1
+    data.push_back(1);  // Type 1
 
     uint32_t name_len = name.size();
     size_t off = data.size();
@@ -99,7 +103,7 @@ std::vector<uint8_t> serialize_create_table(const std::string& name, const std::
     uint32_t addr_len = addr.size();
     uint32_t sid = 0;
     uint16_t port = 6441;
-    
+
     off = data.size();
     data.resize(off + 4 + addr_len + 4 + 2);
     std::memcpy(data.data() + off, &addr_len, 4);
@@ -115,11 +119,11 @@ std::vector<uint8_t> serialize_create_table(const std::string& name, const std::
  */
 TEST(CatalogCoverageTests, RaftApply) {
     auto catalog = Catalog::create();
-    
+
     // 1. Replay CreateTable
     std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
     std::vector<uint8_t> create_data = serialize_create_table("raft_table", cols);
-    
+
     raft::LogEntry entry;
     entry.term = 1;
     entry.index = 1;
@@ -127,20 +131,20 @@ TEST(CatalogCoverageTests, RaftApply) {
 
     catalog->apply(entry);
     EXPECT_TRUE(catalog->table_exists_by_name("raft_table"));
-    
+
     auto table_opt = catalog->get_table_by_name("raft_table");
     ASSERT_TRUE(table_opt.has_value());
     oid_t tid = (*table_opt)->table_id;
 
     // 2. Replay DropTable
     std::vector<uint8_t> drop_data;
-    drop_data.push_back(2); // Type 2
+    drop_data.push_back(2);  // Type 2
     drop_data.resize(5);
     std::memcpy(drop_data.data() + 1, &tid, 4);
 
     entry.index = 2;
     entry.data = drop_data;
-    
+
     catalog->apply(entry);
     EXPECT_FALSE(catalog->table_exists(tid));
     EXPECT_FALSE(catalog->table_exists_by_name("raft_table"));
@@ -151,4 +155,4 @@ TEST(CatalogCoverageTests, RaftApply) {
     catalog->apply(entry);
 }
 
-} // namespace
+}  // namespace

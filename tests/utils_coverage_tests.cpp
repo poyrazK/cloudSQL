@@ -4,8 +4,10 @@
  */
 
 #include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
+
 #include "common/value.hpp"
 #include "network/rpc_client.hpp"
 
@@ -19,7 +21,7 @@ namespace {
  */
 TEST(UtilsCoverageTests, ValueEdgeCases) {
     // 1. Accessor failure paths
-    Value v_int(ValueType::TYPE_INT32); // Default 0
+    Value v_int(ValueType::TYPE_INT32);  // Default 0
     EXPECT_THROW(v_int.as_bool(), std::runtime_error);
     EXPECT_THROW(v_int.as_float64(), std::runtime_error);
     EXPECT_THROW(v_int.as_text(), std::runtime_error);
@@ -31,7 +33,7 @@ TEST(UtilsCoverageTests, ValueEdgeCases) {
     EXPECT_THROW(v_text.as_int32(), std::runtime_error);
 
     // 2. boundary to_* conversions
-    EXPECT_EQ(v_text.to_int64(), 0); // Text doesn't auto-convert to int in to_int64()
+    EXPECT_EQ(v_text.to_int64(), 0);  // Text doesn't auto-convert to int in to_int64()
     EXPECT_EQ(v_text.to_float64(), 0.0);
 
     Value v_null = Value::make_null();
@@ -41,7 +43,7 @@ TEST(UtilsCoverageTests, ValueEdgeCases) {
 
     Value v_f(1.23);
     EXPECT_EQ(v_f.to_int64(), 1);
-    
+
     // 3. Numeric check
     EXPECT_TRUE(v_int.is_numeric());
     EXPECT_TRUE(v_f.is_numeric());
@@ -59,23 +61,23 @@ TEST(UtilsCoverageTests, ValueComparisons) {
     Value v_text("A");
 
     // Equality
-    EXPECT_TRUE(v_int == v_float); // Numeric equality
+    EXPECT_TRUE(v_int == v_float);  // Numeric equality
     EXPECT_FALSE(v_int == v_text);
     EXPECT_FALSE(v_int == v_null);
 
     // Less than
-    EXPECT_FALSE(v_null < v_int); // NULL is not less than anything
-    EXPECT_TRUE(v_int < v_null);  // non-NULL is less than NULL (by convention in this impl)
-    
+    EXPECT_FALSE(v_null < v_int);  // NULL is not less than anything
+    EXPECT_TRUE(v_int < v_null);   // non-NULL is less than NULL (by convention in this impl)
+
     Value v_int_small(5);
     EXPECT_TRUE(v_int_small < v_float);
     EXPECT_FALSE(v_float < v_int_small);
 
     Value v_text_b("B");
     EXPECT_TRUE(v_text < v_text_b);
-    
+
     // Mixed numeric/non-numeric comparison
-    EXPECT_FALSE(v_int < v_text); 
+    EXPECT_FALSE(v_int < v_text);
 }
 
 /**
@@ -83,11 +85,11 @@ TEST(UtilsCoverageTests, ValueComparisons) {
  */
 TEST(UtilsCoverageTests, RpcClientFailure) {
     // Attempt to connect to an unreachable port on localhost
-    RpcClient client("127.0.0.1", 1); // Port 1 is usually privileged and closed
-    
+    RpcClient client("127.0.0.1", 1);  // Port 1 is usually privileged and closed
+
     EXPECT_FALSE(client.connect());
     EXPECT_FALSE(client.is_connected());
-    
+
     std::vector<uint8_t> resp;
     EXPECT_FALSE(client.call(RpcType::AppendEntries, {1, 2, 3}, resp));
     EXPECT_FALSE(client.send_only(RpcType::AppendEntries, {1, 2, 3}));
@@ -108,4 +110,4 @@ TEST(UtilsCoverageTests, ValueHash) {
     EXPECT_NE(hasher(v1), hasher(v_null));
 }
 
-} // namespace
+}  // namespace
