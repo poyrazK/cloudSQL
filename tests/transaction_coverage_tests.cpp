@@ -4,17 +4,18 @@
  */
 
 #include <gtest/gtest.h>
+
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <thread>
 #include <vector>
-#include <cstdio>
 
 #include "catalog/catalog.hpp"
 #include "common/config.hpp"
 #include "storage/buffer_pool_manager.hpp"
-#include "storage/storage_manager.hpp"
 #include "storage/heap_table.hpp"
+#include "storage/storage_manager.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction.hpp"
 #include "transaction/transaction_manager.hpp"
@@ -30,25 +31,26 @@ namespace {
  * @brief Fixture for transaction-related coverage tests to ensure proper resource management.
  */
 class TransactionCoverageTests : public ::testing::Test {
-protected:
+   protected:
     void SetUp() override {
         catalog = Catalog::create();
         disk_manager = std::make_unique<StorageManager>("./test_data");
-        bpm = std::make_unique<BufferPoolManager>(config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
+        bpm = std::make_unique<BufferPoolManager>(config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                                  *disk_manager);
         lm = std::make_unique<LockManager>();
         tm = std::make_unique<TransactionManager>(*lm, *catalog, *bpm, nullptr);
 
         std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0},
                                         {"val", common::ValueType::TYPE_TEXT, 1}};
         catalog->create_table("rollback_stress", cols);
-        
+
         executor::Schema schema;
         schema.add_column("id", common::ValueType::TYPE_INT64);
         schema.add_column("val", common::ValueType::TYPE_TEXT);
-        
+
         table = std::make_unique<HeapTable>("rollback_stress", *bpm, schema);
         table->create();
-        
+
         txn = nullptr;
     }
 
@@ -62,7 +64,7 @@ protected:
         bpm.reset();
         disk_manager.reset();
         catalog.reset();
-        
+
         static_cast<void>(std::remove("./test_data/rollback_stress.heap"));
     }
 
@@ -86,7 +88,7 @@ TEST(TransactionCoverageTestsStandalone, LockManagerConcurrency) {
     std::atomic<bool> stop{false};
 
     Transaction writer_txn(100);
-    
+
     // Writers holds exclusive lock initially
     ASSERT_TRUE(lm.acquire_exclusive(&writer_txn, "RESOURCE"));
 
@@ -109,7 +111,7 @@ TEST(TransactionCoverageTestsStandalone, LockManagerConcurrency) {
 
     // Release writer lock, readers should proceed
     lm.unlock(&writer_txn, "RESOURCE");
-    
+
     // Wait for all readers to get the lock
     for (int i = 0; i < 50 && shared_granted.load() < num_readers; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -127,36 +129,43 @@ TEST(TransactionCoverageTestsStandalone, LockManagerConcurrency) {
  */
 TEST_F(TransactionCoverageTests, DeepRollback) {
     txn = tm->begin();
-    
+
     // 1. Insert some data
-    auto rid1 = table->insert(executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A")}), txn->get_id());
+    auto rid1 = table->insert(
+        executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A")}),
+        txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid1);
-    
-    auto rid2 = table->insert(executor::Tuple({common::Value::make_int64(2), common::Value::make_text("B")}), txn->get_id());
+
+    auto rid2 = table->insert(
+        executor::Tuple({common::Value::make_int64(2), common::Value::make_text("B")}),
+        txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid2);
 
     // 2. Update data
-    table->remove(rid1, txn->get_id()); // Mark old version deleted
-    auto rid1_new = table->insert(executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A_NEW")}), txn->get_id());
+    table->remove(rid1, txn->get_id());  // Mark old version deleted
+    auto rid1_new = table->insert(
+        executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A_NEW")}),
+        txn->get_id());
     txn->add_undo_log(UndoLog::Type::UPDATE, "rollback_stress", rid1_new, rid1);
 
     // 3. Delete data
     table->remove(rid2, txn->get_id());
     txn->add_undo_log(UndoLog::Type::DELETE, "rollback_stress", rid2);
 
-    EXPECT_EQ(table->tuple_count(), 1U); // rid1_new is active, rid1 and rid2 are logically deleted
+    EXPECT_EQ(table->tuple_count(), 1U);  // rid1_new is active, rid1 and rid2 are logically deleted
 
     // 4. Abort
     tm->abort(txn);
-    txn = nullptr; // Marked as aborted and handled by TearDown if still set
+    txn = nullptr;  // Marked as aborted and handled by TearDown if still set
 
     // 5. Verify restoration
-    EXPECT_EQ(table->tuple_count(), 0U); // Inserted rows should be physically removed or logically invisible
-    
+    EXPECT_EQ(table->tuple_count(),
+              0U);  // Inserted rows should be physically removed or logically invisible
+
     // The table should be empty because we aborted the inserts
     auto iter = table->scan();
     executor::Tuple t;
     EXPECT_FALSE(iter.next(t));
 }
 
-} // namespace
+}  // namespace
