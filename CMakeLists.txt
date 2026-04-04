@@ -22,6 +22,16 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
+# Find Google Benchmark
+FetchContent_Declare(
+  googlebenchmark
+  URL https://github.com/google/benchmark/archive/refs/tags/v1.8.3.zip
+)
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googlebenchmark)
+
 # Core Library
 set(CORE_SOURCES
     src/common/config.cpp
@@ -81,6 +91,12 @@ macro(add_cloudsql_test NAME SOURCE)
     add_test(NAME ${NAME} COMMAND ${NAME})
 endmacro()
 
+# Benchmark helper macro
+macro(add_cloudsql_benchmark NAME SOURCE)
+    add_executable(${NAME} ${SOURCE})
+    target_link_libraries(${NAME} sqlEngineCore benchmark::benchmark benchmark::benchmark_main)
+endmacro()
+
 # Tests
 if(BUILD_TESTS)
     enable_testing()
@@ -105,4 +121,12 @@ if(BUILD_TESTS)
     add_custom_target(run-tests
         COMMAND ${CMAKE_CTEST_COMMAND}
         COMMENT "Running all tests via CTest")
+endif()
+
+# Benchmarks
+option(BUILD_BENCHMARKS "Enable performance benchmarks" OFF)
+if(BUILD_BENCHMARKS)
+    add_cloudsql_benchmark(storage_bench benchmarks/storage_bench.cpp)
+    add_cloudsql_benchmark(execution_bench benchmarks/execution_bench.cpp)
+    add_cloudsql_benchmark(network_bench benchmarks/network_bench.cpp)
 endif()
