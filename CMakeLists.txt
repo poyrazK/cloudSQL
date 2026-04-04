@@ -94,7 +94,7 @@ endmacro()
 # Benchmark helper macro
 macro(add_cloudsql_benchmark NAME SOURCE)
     add_executable(${NAME} ${SOURCE})
-    target_link_libraries(${NAME} sqlEngineCore benchmark::benchmark)
+    target_link_libraries(${NAME} sqlEngineCore benchmark::benchmark benchmark::benchmark_main)
 endmacro()
 
 # Tests

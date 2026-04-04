@@ -37,12 +37,13 @@ static void BM_ExecutionSeqScan(benchmark::State& state) {
     schema.add_column("id", common::ValueType::TYPE_INT64);
     schema.add_column("data", common::ValueType::TYPE_TEXT);
     
-    // Setup table once per benchmark run
-    auto table = std::make_unique<HeapTable>("scan_table", bpm, schema);
-    table->create();
-    SetupBenchTable(*table, state.range(0));
-
     for (auto _ : state) {
+        state.PauseTiming();
+        auto table = std::make_unique<HeapTable>("scan_table", bpm, schema);
+        table->create();
+        SetupBenchTable(*table, state.range(0));
+        state.ResumeTiming();
+
         auto scan_op = std::make_unique<SeqScanOperator>(std::move(table));
         scan_op->init();
         Tuple tuple;
@@ -50,8 +51,10 @@ static void BM_ExecutionSeqScan(benchmark::State& state) {
             benchmark::DoNotOptimize(tuple);
         }
         
-        // Recover the table for the next iteration (it was moved into scan_op)
-        table = std::make_unique<HeapTable>("scan_table", bpm, schema);
+        state.PauseTiming();
+        std::filesystem::remove_all(test_dir);
+        std::filesystem::create_directories(test_dir);
+        state.ResumeTiming();
     }
     
     state.SetItemsProcessed(state.iterations() * state.range(0));
@@ -69,15 +72,17 @@ static void BM_ExecutionHashJoin(benchmark::State& state) {
     schema.add_column("id", common::ValueType::TYPE_INT64);
     schema.add_column("data", common::ValueType::TYPE_TEXT);
     
-    auto left_table = std::make_unique<HeapTable>("left_table", bpm, schema);
-    left_table->create();
-    SetupBenchTable(*left_table, state.range(0));
-    
-    auto right_table = std::make_unique<HeapTable>("right_table", bpm, schema);
-    right_table->create();
-    SetupBenchTable(*right_table, state.range(0));
-
     for (auto _ : state) {
+        state.PauseTiming();
+        auto left_table = std::make_unique<HeapTable>("left_table", bpm, schema);
+        left_table->create();
+        SetupBenchTable(*left_table, state.range(0));
+        
+        auto right_table = std::make_unique<HeapTable>("right_table", bpm, schema);
+        right_table->create();
+        SetupBenchTable(*right_table, state.range(0));
+        state.ResumeTiming();
+
         auto left_scan = std::make_unique<SeqScanOperator>(std::move(left_table));
         auto right_scan = std::make_unique<SeqScanOperator>(std::move(right_table));
         
@@ -94,14 +99,13 @@ static void BM_ExecutionHashJoin(benchmark::State& state) {
             benchmark::DoNotOptimize(tuple);
         }
         
-        // Recover tables for next iteration
-        left_table = std::make_unique<HeapTable>("left_table", bpm, schema);
-        right_table = std::make_unique<HeapTable>("right_table", bpm, schema);
+        state.PauseTiming();
+        std::filesystem::remove_all(test_dir);
+        std::filesystem::create_directories(test_dir);
+        state.ResumeTiming();
     }
     
     state.SetItemsProcessed(state.iterations() * state.range(0));
     std::filesystem::remove_all(test_dir);
 }
 BENCHMARK(BM_ExecutionHashJoin)->Arg(100)->Arg(1000);
-
-BENCHMARK_MAIN();

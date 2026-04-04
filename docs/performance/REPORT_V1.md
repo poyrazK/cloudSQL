@@ -24,7 +24,7 @@ Using the macOS `sample` profiler on the `BM_HeapTableInsert` benchmark, we iden
 *   Within `unpin_page`, the `LRUReplacer::unpin` method is triggering expensive internal allocations within `std::unordered_map` and `std::list`.
 
 ### Call Graph Insight:
-```
+```plaintext
 BM_HeapTableInsert
   -> HeapTable::insert (1,859 samples)
   -> BufferPoolManager::unpin_page (789 samples)
