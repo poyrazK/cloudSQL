@@ -140,3 +140,35 @@ jobs:
       with:
         name: cloudsql-bin-${{ matrix.compiler }}
         path: build/cloudSQL
+
+  performance-benchmarks:
+    needs: style-check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake clang ninja-build ccache
+
+    - name: Configure CMake (Release)
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_BENCHMARKS=ON \
+          -DBUILD_TESTS=OFF
+
+    - name: Build Benchmarks
+      run: |
+        cd build
+        ninja storage_bench execution_bench network_bench
+
+    - name: Run Benchmarks
+      run: |
+        cd build
+        ./storage_bench
+        ./execution_bench
+        ./network_bench
