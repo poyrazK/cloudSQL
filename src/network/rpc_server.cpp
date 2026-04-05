@@ -39,14 +39,16 @@ bool RpcServer::start() {
     addr.sin_port = htons(port_);
 
     if (bind(listen_fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        if (false) std::cerr << "--- [RpcServer] bind FAILED on port " << port_ << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcServer] bind FAILED on port " << port_ << " ---" << std::endl;
         static_cast<void>(close(listen_fd_));
         listen_fd_ = -1;
         return false;
     }
 
     if (listen(listen_fd_, 10) < 0) {
-        if (false) std::cerr << "--- [RpcServer] listen FAILED on port " << port_ << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcServer] listen FAILED on port " << port_ << " ---" << std::endl;
         static_cast<void>(close(listen_fd_));
         listen_fd_ = -1;
         return false;
@@ -118,8 +120,9 @@ void RpcServer::handle_client(int client_fd) {
         }
 
         const RpcHeader header = RpcHeader::decode(header_buf.data());
-        if (false) std::cerr << "--- [RpcServer] received request type=" << (int)header.type
-                  << " payload=" << header.payload_len << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcServer] received request type=" << (int)header.type
+                      << " payload=" << header.payload_len << " ---" << std::endl;
 
         std::vector<uint8_t> payload(header.payload_len);
         if (header.payload_len > 0) {
@@ -142,8 +145,9 @@ void RpcServer::handle_client(int client_fd) {
             handler(header, payload, client_fd);
             if (false) std::cerr << "--- [RpcServer] handler finished ---" << std::endl;
         } else {
-            if (false) std::cerr << "--- [RpcServer] NO HANDLER FOUND for type " << (int)header.type << " ---"
-                      << std::endl;
+            if (false)
+                std::cerr << "--- [RpcServer] NO HANDLER FOUND for type " << (int)header.type
+                          << " ---" << std::endl;
         }
     }
     static_cast<void>(close(client_fd));

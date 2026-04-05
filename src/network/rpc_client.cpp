@@ -35,8 +35,9 @@ bool RpcClient::connect() {
 
     fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (fd_ < 0) {
-        if (false) std::cerr << "--- [RpcClient] socket creation FAILED: " << strerror(errno) << " ---"
-                  << std::endl;
+        if (false)
+            std::cerr << "--- [RpcClient] socket creation FAILED: " << strerror(errno) << " ---"
+                      << std::endl;
         return false;
     }
 
@@ -47,14 +48,17 @@ bool RpcClient::connect() {
     static_cast<void>(inet_pton(AF_INET, address_.c_str(), &addr.sin_addr));
 
     if (::connect(fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        if (false) std::cerr << "--- [RpcClient] connect FAILED to " << address_ << ":" << port_ << " : "
-                  << strerror(errno) << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcClient] connect FAILED to " << address_ << ":" << port_ << " : "
+                      << strerror(errno) << " ---" << std::endl;
         static_cast<void>(close(fd_));
         fd_ = -1;
         return false;
     }
 
-    if (false) std::cerr << "--- [RpcClient] connected to " << address_ << ":" << port_ << " ---" << std::endl;
+    if (false)
+        std::cerr << "--- [RpcClient] connected to " << address_ << ":" << port_ << " ---"
+                  << std::endl;
     return true;
 }
 
@@ -70,12 +74,14 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
                      std::vector<uint8_t>& response_out, uint16_t group_id) {
     const std::scoped_lock<std::mutex> lock(mutex_);
 
-    if (false) std::cerr << "--- [RpcClient] call type=" << (int)type << " to " << address_ << ":" << port_
-              << " ---" << std::endl;
+    if (false)
+        std::cerr << "--- [RpcClient] call type=" << (int)type << " to " << address_ << ":" << port_
+                  << " ---" << std::endl;
 
     if (fd_ < 0 && !connect()) {
-        if (false) std::cerr << "--- [RpcClient] connect failed to " << address_ << ":" << port_ << " ---"
-                  << std::endl;
+        if (false)
+            std::cerr << "--- [RpcClient] connect failed to " << address_ << ":" << port_ << " ---"
+                      << std::endl;
         return false;
     }
 
