@@ -35,7 +35,7 @@ bool RpcClient::connect() {
 
     fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (fd_ < 0) {
-        std::cerr << "--- [RpcClient] socket creation FAILED: " << strerror(errno) << " ---"
+        if (false) std::cerr << "--- [RpcClient] socket creation FAILED: " << strerror(errno) << " ---"
                   << std::endl;
         return false;
     }
@@ -47,14 +47,14 @@ bool RpcClient::connect() {
     static_cast<void>(inet_pton(AF_INET, address_.c_str(), &addr.sin_addr));
 
     if (::connect(fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "--- [RpcClient] connect FAILED to " << address_ << ":" << port_ << " : "
+        if (false) std::cerr << "--- [RpcClient] connect FAILED to " << address_ << ":" << port_ << " : "
                   << strerror(errno) << " ---" << std::endl;
         static_cast<void>(close(fd_));
         fd_ = -1;
         return false;
     }
 
-    std::cerr << "--- [RpcClient] connected to " << address_ << ":" << port_ << " ---" << std::endl;
+    if (false) std::cerr << "--- [RpcClient] connected to " << address_ << ":" << port_ << " ---" << std::endl;
     return true;
 }
 
@@ -70,11 +70,11 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
                      std::vector<uint8_t>& response_out, uint16_t group_id) {
     const std::scoped_lock<std::mutex> lock(mutex_);
 
-    std::cerr << "--- [RpcClient] call type=" << (int)type << " to " << address_ << ":" << port_
+    if (false) std::cerr << "--- [RpcClient] call type=" << (int)type << " to " << address_ << ":" << port_
               << " ---" << std::endl;
 
     if (fd_ < 0 && !connect()) {
-        std::cerr << "--- [RpcClient] connect failed to " << address_ << ":" << port_ << " ---"
+        if (false) std::cerr << "--- [RpcClient] connect failed to " << address_ << ":" << port_ << " ---"
                   << std::endl;
         return false;
     }
@@ -89,22 +89,22 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
     header.encode(header_buf);
 
     if (send(fd_, header_buf, RpcHeader::HEADER_SIZE, 0) <= 0) {
-        std::cerr << "--- [RpcClient] header send failed ---" << std::endl;
+        if (false) std::cerr << "--- [RpcClient] header send failed ---" << std::endl;
         return false;
     }
 
     if (!payload.empty()) {
         if (send(fd_, payload.data(), payload.size(), 0) <= 0) {
-            std::cerr << "--- [RpcClient] payload send failed ---" << std::endl;
+            if (false) std::cerr << "--- [RpcClient] payload send failed ---" << std::endl;
             return false;
         }
     }
 
     // Reception Phase: Must occur under the same lock to ensure atomicity
-    std::cerr << "--- [RpcClient] waiting for response ---" << std::endl;
+    if (false) std::cerr << "--- [RpcClient] waiting for response ---" << std::endl;
     std::array<char, RpcHeader::HEADER_SIZE> resp_buf{};
     if (recv(fd_, resp_buf.data(), RpcHeader::HEADER_SIZE, MSG_WAITALL) <= 0) {
-        std::cerr << "--- [RpcClient] recv header failed ---" << std::endl;
+        if (false) std::cerr << "--- [RpcClient] recv header failed ---" << std::endl;
         return false;
     }
 
@@ -113,12 +113,12 @@ bool RpcClient::call(RpcType type, const std::vector<uint8_t>& payload,
 
     if (resp_header.payload_len > 0) {
         if (recv(fd_, response_out.data(), resp_header.payload_len, MSG_WAITALL) <= 0) {
-            std::cerr << "--- [RpcClient] recv payload failed ---" << std::endl;
+            if (false) std::cerr << "--- [RpcClient] recv payload failed ---" << std::endl;
             return false;
         }
     }
 
-    std::cerr << "--- [RpcClient] call success ---" << std::endl;
+    if (false) std::cerr << "--- [RpcClient] call success ---" << std::endl;
     return true;
 }
 
