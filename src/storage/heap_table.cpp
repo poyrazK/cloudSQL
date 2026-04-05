@@ -35,7 +35,8 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::S
     : table_name_(std::move(table_name)),
       filename_(table_name_ + ".heap"),
       bpm_(bpm),
-      schema_(std::move(schema)) {}
+      schema_(std::move(schema)),
+      last_page_id_(0) {}
 
 /* --- Iterator Implementation --- */
 
@@ -105,60 +106,80 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
 /* --- HeapTable Methods --- */
 
 HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin) {
-    uint32_t page_num = 0;
-    std::array<char, Page::PAGE_SIZE> buffer{};
+    uint32_t page_num = last_page_id_;
+
+    /* Pre-serialize tuple to binary to determine size and avoid repeat work */
+    std::vector<uint8_t> payload;
+    payload.reserve(16 + (tuple.size() * 8)); 
+    
+    uint64_t xmax = 0;
+    payload.resize(16);
+    std::memcpy(payload.data(), &xmin, 8);
+    std::memcpy(payload.data() + 8, &xmax, 8);
+
+    for (const auto& val : tuple.values()) {
+        auto type = static_cast<uint8_t>(val.type());
+        payload.push_back(type);
+        if (val.is_null()) continue;
+
+        if (val.is_numeric()) {
+            double v = val.to_float64();
+            size_t off = payload.size();
+            payload.resize(off + 8);
+            std::memcpy(payload.data() + off, &v, 8);
+        } else {
+            const std::string& s = val.to_string();
+            uint32_t len = static_cast<uint32_t>(s.size());
+            size_t off = payload.size();
+            payload.resize(off + 4 + len);
+            std::memcpy(payload.data() + off, &len, 4);
+            std::memcpy(payload.data() + off + 4, s.data(), len);
+        }
+    }
+
+    const auto required = static_cast<uint16_t>(payload.size());
 
     while (true) {
-        /* Read existing page or initialize a new one */
-        if (!read_page(page_num, buffer.data())) {
-            std::memset(buffer.data(), 0, Page::PAGE_SIZE);
-            PageHeader header{};
-            header.free_space_offset =
-                static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
-            header.num_slots = 0;
-            std::memcpy(buffer.data(), &header, sizeof(PageHeader));
-            static_cast<void>(write_page(page_num, buffer.data()));
+        Page* page = bpm_.fetch_page(filename_, page_num);
+        if (!page) {
+            page = bpm_.new_page(filename_, &page_num);
+            if (!page) return {0, 0};
         }
 
+        auto* buffer = page->get_data();
         PageHeader header{};
-        std::memcpy(&header, buffer.data(), sizeof(PageHeader));
+        std::memcpy(&header, buffer, sizeof(PageHeader));
+        
         if (header.free_space_offset == 0) {
             header.free_space_offset =
                 static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
             header.num_slots = 0;
         }
 
-        /* Serialize tuple data prefixed by MVCC header (xmin|xmax|) */
-        std::string data_str = std::to_string(xmin) + "|0|";
-        for (const auto& val : tuple.values()) {
-            data_str += val.to_string() + "|";
-        }
-
-        const auto required = static_cast<uint16_t>(data_str.size() + 1);
-
         /* Check for sufficient free space in the current page */
         if (header.free_space_offset + required < Page::PAGE_SIZE &&
             header.num_slots < DEFAULT_SLOT_COUNT) {
             const uint16_t offset = header.free_space_offset;
-            std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)),
-                        data_str.c_str(), data_str.size() + 1);
+            
+            // Copy binary payload directly to page buffer
+            std::memcpy(buffer + offset, payload.data(), payload.size());
 
             /* Update slot directory */
-            std::memcpy(std::next(buffer.data(),
-                                  static_cast<std::ptrdiff_t>(
-                                      sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))),
+            std::memcpy(buffer + sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)),
                         &offset, sizeof(uint16_t));
 
             TupleId tid(page_num, header.num_slots);
             header.num_slots++;
             header.free_space_offset += required;
 
-            std::memcpy(buffer.data(), &header, sizeof(PageHeader));
-            static_cast<void>(write_page(page_num, buffer.data()));
+            std::memcpy(buffer, &header, sizeof(PageHeader));
+            bpm_.unpin_page(filename_, page_num, true);
+            last_page_id_ = page_num;
             return tid;
         }
 
         /* Page is full; attempt insertion in the next page */
+        bpm_.unpin_page(filename_, page_num, false);
         page_num++;
     }
 }
@@ -167,143 +188,53 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
  * @brief Logical deletion: update xmax field in the record blob
  */
 bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
-    std::array<char, Page::PAGE_SIZE> buffer{};
-    if (!read_page(tuple_id.page_num, buffer.data())) {
-        return false;
-    }
+    Page* page = bpm_.fetch_page(filename_, tuple_id.page_num);
+    if (!page) return false;
 
+    auto* buffer = page->get_data();
     PageHeader header{};
-    std::memcpy(&header, buffer.data(), sizeof(PageHeader));
-    if (header.free_space_offset == 0) {
-        return false;
-    }
-    if (tuple_id.slot_num >= header.num_slots) {
+    std::memcpy(&header, buffer, sizeof(PageHeader));
+    if (header.free_space_offset == 0 || tuple_id.slot_num >= header.num_slots) {
+        bpm_.unpin_page(filename_, tuple_id.page_num, false);
         return false;
     }
 
     uint16_t offset = 0;
-    std::memcpy(
-        &offset,
-        std::next(buffer.data(), static_cast<std::ptrdiff_t>(
-                                     sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))),
-        sizeof(uint16_t));
+    std::memcpy(&offset, buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
+                sizeof(uint16_t));
     if (offset == 0) {
+        bpm_.unpin_page(filename_, tuple_id.page_num, false);
         return false;
     }
 
-    const char* const data_ptr = std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset));
-    const std::string raw_data(data_ptr);
+    /* In binary format, xmax is at offset + 8 */
+    std::memcpy(buffer + offset + 8, &xmax, 8);
 
-    std::stringstream ss(raw_data);
-    std::string segment;
-    std::vector<std::string> parts;
-    while (std::getline(ss, segment, '|')) {
-        parts.push_back(segment);
-    }
-
-    if (parts.size() < 2) {
-        return false;
-    }
-
-    /* Update xmax field */
-    parts[1] = std::to_string(xmax);
-
-    /* Reconstruct record blob */
-    std::string new_data;
-    for (const auto& p : parts) {
-        new_data += p + "|";
-    }
-
-    const auto old_len = raw_data.size() + 1;
-    const auto new_len = new_data.size() + 1;
-
-    if (new_len <= old_len) {
-        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset)), new_data.c_str(),
-                    new_len);
-        return write_page(tuple_id.page_num, buffer.data());
-    }
-
-    /* Reorganize page to accommodate potentially longer xmax string */
-    std::vector<std::string> all_tuples;
-    for (uint16_t i = 0; i < header.num_slots; ++i) {
-        uint16_t slot_off = 0;
-        std::memcpy(&slot_off,
-                    std::next(buffer.data(), static_cast<std::ptrdiff_t>(sizeof(PageHeader) +
-                                                                         (i * sizeof(uint16_t)))),
-                    sizeof(uint16_t));
-        if (slot_off == 0) {
-            all_tuples.emplace_back("");
-            continue;
-        }
-        if (i == tuple_id.slot_num) {
-            all_tuples.push_back(new_data);
-        } else {
-            all_tuples.emplace_back(
-                std::next(buffer.data(), static_cast<std::ptrdiff_t>(slot_off)));
-        }
-    }
-
-    std::memset(buffer.data(), 0, Page::PAGE_SIZE);
-    header.free_space_offset =
-        static_cast<uint16_t>(sizeof(PageHeader) + (DEFAULT_SLOT_COUNT * sizeof(uint16_t)));
-    header.num_slots = 0;
-
-    for (const auto& t_data : all_tuples) {
-        if (t_data.empty()) {
-            const uint16_t zero = 0;
-            std::memcpy(std::next(buffer.data(),
-                                  static_cast<std::ptrdiff_t>(
-                                      sizeof(PageHeader) + (header.num_slots * sizeof(uint16_t)))),
-                        &zero, sizeof(uint16_t));
-            header.num_slots++;
-            continue;
-        }
-
-        const auto req = static_cast<uint16_t>(t_data.size() + 1);
-        if (header.free_space_offset + req > Page::PAGE_SIZE) {
-            return false;
-        }
-
-        const uint16_t off = header.free_space_offset;
-        std::memcpy(std::next(buffer.data(), static_cast<std::ptrdiff_t>(off)), t_data.c_str(),
-                    req);
-        std::memcpy(std::next(buffer.data(),
-                              static_cast<std::ptrdiff_t>(sizeof(PageHeader) +
-                                                          (header.num_slots * sizeof(uint16_t)))),
-                    &off, sizeof(uint16_t));
-        header.num_slots++;
-        header.free_space_offset += req;
-    }
-
-    std::memcpy(buffer.data(), &header, sizeof(PageHeader));
-    return write_page(tuple_id.page_num, buffer.data());
+    bpm_.unpin_page(filename_, tuple_id.page_num, true);
+    return true;
 }
 
 /**
  * @brief Physical deletion: zero out slot offset (rollback only)
  */
 bool HeapTable::physical_remove(const TupleId& tuple_id) {
-    std::array<char, Page::PAGE_SIZE> buffer{};
-    if (!read_page(tuple_id.page_num, buffer.data())) {
-        return false;
-    }
+    Page* page = bpm_.fetch_page(filename_, tuple_id.page_num);
+    if (!page) return false;
 
+    auto* buffer = page->get_data();
     PageHeader header{};
-    std::memcpy(&header, buffer.data(), sizeof(PageHeader));
-    if (header.free_space_offset == 0) {
-        return false;
-    }
-    if (tuple_id.slot_num >= header.num_slots) {
+    std::memcpy(&header, buffer, sizeof(PageHeader));
+    if (header.free_space_offset == 0 || tuple_id.slot_num >= header.num_slots) {
+        bpm_.unpin_page(filename_, tuple_id.page_num, false);
         return false;
     }
 
     const uint16_t zero = 0;
-    std::memcpy(
-        std::next(buffer.data(), static_cast<std::ptrdiff_t>(
-                                     sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))),
-        &zero, sizeof(uint16_t));
+    std::memcpy(buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
+                &zero, sizeof(uint16_t));
 
-    return write_page(tuple_id.page_num, buffer.data());
+    bpm_.unpin_page(filename_, tuple_id.page_num, true);
+    return true;
 }
 
 /**
@@ -322,88 +253,67 @@ bool HeapTable::update(const TupleId& tuple_id, const executor::Tuple& tuple, ui
 }
 
 bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
-    std::array<char, Page::PAGE_SIZE> buffer{};
-    if (!read_page(tuple_id.page_num, buffer.data())) {
-        return false;
-    }
+    Page* page = bpm_.fetch_page(filename_, tuple_id.page_num);
+    if (!page) return false;
 
+    auto* buffer = page->get_data();
     PageHeader header{};
-    std::memcpy(&header, buffer.data(), sizeof(PageHeader));
-    if (header.free_space_offset == 0) {
-        return false;
-    }
-    if (tuple_id.slot_num >= header.num_slots) {
+    std::memcpy(&header, buffer, sizeof(PageHeader));
+    if (header.free_space_offset == 0 || tuple_id.slot_num >= header.num_slots) {
+        bpm_.unpin_page(filename_, tuple_id.page_num, false);
         return false;
     }
 
     uint16_t offset = 0;
-    std::memcpy(
-        &offset,
-        std::next(buffer.data(), static_cast<std::ptrdiff_t>(
-                                     sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)))),
-        sizeof(uint16_t));
+    std::memcpy(&offset, buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
+                sizeof(uint16_t));
     if (offset == 0) {
+        bpm_.unpin_page(filename_, tuple_id.page_num, false);
         return false;
     }
 
-    const char* const data = std::next(buffer.data(), static_cast<std::ptrdiff_t>(offset));
-    const std::string s(data);
-    std::stringstream ss(s);
-    std::string item;
-
-    /* Parse MVCC Header */
-    if (!std::getline(ss, item, '|')) {
-        return false;
-    }
-    try {
-        out_meta.xmin = std::stoull(item);
-    } catch (...) {
-        out_meta.xmin = 0;
-    }
-
-    if (!std::getline(ss, item, '|')) {
-        return false;
-    }
-    try {
-        out_meta.xmax = std::stoull(item);
-    } catch (...) {
-        out_meta.xmax = 0;
-    }
-
-    /* Parse Column Values */
+    const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
+    
+    // Read MVCC Header
+    std::memcpy(&out_meta.xmin, data, 8);
+    std::memcpy(&out_meta.xmax, data + 8, 8);
+    
+    size_t cursor = 16;
     std::vector<common::Value> values;
     values.reserve(schema_.column_count());
+    
     for (size_t i = 0; i < schema_.column_count(); ++i) {
-        if (!std::getline(ss, item, '|')) {
-            break;
+        auto type = static_cast<common::ValueType>(data[cursor++]);
+        if (type == common::ValueType::TYPE_NULL) {
+            values.push_back(common::Value::make_null());
+            continue;
         }
 
-        const auto& col = schema_.get_column(i);
-        try {
-            switch (col.type()) {
-                case common::ValueType::TYPE_INT8:
-                case common::ValueType::TYPE_INT16:
-                case common::ValueType::TYPE_INT32:
-                case common::ValueType::TYPE_INT64:
-                    values.push_back(common::Value::make_int64(std::stoll(item)));
-                    break;
-                case common::ValueType::TYPE_FLOAT32:
-                case common::ValueType::TYPE_FLOAT64:
-                    values.push_back(common::Value::make_float64(std::stod(item)));
-                    break;
-                case common::ValueType::TYPE_BOOL:
-                    values.push_back(common::Value::make_bool(item == "TRUE" || item == "1"));
-                    break;
-                default:
-                    values.push_back(common::Value::make_text(item));
-                    break;
-            }
-        } catch (...) {
-            values.push_back(common::Value::make_null());
+        if (type == common::ValueType::TYPE_BOOL || 
+            type == common::ValueType::TYPE_INT8 || type == common::ValueType::TYPE_INT16 ||
+            type == common::ValueType::TYPE_INT32 || type == common::ValueType::TYPE_INT64 ||
+            type == common::ValueType::TYPE_FLOAT32 || type == common::ValueType::TYPE_FLOAT64) {
+            
+            double v;
+            std::memcpy(&v, data + cursor, 8);
+            cursor += 8;
+            
+            if (type == common::ValueType::TYPE_BOOL) values.push_back(common::Value::make_bool(v != 0));
+            else if (type == common::ValueType::TYPE_FLOAT32 || type == common::ValueType::TYPE_FLOAT64) 
+                values.push_back(common::Value::make_float64(v));
+            else values.push_back(common::Value::make_int64(static_cast<int64_t>(v)));
+        } else {
+            uint32_t len;
+            std::memcpy(&len, data + cursor, 4);
+            cursor += 4;
+            std::string s(reinterpret_cast<const char*>(data + cursor), len);
+            cursor += len;
+            values.push_back(common::Value::make_text(s));
         }
     }
 
     out_meta.tuple = executor::Tuple(std::move(values));
+    bpm_.unpin_page(filename_, tuple_id.page_num, false);
     return true;
 }
 
@@ -419,22 +329,29 @@ bool HeapTable::get(const TupleId& tuple_id, executor::Tuple& out_tuple) const {
 uint64_t HeapTable::tuple_count() const {
     uint64_t count = 0;
     uint32_t page_num = 0;
-    std::array<char, Page::PAGE_SIZE> buffer{};
-    while (read_page(page_num, buffer.data())) {
+    while (true) {
+        Page* page = bpm_.fetch_page(filename_, page_num);
+        if (!page) break;
+
+        auto* buffer = page->get_data();
         PageHeader header{};
-        std::memcpy(&header, buffer.data(), sizeof(PageHeader));
+        std::memcpy(&header, buffer, sizeof(PageHeader));
         if (header.free_space_offset == 0) {
+            bpm_.unpin_page(filename_, page_num, false);
             break;
         }
 
         for (uint16_t i = 0; i < header.num_slots; ++i) {
-            TupleMeta meta;
-            if (get_meta(TupleId(page_num, i), meta)) {
-                if (meta.xmax == 0) {
-                    count++;
-                }
+            uint16_t offset = 0;
+            std::memcpy(&offset, buffer + sizeof(PageHeader) + (i * sizeof(uint16_t)), sizeof(uint16_t));
+            if (offset != 0) {
+                // In binary format, xmax is at offset + 8
+                uint64_t xmax = 0;
+                std::memcpy(&xmax, buffer + offset + 8, 8);
+                if (xmax == 0) count++;
             }
         }
+        bpm_.unpin_page(filename_, page_num, false);
         page_num++;
     }
     return count;
