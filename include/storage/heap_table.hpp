@@ -122,6 +122,7 @@ class HeapTable {
     std::string filename_;
     BufferPoolManager& bpm_;
     executor::Schema schema_;
+    uint32_t last_page_id_ = 0;
 
    public:
     /**

@@ -29,8 +29,7 @@
 namespace cloudsql::executor {
 
 /* --- SeqScanOperator --- */
-
-SeqScanOperator::SeqScanOperator(std::unique_ptr<storage::HeapTable> table, Transaction* txn,
+SeqScanOperator::SeqScanOperator(std::shared_ptr<storage::HeapTable> table, Transaction* txn,
                                  LockManager* lock_manager)
     : Operator(OperatorType::SeqScan, txn, lock_manager),
       table_name_(table->table_name()),
@@ -131,7 +130,7 @@ Schema& BufferScanOperator::output_schema() {
 
 /* --- IndexScanOperator --- */
 
-IndexScanOperator::IndexScanOperator(std::unique_ptr<storage::HeapTable> table,
+IndexScanOperator::IndexScanOperator(std::shared_ptr<storage::HeapTable> table,
                                      std::unique_ptr<storage::BTreeIndex> index,
                                      common::Value search_key, Transaction* txn,
                                      LockManager* lock_manager)
