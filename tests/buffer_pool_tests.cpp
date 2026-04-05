@@ -31,7 +31,7 @@ TEST(BufferPoolTests, LRUReplacerBasic) {
     replacer.unpin(2);
     EXPECT_EQ(replacer.size(), 3U);
 
-    // In CLOCK, unpin(0,1,2) sets ref bits. 
+    // In CLOCK, unpin(0,1,2) sets ref bits.
     // victim() will sweep 0,1,2, clearing ref bits, then pick 0.
     EXPECT_TRUE(replacer.victim(&victim_frame));
     EXPECT_EQ(victim_frame, 0U);

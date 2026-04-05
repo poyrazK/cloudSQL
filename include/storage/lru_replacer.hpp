@@ -63,10 +63,10 @@ class LRUReplacer {
    private:
     size_t capacity_;
     mutable std::mutex latch_;
-    
+
     // CLOCK State
-    std::vector<bool> in_replacer_; // true if frame is a candidate for eviction
-    std::vector<bool> referenced_;  // "Second chance" bit
+    std::vector<bool> in_replacer_;  // true if frame is a candidate for eviction
+    std::vector<bool> referenced_;   // "Second chance" bit
     size_t clock_hand_ = 0;
     size_t current_size_ = 0;
 };

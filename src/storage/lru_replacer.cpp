@@ -34,7 +34,7 @@ bool LRUReplacer::victim(uint32_t* frame_id) {
                 in_replacer_[clock_hand_] = false;
                 *frame_id = static_cast<uint32_t>(clock_hand_);
                 current_size_--;
-                
+
                 // Move hand forward before returning
                 clock_hand_ = (clock_hand_ + 1) % capacity_;
                 return true;
