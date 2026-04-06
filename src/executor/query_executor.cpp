@@ -787,11 +787,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                                     col_name) {
                                 common::ValueType ktype = base_table_meta->columns[pos].type;
                                 current_root = std::make_unique<IndexScanOperator>(
-                                   std::make_shared<storage::HeapTable>(base_table_name, bpm_,
-                                                                        base_schema),
-                                   std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_,
-                                                                         ktype),
-                                   std::move(const_val), txn, &lock_manager_);                                index_used = true;
+                                    std::make_shared<storage::HeapTable>(base_table_name, bpm_,
+                                                                         base_schema),
+                                    std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_,
+                                                                          ktype),
+                                    std::move(const_val), txn, &lock_manager_);
+                                index_used = true;
                                 break;
                             }
                         }
