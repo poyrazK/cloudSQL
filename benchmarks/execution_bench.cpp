@@ -32,24 +32,26 @@ static void BM_ExecutionSeqScan(benchmark::State& state) {
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
     
-    StorageManager disk_manager(test_dir);
-    BufferPoolManager bpm(2000, disk_manager);
-    
-    Schema schema;
-    schema.add_column("id", common::ValueType::TYPE_INT64);
-    schema.add_column("data", common::ValueType::TYPE_TEXT);
-    
-    auto table = std::make_shared<HeapTable>("scan_table", bpm, schema);
-    table->create();
-    SetupBenchTable(*table, state.range(0));
+    {
+        StorageManager disk_manager(test_dir);
+        BufferPoolManager bpm(2000, disk_manager);
+        
+        Schema schema;
+        schema.add_column("id", common::ValueType::TYPE_INT64);
+        schema.add_column("data", common::ValueType::TYPE_TEXT);
+        
+        auto table = std::make_shared<HeapTable>("scan_table", bpm, schema);
+        table->create();
+        SetupBenchTable(*table, state.range(0));
 
-    for (auto _ : state) {
-        auto scan_op = std::make_unique<SeqScanOperator>(table);
-        scan_op->init();
-        scan_op->open();
-        Tuple tuple;
-        while (scan_op->next(tuple)) {
-            benchmark::DoNotOptimize(tuple);
+        for (auto _ : state) {
+            auto scan_op = std::make_unique<SeqScanOperator>(table);
+            scan_op->init();
+            scan_op->open();
+            Tuple tuple;
+            while (scan_op->next(tuple)) {
+                benchmark::DoNotOptimize(tuple);
+            }
         }
     }
     
@@ -62,37 +64,40 @@ static void BM_ExecutionHashJoin(benchmark::State& state) {
     std::string test_dir = "./bench_exec_join_" + std::to_string(state.range(0));
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
-    StorageManager disk_manager(test_dir);
-    BufferPoolManager bpm(4000, disk_manager);
     
-    Schema schema;
-    schema.add_column("id", common::ValueType::TYPE_INT64);
-    schema.add_column("data", common::ValueType::TYPE_TEXT);
-    
-    auto left_table = std::make_shared<HeapTable>("left_table", bpm, schema);
-    left_table->create();
-    SetupBenchTable(*left_table, state.range(0));
-    
-    auto right_table = std::make_shared<HeapTable>("right_table", bpm, schema);
-    right_table->create();
-    SetupBenchTable(*right_table, state.range(0));
+    {
+        StorageManager disk_manager(test_dir);
+        BufferPoolManager bpm(4000, disk_manager);
+        
+        Schema schema;
+        schema.add_column("id", common::ValueType::TYPE_INT64);
+        schema.add_column("data", common::ValueType::TYPE_TEXT);
+        
+        auto left_table = std::make_shared<HeapTable>("left_table", bpm, schema);
+        left_table->create();
+        SetupBenchTable(*left_table, state.range(0));
+        
+        auto right_table = std::make_shared<HeapTable>("right_table", bpm, schema);
+        right_table->create();
+        SetupBenchTable(*right_table, state.range(0));
 
-    for (auto _ : state) {
-        auto left_scan = std::make_unique<SeqScanOperator>(left_table);
-        auto right_scan = std::make_unique<SeqScanOperator>(right_table);
-        
-        // Join on "id"
-        auto left_key = std::make_unique<ColumnExpr>("id");
-        auto right_key = std::make_unique<ColumnExpr>("id");
-        
-        auto join_op = std::make_unique<HashJoinOperator>(
-            std::move(left_scan), std::move(right_scan), std::move(left_key), std::move(right_key));
-        
-        join_op->init();
-        join_op->open();
-        Tuple tuple;
-        while (join_op->next(tuple)) {
-            benchmark::DoNotOptimize(tuple);
+        for (auto _ : state) {
+            auto left_scan = std::make_unique<SeqScanOperator>(left_table);
+            auto right_scan = std::make_unique<SeqScanOperator>(right_table);
+            
+            // Join on "id"
+            auto left_key = std::make_unique<ColumnExpr>("id");
+            auto right_key = std::make_unique<ColumnExpr>("id");
+            
+            auto join_op = std::make_unique<HashJoinOperator>(
+                std::move(left_scan), std::move(right_scan), std::move(left_key), std::move(right_key));
+            
+            join_op->init();
+            join_op->open();
+            Tuple tuple;
+            while (join_op->next(tuple)) {
+                benchmark::DoNotOptimize(tuple);
+            }
         }
     }
     

@@ -101,11 +101,6 @@ class BufferPoolManager {
      */
     [[nodiscard]] recovery::LogManager* get_log_manager() const { return log_manager_; }
 
-    /**
-     * @brief Get reference to storage manager
-     */
-    [[nodiscard]] StorageManager& get_storage_manager() { return storage_manager_; }
-
    private:
     /**
      * @brief Generates a unique string key for file and page mapping

@@ -85,6 +85,8 @@ class Value {
     [[nodiscard]] ValueType type() const { return type_; }
     [[nodiscard]] bool is_null() const { return type_ == ValueType::TYPE_NULL; }
     [[nodiscard]] bool is_numeric() const;
+    [[nodiscard]] bool is_integer() const;
+    [[nodiscard]] bool is_float() const;
 
     [[nodiscard]] bool as_bool() const;
     [[nodiscard]] int8_t as_int8() const;
@@ -182,6 +184,15 @@ inline bool Value::is_numeric() const {
            type_ == ValueType::TYPE_INT32 || type_ == ValueType::TYPE_INT64 ||
            type_ == ValueType::TYPE_FLOAT32 || type_ == ValueType::TYPE_FLOAT64 ||
            type_ == ValueType::TYPE_DECIMAL;
+}
+
+inline bool Value::is_integer() const {
+    return type_ == ValueType::TYPE_INT8 || type_ == ValueType::TYPE_INT16 ||
+           type_ == ValueType::TYPE_INT32 || type_ == ValueType::TYPE_INT64;
+}
+
+inline bool Value::is_float() const {
+    return type_ == ValueType::TYPE_FLOAT32 || type_ == ValueType::TYPE_FLOAT64;
 }
 
 // Accessors
