@@ -32,6 +32,20 @@ set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googlebenchmark)
 
+# Find SQLite3 (for comparison benchmarks)
+FetchContent_Declare(
+  sqlite3
+  URL https://www.sqlite.org/2024/sqlite-amalgamation-3450300.zip
+)
+FetchContent_GetProperties(sqlite3)
+if(NOT sqlite3_POPULATED)
+  FetchContent_Populate(sqlite3)
+  add_library(sqlite3 STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
+  target_include_directories(sqlite3 PUBLIC ${sqlite3_SOURCE_DIR})
+  # Optimize SQLite for speed
+  target_compile_definitions(sqlite3 PRIVATE SQLITE_THREADSAFE=0 SQLITE_OMIT_LOAD_EXTENSION)
+endif()
+
 # Core Library
 set(CORE_SOURCES
     src/common/config.cpp
@@ -129,4 +143,8 @@ if(BUILD_BENCHMARKS)
     add_cloudsql_benchmark(storage_bench benchmarks/storage_bench.cpp)
     add_cloudsql_benchmark(execution_bench benchmarks/execution_bench.cpp)
     add_cloudsql_benchmark(network_bench benchmarks/network_bench.cpp)
+    
+    # SQLite comparison benchmark
+    add_executable(sqlite_comparison_bench benchmarks/sqlite_comparison_bench.cpp)
+    target_link_libraries(sqlite_comparison_bench sqlEngineCore benchmark::benchmark benchmark::benchmark_main sqlite3)
 endif()
