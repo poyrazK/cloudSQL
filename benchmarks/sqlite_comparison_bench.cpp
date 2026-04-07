@@ -109,13 +109,9 @@ static void BM_CloudSQL_Insert(benchmark::State& state) {
     CloudSQLContext ctx("./bench_cloudsql_insert_" + std::to_string(state.thread_index()));
     
     for (auto _ : state) {
-        state.PauseTiming();
         std::string sql = "INSERT INTO bench_table VALUES (" + std::to_string(state.iterations()) + 
                           ", 3.14, 'some_payload_data');";
-        auto stmt = ParseSQL(sql);
-        state.ResumeTiming();
-        
-        ctx.executor->execute(*stmt);
+        ctx.executor->execute(sql);
     }
     state.SetItemsProcessed(state.iterations());
 }

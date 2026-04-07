@@ -40,7 +40,8 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::S
 
 /* --- Iterator Implementation --- */
 
-HeapTable::Iterator::Iterator(HeapTable& table) : table_(table), next_id_(0, 0), last_id_(0, 0) {}
+HeapTable::Iterator::Iterator(HeapTable& table, std::pmr::memory_resource* mr) 
+    : table_(table), next_id_(0, 0), last_id_(0, 0), mr_(mr) {}
 
 bool HeapTable::Iterator::next(executor::Tuple& out_tuple) {
     TupleMeta meta;
@@ -100,7 +101,8 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
                 std::memcpy(&out_meta.xmax, data + 8, 8);
 
                 size_t cursor = 16;
-                std::vector<common::Value> values;
+                // Zero-allocation vector construction via Arena (mr_)
+                std::pmr::vector<common::Value> values(mr_);
                 values.reserve(table_.schema_.column_count());
 
                 for (size_t i = 0; i < table_.schema_.column_count(); ++i) {
