@@ -6,9 +6,7 @@
 #ifndef CLOUDSQL_STORAGE_LRU_REPLACER_HPP
 #define CLOUDSQL_STORAGE_LRU_REPLACER_HPP
 
-#include <list>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 namespace cloudsql::storage {
@@ -17,8 +15,9 @@ namespace cloudsql::storage {
  * @class LRUReplacer
  * @brief Tracks page usage and determines which page to evict
  *
- * Implements a thread-safe LRU policy. Pages that are pinned are
- * removed from the replacer. When unpinned, they are added back.
+ * Implements a CLOCK (Second Chance) replacement policy.
+ * This implementation is zero-allocation during hot-path (pin/unpin)
+ * by using fixed-size bitsets.
  */
 class LRUReplacer {
    public:
@@ -64,8 +63,12 @@ class LRUReplacer {
    private:
     size_t capacity_;
     mutable std::mutex latch_;
-    std::list<uint32_t> lru_list_;
-    std::unordered_map<uint32_t, std::list<uint32_t>::iterator> lru_map_;
+
+    // CLOCK State
+    std::vector<bool> in_replacer_;  // true if frame is a candidate for eviction
+    std::vector<bool> referenced_;   // "Second chance" bit
+    size_t clock_hand_ = 0;
+    size_t current_size_ = 0;
 };
 
 }  // namespace cloudsql::storage

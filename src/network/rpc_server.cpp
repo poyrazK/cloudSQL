@@ -23,10 +23,10 @@
 namespace cloudsql::network {
 
 bool RpcServer::start() {
-    std::cerr << "--- [RpcServer] starting on port " << port_ << " ---" << std::endl;
+    if (false) std::cerr << "--- [RpcServer] starting on port " << port_ << " ---" << std::endl;
     listen_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
-        std::cerr << "--- [RpcServer] socket creation FAILED ---" << std::endl;
+        if (false) std::cerr << "--- [RpcServer] socket creation FAILED ---" << std::endl;
         return false;
     }
 
@@ -39,14 +39,16 @@ bool RpcServer::start() {
     addr.sin_port = htons(port_);
 
     if (bind(listen_fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "--- [RpcServer] bind FAILED on port " << port_ << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcServer] bind FAILED on port " << port_ << " ---" << std::endl;
         static_cast<void>(close(listen_fd_));
         listen_fd_ = -1;
         return false;
     }
 
     if (listen(listen_fd_, 10) < 0) {
-        std::cerr << "--- [RpcServer] listen FAILED on port " << port_ << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcServer] listen FAILED on port " << port_ << " ---" << std::endl;
         static_cast<void>(close(listen_fd_));
         listen_fd_ = -1;
         return false;
@@ -54,7 +56,7 @@ bool RpcServer::start() {
 
     running_ = true;
     accept_thread_ = std::thread(&RpcServer::accept_loop, this);
-    std::cerr << "--- [RpcServer] started and listening ---" << std::endl;
+    if (false) std::cerr << "--- [RpcServer] started and listening ---" << std::endl;
     return true;
 }
 
@@ -118,13 +120,14 @@ void RpcServer::handle_client(int client_fd) {
         }
 
         const RpcHeader header = RpcHeader::decode(header_buf.data());
-        std::cerr << "--- [RpcServer] received request type=" << (int)header.type
-                  << " payload=" << header.payload_len << " ---" << std::endl;
+        if (false)
+            std::cerr << "--- [RpcServer] received request type=" << (int)header.type
+                      << " payload=" << header.payload_len << " ---" << std::endl;
 
         std::vector<uint8_t> payload(header.payload_len);
         if (header.payload_len > 0) {
             if (recv(client_fd, payload.data(), header.payload_len, MSG_WAITALL) <= 0) {
-                std::cerr << "--- [RpcServer] payload recv failed ---" << std::endl;
+                if (false) std::cerr << "--- [RpcServer] payload recv failed ---" << std::endl;
                 break;
             }
         }
@@ -138,12 +141,13 @@ void RpcServer::handle_client(int client_fd) {
         }
 
         if (handler) {
-            std::cerr << "--- [RpcServer] dispatching to handler ---" << std::endl;
+            if (false) std::cerr << "--- [RpcServer] dispatching to handler ---" << std::endl;
             handler(header, payload, client_fd);
-            std::cerr << "--- [RpcServer] handler finished ---" << std::endl;
+            if (false) std::cerr << "--- [RpcServer] handler finished ---" << std::endl;
         } else {
-            std::cerr << "--- [RpcServer] NO HANDLER FOUND for type " << (int)header.type << " ---"
-                      << std::endl;
+            if (false)
+                std::cerr << "--- [RpcServer] NO HANDLER FOUND for type " << (int)header.type
+                          << " ---" << std::endl;
         }
     }
     static_cast<void>(close(client_fd));

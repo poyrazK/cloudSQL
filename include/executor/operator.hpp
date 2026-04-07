@@ -105,12 +105,13 @@ class Operator {
 class SeqScanOperator : public Operator {
    private:
     std::string table_name_;
-    std::unique_ptr<storage::HeapTable> table_;
+    std::shared_ptr<storage::HeapTable> table_;
     std::unique_ptr<storage::HeapTable::Iterator> iterator_;
+
     Schema schema_;
 
    public:
-    explicit SeqScanOperator(std::unique_ptr<storage::HeapTable> table, Transaction* txn = nullptr,
+    explicit SeqScanOperator(std::shared_ptr<storage::HeapTable> table, Transaction* txn = nullptr,
                              LockManager* lock_manager = nullptr);
 
     bool init() override;
@@ -153,7 +154,7 @@ class IndexScanOperator : public Operator {
    private:
     std::string table_name_;
     std::string index_name_;
-    std::unique_ptr<storage::HeapTable> table_;
+    std::shared_ptr<storage::HeapTable> table_;
     std::unique_ptr<storage::BTreeIndex> index_;
     common::Value search_key_;
     std::vector<storage::HeapTable::TupleId> matching_ids_;
@@ -161,7 +162,7 @@ class IndexScanOperator : public Operator {
     Schema schema_;
 
    public:
-    IndexScanOperator(std::unique_ptr<storage::HeapTable> table,
+    IndexScanOperator(std::shared_ptr<storage::HeapTable> table,
                       std::unique_ptr<storage::BTreeIndex> index, common::Value search_key,
                       Transaction* txn = nullptr, LockManager* lock_manager = nullptr);
 

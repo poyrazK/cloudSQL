@@ -140,3 +140,66 @@ jobs:
       with:
         name: cloudsql-bin-${{ matrix.compiler }}
         path: build/cloudSQL
+
+  performance-benchmarks:
+    needs: style-check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake clang ninja-build ccache python3
+
+    - name: Configure CMake (Release)
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_BENCHMARKS=ON \
+          -DBUILD_TESTS=OFF
+
+    - name: Build Benchmarks
+      run: |
+        cd build
+        ninja storage_bench execution_bench network_bench
+
+    - name: Restore Performance Baseline
+      id: restore-baseline
+      uses: actions/cache/restore@v4
+      with:
+        path: build/baseline.json
+        key: perf-baseline-${{ runner.os }}-main
+
+    - name: Run Benchmarks
+      run: |
+        cd build
+        ./storage_bench --benchmark_format=json > storage.json
+        ./execution_bench --benchmark_format=json > execution.json
+        ./network_bench --benchmark_format=json > network.json
+        
+        # Merge results into one current.json
+        python3 -c "import json; s=json.load(open('storage.json')); e=json.load(open('execution.json')); n=json.load(open('network.json')); s['benchmarks'].extend(e['benchmarks']); s['benchmarks'].extend(n['benchmarks']); json.dump(s, open('current.json', 'w'))"
+
+    - name: Check for Performance Regressions
+      run: |
+        if [ -f build/baseline.json ]; then
+          python3 scripts/check_perf_regression.py build/current.json build/baseline.json 0.20
+        else
+          echo "No baseline found to compare against."
+        fi
+
+    - name: Save New Baseline
+      if: github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v4
+      with:
+        path: build/current.json
+        key: perf-baseline-${{ runner.os }}-main-${{ github.sha }}
+
+    - name: Upload Current Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-results
+        path: build/current.json

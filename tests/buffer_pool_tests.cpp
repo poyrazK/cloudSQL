@@ -26,33 +26,36 @@ TEST(BufferPoolTests, LRUReplacerBasic) {
     LRUReplacer replacer(3);
     uint32_t victim_frame = 0;
 
+    replacer.unpin(0);
     replacer.unpin(1);
     replacer.unpin(2);
-    replacer.unpin(3);
+    EXPECT_EQ(replacer.size(), 3U);
+
+    // In CLOCK, unpin(0,1,2) sets ref bits.
+    // victim() will sweep 0,1,2, clearing ref bits, then pick 0.
+    EXPECT_TRUE(replacer.victim(&victim_frame));
+    EXPECT_EQ(victim_frame, 0U);
+    EXPECT_EQ(replacer.size(), 2U);
+
+    // Add 0 back
+    replacer.unpin(0);
     EXPECT_EQ(replacer.size(), 3U);
 
     EXPECT_TRUE(replacer.victim(&victim_frame));
     EXPECT_EQ(victim_frame, 1U);
     EXPECT_EQ(replacer.size(), 2U);
 
-    replacer.unpin(4);
-    EXPECT_EQ(replacer.size(), 3U);
+    replacer.pin(2);
+    EXPECT_EQ(replacer.size(), 1U);
+
+    replacer.unpin(2);
+    EXPECT_EQ(replacer.size(), 2U);
 
     EXPECT_TRUE(replacer.victim(&victim_frame));
     EXPECT_EQ(victim_frame, 2U);
-    EXPECT_EQ(replacer.size(), 2U);
-
-    replacer.pin(3);
-    EXPECT_EQ(replacer.size(), 1U);
-
-    replacer.unpin(3);
-    EXPECT_EQ(replacer.size(), 2U);
 
     EXPECT_TRUE(replacer.victim(&victim_frame));
-    EXPECT_EQ(victim_frame, 4U);
-
-    EXPECT_TRUE(replacer.victim(&victim_frame));
-    EXPECT_EQ(victim_frame, 3U);
+    EXPECT_EQ(victim_frame, 0U);
     EXPECT_EQ(replacer.size(), 0U);
 
     EXPECT_FALSE(replacer.victim(&victim_frame));
