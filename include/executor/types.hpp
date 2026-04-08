@@ -131,10 +131,7 @@ class Tuple {
    public:
     Tuple() = default;
     explicit Tuple(std::pmr::vector<common::Value> values) : values_(std::move(values)) {}
-
-    // Support construction from standard vector (via move or copy)
-    explicit Tuple(std::vector<common::Value> values) : values_(values.begin(), values.end()) {}
-
+    
     // Support allocation from a custom memory resource
     explicit Tuple(std::pmr::memory_resource* mr) : values_(mr) {}
     Tuple(std::vector<common::Value> values, std::pmr::memory_resource* mr)
