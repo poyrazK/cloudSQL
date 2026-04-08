@@ -35,7 +35,8 @@ enum class ExprType : uint8_t {
     In,
     Like,
     Between,
-    IsNull
+    IsNull,
+    Parameter
 };
 
 /**
@@ -57,10 +58,11 @@ class Expression {
     [[nodiscard]] virtual ExprType type() const = 0;
 
     /**
-     * @brief Evaluate expression against an optional tuple context
+     * @brief Evaluate expression against an optional tuple context and bound parameters
      */
     [[nodiscard]] virtual common::Value evaluate(
-        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr) const = 0;
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const = 0;
 
     /**
      * @brief Evaluate expression against a batch of data (Vectorized)
@@ -87,8 +89,9 @@ class BinaryExpr : public Expression {
         : left_(std::move(left)), op_(op), right_(std::move(right)) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Binary; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
@@ -111,8 +114,9 @@ class UnaryExpr : public Expression {
     UnaryExpr(TokenType op, std::unique_ptr<Expression> expr) : op_(op), expr_(std::move(expr)) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Unary; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
@@ -133,8 +137,9 @@ class ColumnExpr : public Expression {
         : table_name_(std::move(table)), name_(std::move(name)) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Column; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
@@ -156,14 +161,37 @@ class ConstantExpr : public Expression {
     explicit ConstantExpr(common::Value val) : value_(std::move(val)) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Constant; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
     [[nodiscard]] std::unique_ptr<Expression> clone() const override;
 
     [[nodiscard]] const common::Value& value() const { return value_; }
+};
+
+/**
+ * @brief Bound parameter expression (e.g. ?)
+ */
+class ParameterExpr : public Expression {
+   private:
+    uint32_t index_;
+
+   public:
+    explicit ParameterExpr(uint32_t index) : index_(index) {}
+
+    [[nodiscard]] ExprType type() const override { return ExprType::Parameter; }
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
+    void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
+                             executor::ColumnVector& result) const override;
+    [[nodiscard]] std::string to_string() const override;
+    [[nodiscard]] std::unique_ptr<Expression> clone() const override;
+
+    [[nodiscard]] uint32_t index() const { return index_; }
 };
 
 /**
@@ -179,8 +207,9 @@ class FunctionExpr : public Expression {
     explicit FunctionExpr(std::string name) : func_name_(std::move(name)) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::Function; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
@@ -208,8 +237,9 @@ class InExpr : public Expression {
         : column_(std::move(col)), values_(std::move(vals)), not_flag_(is_not) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::In; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
@@ -229,8 +259,9 @@ class IsNullExpr : public Expression {
         : expr_(std::move(expr)), not_flag_(not_flag) {}
 
     [[nodiscard]] ExprType type() const override { return ExprType::IsNull; }
-    [[nodiscard]] common::Value evaluate(const executor::Tuple* tuple = nullptr,
-                                         const executor::Schema* schema = nullptr) const override;
+    [[nodiscard]] common::Value evaluate(
+        const executor::Tuple* tuple = nullptr, const executor::Schema* schema = nullptr,
+        const std::vector<common::Value>* params = nullptr) const override;
     void evaluate_vectorized(const executor::VectorBatch& batch, const executor::Schema& schema,
                              executor::ColumnVector& result) const override;
     [[nodiscard]] std::string to_string() const override;
