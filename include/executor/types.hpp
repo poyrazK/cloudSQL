@@ -11,12 +11,12 @@
 #define CLOUDSQL_EXECUTOR_TYPES_HPP
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <memory_resource>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <initializer_list>
 
 #include "common/value.hpp"
 
