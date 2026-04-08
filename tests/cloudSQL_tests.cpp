@@ -192,19 +192,23 @@ TEST(CloudSQLTests, StoragePersistence) {
     {
         StorageManager disk_manager("./test_data");
         BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
-        HeapTable table(filename, sm, schema);
-        static_cast<void>(table.create());
-        static_cast<void>(table.insert(Tuple({Value::make_text("Persistent data")})));
+        {
+            HeapTable table(filename, sm, schema);
+            static_cast<void>(table.create());
+            static_cast<void>(table.insert(Tuple({Value::make_text("Persistent data")})));
+        }
         sm.flush_all_pages();
     }
     {
         StorageManager disk_manager("./test_data");
         BufferPoolManager sm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
-        HeapTable table(filename, sm, schema);
-        auto iter = table.scan();
-        Tuple t;
-        EXPECT_TRUE(iter.next(t));
-        EXPECT_STREQ(t.get(0).as_text().c_str(), "Persistent data");
+        {
+            HeapTable table(filename, sm, schema);
+            auto iter = table.scan();
+            Tuple t;
+            EXPECT_TRUE(iter.next(t));
+            EXPECT_STREQ(t.get(0).as_text().c_str(), "Persistent data");
+        }
     }
     static_cast<void>(std::remove(filepath.c_str()));
 }
