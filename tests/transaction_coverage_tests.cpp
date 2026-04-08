@@ -140,21 +140,22 @@ TEST_F(TransactionCoverageTests, DeepRollback) {
     txn = tm.begin();
 
     // 1. Insert some data
-    auto rid1 =
-        table.insert(executor::Tuple(std::pmr::vector<common::Value>({common::Value::make_int64(1), common::Value::make_text("A")})),
-                     txn->get_id());
+    auto rid1 = table.insert(executor::Tuple(std::pmr::vector<common::Value>(
+                                 {common::Value::make_int64(1), common::Value::make_text("A")})),
+                             txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid1);
 
-    auto rid2 =
-        table.insert(executor::Tuple(std::pmr::vector<common::Value>({common::Value::make_int64(2), common::Value::make_text("B")})),
-                     txn->get_id());
+    auto rid2 = table.insert(executor::Tuple(std::pmr::vector<common::Value>(
+                                 {common::Value::make_int64(2), common::Value::make_text("B")})),
+                             txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid2);
 
     // 2. Update data
     table.remove(rid1, txn->get_id());  // Mark old version deleted
-    auto rid1_new = table.insert(
-        executor::Tuple(std::pmr::vector<common::Value>({common::Value::make_int64(1), common::Value::make_text("A_NEW")})),
-        txn->get_id());
+    auto rid1_new =
+        table.insert(executor::Tuple(std::pmr::vector<common::Value>(
+                         {common::Value::make_int64(1), common::Value::make_text("A_NEW")})),
+                     txn->get_id());
     txn->add_undo_log(UndoLog::Type::UPDATE, "rollback_stress", rid1_new, rid1);
 
     // 3. Delete data
