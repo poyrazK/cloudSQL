@@ -119,7 +119,7 @@ class Schema {
     [[nodiscard]] bool operator==(const Schema& other) const { return columns_ == other.columns_; }
 };
 
-    /**
+/**
  * @brief A single data row used in the row-oriented (Volcano) execution model.
  *
  * Uses std::pmr::vector to support custom allocators (e.g. ArenaAllocator).
@@ -130,19 +130,19 @@ class Tuple {
 
    public:
     Tuple() = default;
-    
+
     // Explicit PMR vector constructor
     explicit Tuple(std::pmr::vector<common::Value> values) : values_(std::move(values)) {}
-    
+
     // Initializer list constructor to resolve ambiguity for {...}
     Tuple(std::initializer_list<common::Value> list) : values_(list) {}
 
     // Support allocation from a custom memory resource
     explicit Tuple(std::pmr::memory_resource* mr) : values_(mr) {}
-    
+
     // Support construction from standard vector
     Tuple(const std::vector<common::Value>& values) : values_(values.begin(), values.end()) {}
-    Tuple(std::vector<common::Value>&& values) 
+    Tuple(std::vector<common::Value>&& values)
         : values_(std::make_move_iterator(values.begin()), std::make_move_iterator(values.end())) {}
 
     Tuple(std::vector<common::Value> values, std::pmr::memory_resource* mr)
