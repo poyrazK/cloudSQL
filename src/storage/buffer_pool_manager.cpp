@@ -58,7 +58,7 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
 
     const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, page_id};
-    
+
     if (page_table_.find(key) != page_table_.end()) {
         const uint32_t frame_id = page_table_[key];
         Page* const page = &pages_[frame_id];
@@ -105,7 +105,7 @@ bool BufferPoolManager::unpin_page(const std::string& file_name, uint32_t page_i
 
     const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, page_id};
-    
+
     if (page_table_.find(key) == page_table_.end()) {
         return false;
     }
@@ -134,7 +134,7 @@ bool BufferPoolManager::flush_page(const std::string& file_name, uint32_t page_i
 
     const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, page_id};
-    
+
     if (page_table_.find(key) == page_table_.end()) {
         return false;
     }
@@ -155,7 +155,7 @@ Page* BufferPoolManager::new_page(const std::string& file_name, const uint32_t* 
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
         const_cast<uint32_t&>(*page_id) = target_page_id;
     }
-    
+
     const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, target_page_id};
 
@@ -193,7 +193,7 @@ bool BufferPoolManager::delete_page(const std::string& file_name, uint32_t page_
 
     const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, page_id};
-    
+
     if (page_table_.find(key) != page_table_.end()) {
         const uint32_t frame_id = page_table_[key];
         Page* const page = &pages_[frame_id];

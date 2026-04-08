@@ -33,9 +33,10 @@ class LockManager {
     };
 
     std::mutex latch_;
-    std::unordered_map<storage::HeapTable::TupleId, LockQueue, storage::HeapTable::TupleId::Hash> lock_table_;  // RID -> LockQueue
+    std::unordered_map<storage::HeapTable::TupleId, LockQueue, storage::HeapTable::TupleId::Hash>
+        lock_table_;  // RID -> LockQueue
 
-    public:
+   public:
     LockManager() = default;
     ~LockManager() = default;
 
@@ -59,8 +60,7 @@ class LockManager {
      * @brief Release a lock held by a transaction
      */
     bool unlock(Transaction* txn, const storage::HeapTable::TupleId& rid);
-    };
-
+};
 
 }  // namespace cloudsql::transaction
 

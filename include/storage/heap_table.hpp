@@ -54,7 +54,8 @@ class HeapTable {
 
         struct Hash {
             std::size_t operator()(const TupleId& tid) const {
-                return (static_cast<size_t>(tid.page_num) << 16) ^ static_cast<size_t>(tid.slot_num);
+                return (static_cast<size_t>(tid.page_num) << 16) ^
+                       static_cast<size_t>(tid.slot_num);
             }
         };
     };
@@ -96,9 +97,9 @@ class HeapTable {
     class Iterator {
        private:
         HeapTable& table_;
-        TupleId next_id_;  /**< ID of the next record to be checked */
-        TupleId last_id_;  /**< ID of the record returned by the last next() call */
-        bool eof_ = false; /**< End-of-file indicator */
+        TupleId next_id_;               /**< ID of the next record to be checked */
+        TupleId last_id_;               /**< ID of the record returned by the last next() call */
+        bool eof_ = false;              /**< End-of-file indicator */
         std::pmr::memory_resource* mr_; /**< Memory resource for tuple allocations */
 
        public:
@@ -214,7 +215,9 @@ class HeapTable {
     [[nodiscard]] uint64_t tuple_count() const;
 
     /** @return An iterator starting at the first page */
-    [[nodiscard]] Iterator scan(std::pmr::memory_resource* mr = nullptr) { return Iterator(*this, mr); }
+    [[nodiscard]] Iterator scan(std::pmr::memory_resource* mr = nullptr) {
+        return Iterator(*this, mr);
+    }
 
     /** @brief Initializes the physical heap file */
     bool create();

@@ -47,7 +47,7 @@ HeapTable::~HeapTable() {
 
 /* --- Iterator Implementation --- */
 
-HeapTable::Iterator::Iterator(HeapTable& table, std::pmr::memory_resource* mr) 
+HeapTable::Iterator::Iterator(HeapTable& table, std::pmr::memory_resource* mr)
     : table_(table), next_id_(0, 0), last_id_(0, 0), mr_(mr) {}
 
 bool HeapTable::Iterator::next(executor::Tuple& out_tuple) {
@@ -289,7 +289,7 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
         auto* buffer = cached_page_->get_data();
         PageHeader header{};
         std::memcpy(&header, buffer, sizeof(PageHeader));
-        
+
         uint16_t offset = 0;
         std::memcpy(&offset, buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
                     sizeof(uint16_t));
@@ -404,15 +404,18 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
                 type == common::ValueType::TYPE_INT64 || type == common::ValueType::TYPE_FLOAT32 ||
                 type == common::ValueType::TYPE_FLOAT64) {
                 if (cursor + 8 > data_len) break;
-                if (type == common::ValueType::TYPE_FLOAT32 || type == common::ValueType::TYPE_FLOAT64) {
+                if (type == common::ValueType::TYPE_FLOAT32 ||
+                    type == common::ValueType::TYPE_FLOAT64) {
                     double v;
                     std::memcpy(&v, data + cursor, 8);
                     values.push_back(common::Value::make_float64(v));
                 } else {
                     int64_t v;
                     std::memcpy(&v, data + cursor, 8);
-                    if (type == common::ValueType::TYPE_BOOL) values.push_back(common::Value::make_bool(v != 0));
-                    else values.push_back(common::Value::make_int64(v));
+                    if (type == common::ValueType::TYPE_BOOL)
+                        values.push_back(common::Value::make_bool(v != 0));
+                    else
+                        values.push_back(common::Value::make_int64(v));
                 }
                 cursor += 8;
             } else {

@@ -135,7 +135,7 @@ std::shared_ptr<PreparedStatement> QueryExecutor::prepare(const std::string& sql
     parser::Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     if (!stmt) return nullptr;
-    
+
     auto prepared = std::make_shared<PreparedStatement>();
     prepared->stmt = std::shared_ptr<parser::Statement>(stmt.release());
     prepared->sql = sql;
@@ -152,8 +152,8 @@ std::shared_ptr<PreparedStatement> QueryExecutor::prepare(const std::string& sql
                 for (const auto& col : prepared->table_meta->columns) {
                     prepared->schema->add_column(col.name, col.type);
                 }
-                prepared->table = std::make_unique<storage::HeapTable>(
-                    table_name, bpm_, *prepared->schema);
+                prepared->table =
+                    std::make_unique<storage::HeapTable>(table_name, bpm_, *prepared->schema);
 
                 // Cache B-tree index objects
                 for (const auto& idx_info : prepared->table_meta->indexes) {
@@ -171,7 +171,8 @@ std::shared_ptr<PreparedStatement> QueryExecutor::prepare(const std::string& sql
     return prepared;
 }
 
-QueryResult QueryExecutor::execute(const PreparedStatement& prepared, const std::vector<common::Value>& params) {
+QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
+                                   const std::vector<common::Value>& params) {
     // Fast-path for INSERT
     if (prepared.stmt->type() == parser::StmtType::Insert && prepared.table) {
         const auto start = std::chrono::high_resolution_clock::now();
@@ -202,13 +203,15 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared, const std:
                 for (size_t i = 0; i < prepared.indexes.size(); ++i) {
                     const auto& idx_info = prepared.table_meta->indexes[i];
                     uint16_t pos = idx_info.column_positions[0];
-                    if (!apply_index_write(*prepared.indexes[i], tuple.get(pos), tid, IndexOp::Insert, err)) {
+                    if (!apply_index_write(*prepared.indexes[i], tuple.get(pos), tid,
+                                           IndexOp::Insert, err)) {
                         throw std::runtime_error(err);
                     }
                 }
 
                 if (txn != nullptr) {
-                    txn->add_undo_log(transaction::UndoLog::Type::INSERT, prepared.table_meta->name, tid);
+                    txn->add_undo_log(transaction::UndoLog::Type::INSERT, prepared.table_meta->name,
+                                      tid);
                     if (!lock_manager_.acquire_exclusive(txn, tid)) {
                         throw std::runtime_error("Failed to acquire exclusive lock");
                     }
@@ -225,7 +228,8 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared, const std:
 
         current_params_ = nullptr;
         const auto end = std::chrono::high_resolution_clock::now();
-        result.set_execution_time(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+        result.set_execution_time(
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
         arena_.reset();
         return result;
     }
@@ -931,11 +935,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                                     col_name) {
                                 common::ValueType ktype = base_table_meta->columns[pos].type;
                                 current_root = std::make_unique<IndexScanOperator>(
-                                   std::make_shared<storage::HeapTable>(base_table_name, bpm_,
-                                                                        base_schema),
-                                   std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_,
-                                                                         ktype),
-                                   std::move(const_val), txn, &lock_manager_);                                index_used = true;
+                                    std::make_shared<storage::HeapTable>(base_table_name, bpm_,
+                                                                         base_schema),
+                                    std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_,
+                                                                          ktype),
+                                    std::move(const_val), txn, &lock_manager_);
+                                index_used = true;
                                 break;
                             }
                         }
@@ -956,7 +961,6 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
     // Propagate memory resource and bound parameters to the operator tree
     current_root->set_memory_resource(&arena_);
     current_root->set_params(current_params_);
-
 
     /* 2. Add JOINs */
     for (const auto& join : stmt.joins()) {
@@ -1060,7 +1064,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
     /* 3. Filter (WHERE) - Only if not already handled by IndexScan */
     if (stmt.where()) {
-        auto filter_op = std::make_unique<FilterOperator>(std::move(current_root), stmt.where()->clone());
+        auto filter_op =
+            std::make_unique<FilterOperator>(std::move(current_root), stmt.where()->clone());
         filter_op->set_memory_resource(&arena_);
         filter_op->set_params(current_params_);
         current_root = std::move(filter_op);
@@ -1117,14 +1122,15 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             group_by.push_back(gb->clone());
         }
         auto agg_op = std::make_unique<AggregateOperator>(std::move(current_root),
-                                                           std::move(group_by), std::move(aggs));
+                                                          std::move(group_by), std::move(aggs));
         agg_op->set_memory_resource(&arena_);
         agg_op->set_params(current_params_);
         current_root = std::move(agg_op);
 
         /* 3.5. Having */
         if (stmt.having()) {
-            auto having_filter = std::make_unique<FilterOperator>(std::move(current_root), stmt.having()->clone());
+            auto having_filter =
+                std::make_unique<FilterOperator>(std::move(current_root), stmt.having()->clone());
             having_filter->set_memory_resource(&arena_);
             having_filter->set_params(current_params_);
             current_root = std::move(having_filter);
@@ -1152,7 +1158,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         for (const auto& col : stmt.columns()) {
             projection.push_back(col->clone());
         }
-        auto project_op = std::make_unique<ProjectOperator>(std::move(current_root), std::move(projection));
+        auto project_op =
+            std::make_unique<ProjectOperator>(std::move(current_root), std::move(projection));
         project_op->set_memory_resource(&arena_);
         project_op->set_params(current_params_);
         current_root = std::move(project_op);
@@ -1160,7 +1167,8 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
     /* 6. Limit */
     if (stmt.has_limit() || stmt.has_offset()) {
-        auto limit_op = std::make_unique<LimitOperator>(std::move(current_root), stmt.limit(), stmt.offset());
+        auto limit_op =
+            std::make_unique<LimitOperator>(std::move(current_root), stmt.limit(), stmt.offset());
         limit_op->set_memory_resource(&arena_);
         limit_op->set_params(current_params_);
         current_root = std::move(limit_op);

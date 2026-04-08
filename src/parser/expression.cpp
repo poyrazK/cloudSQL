@@ -342,7 +342,9 @@ void ParameterExpr::evaluate_vectorized(const executor::VectorBatch& batch,
     (void)result;
 }
 
-std::string ParameterExpr::to_string() const { return "?"; }
+std::string ParameterExpr::to_string() const {
+    return "?";
+}
 
 std::unique_ptr<Expression> ParameterExpr::clone() const {
     return std::make_unique<ParameterExpr>(index_);

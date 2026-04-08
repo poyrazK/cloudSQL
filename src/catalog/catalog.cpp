@@ -69,7 +69,6 @@ bool Catalog::save(const std::string& filename) const {
  * @brief Create a new table
  */
 oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInfo> columns) {
-
     // Compute shards from ClusterManager for serialization
     std::vector<ShardInfo> shards;
     if (cluster_manager_ != nullptr) {
@@ -175,7 +174,6 @@ oid_t Catalog::create_table_local(const std::string& table_name, std::vector<Col
         shard.port = 6432;
         table->shards.push_back(shard);
     }
-
 
     const oid_t id = table->table_id;
     tables_[id] = std::move(table);

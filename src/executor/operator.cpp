@@ -645,7 +645,9 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             if (iter_state.current != iter_state.end) {
                 auto& build_tuple = iter_state.current->second;
                 const auto& right_tuple = build_tuple.tuple;
-                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(), left_tuple_->values().end(), get_memory_resource());
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
+                                                              left_tuple_->values().end(),
+                                                              get_memory_resource());
                 joined_values.insert(joined_values.end(), right_tuple.values().begin(),
                                      right_tuple.values().end());
 
@@ -661,7 +663,9 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             match_iter_ = std::nullopt;
             if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
                 !left_had_match_) {
-                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(), left_tuple_->values().end(), get_memory_resource());
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
+                                                              left_tuple_->values().end(),
+                                                              get_memory_resource());
                 for (size_t i = 0; i < right_schema.column_count(); ++i) {
                     joined_values.push_back(common::Value::make_null());
                 }
@@ -685,7 +689,9 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
                 match_iter_ = {range.first, range.second};
             } else if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
                 /* No match found immediately, emit NULLs if Left/Full join */
-                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(), left_tuple_->values().end(), get_memory_resource());
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
+                                                              left_tuple_->values().end(),
+                                                              get_memory_resource());
                 for (size_t i = 0; i < right_schema.column_count(); ++i) {
                     joined_values.push_back(common::Value::make_null());
                 }

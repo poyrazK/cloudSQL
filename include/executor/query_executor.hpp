@@ -6,12 +6,12 @@
 #ifndef CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP
 #define CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP
 
-#include <unordered_map>
 #include <mutex>
+#include <unordered_map>
 
 #include "catalog/catalog.hpp"
-#include "common/cluster_manager.hpp"
 #include "common/arena_allocator.hpp"
+#include "common/cluster_manager.hpp"
 #include "distributed/raft_types.hpp"
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
@@ -98,7 +98,8 @@ class QueryExecutor {
     /**
      * @brief Execute a PreparedStatement with bound parameters
      */
-    QueryResult execute(const PreparedStatement& prepared, const std::vector<common::Value>& params);
+    QueryResult execute(const PreparedStatement& prepared,
+                        const std::vector<common::Value>& params);
 
     /**
      * @brief Get access to the query-scoped arena
@@ -121,7 +122,7 @@ class QueryExecutor {
 
     // Performance structures
     common::ArenaAllocator arena_;
-    
+
     // Global statement cache (thread-safe)
     static std::unordered_map<std::string, std::shared_ptr<parser::Statement>> statement_cache_;
     static std::mutex cache_mutex_;
