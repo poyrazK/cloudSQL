@@ -108,11 +108,31 @@ struct SQLiteContext {
 static void BM_CloudSQL_Insert(benchmark::State& state) {
     CloudSQLContext ctx("./bench_cloudsql_insert_" + std::to_string(state.thread_index()));
     
-    for (auto _ : state) {
-        std::string sql = "INSERT INTO bench_table VALUES (" + std::to_string(state.iterations()) + 
-                          ", 3.14, 'some_payload_data');";
-        ctx.executor->execute(sql);
+    // Prepare the statement once outside the hot loop
+    auto prepared = ctx.executor->prepare("INSERT INTO bench_table VALUES (?, ?, ?);");
+    if (!prepared) {
+        state.SkipWithError("Failed to prepare statement");
+        return;
     }
+
+    // Pre-allocate params to avoid heap allocations in the loop
+    std::vector<common::Value> params;
+    params.reserve(3);
+    params.push_back(common::Value::make_int64(0));
+    params.push_back(common::Value::make_float64(3.14));
+    params.push_back(common::Value::make_text("some_payload_data"));
+
+    // Use a single transaction for the whole benchmark to reveal raw engine speed
+    ctx.executor->execute("BEGIN");
+
+    int64_t i = 0;
+    for (auto _ : state) {
+        // Update only the changing value
+        params[0] = common::Value::make_int64(i++);
+        ctx.executor->execute(*prepared, params);
+    }
+
+    ctx.executor->execute("COMMIT");
     state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_CloudSQL_Insert);
