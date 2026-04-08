@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <initializer_list>
 
 #include "common/value.hpp"
 
@@ -145,7 +146,7 @@ class Tuple {
     Tuple(std::vector<common::Value>&& values)
         : values_(std::make_move_iterator(values.begin()), std::make_move_iterator(values.end())) {}
 
-    Tuple(std::vector<common::Value> values, std::pmr::memory_resource* mr)
+    Tuple(const std::vector<common::Value>& values, std::pmr::memory_resource* mr)
         : values_(values.begin(), values.end(), mr) {}
 
     Tuple(const Tuple& other) = default;
