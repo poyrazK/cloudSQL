@@ -191,7 +191,8 @@ TEST(CloudSQLTests, StoragePersistence) {
     schema.add_column("data", ValueType::TYPE_TEXT);
     {
         auto disk_manager = std::make_unique<StorageManager>("./test_data");
-        auto sm = std::make_unique<BufferPoolManager>(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
+        auto sm = std::make_unique<BufferPoolManager>(
+            cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
         {
             HeapTable table(filename, *sm, schema);
             static_cast<void>(table.create());
@@ -201,7 +202,8 @@ TEST(CloudSQLTests, StoragePersistence) {
     }
     {
         auto disk_manager = std::make_unique<StorageManager>("./test_data");
-        auto sm = std::make_unique<BufferPoolManager>(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
+        auto sm = std::make_unique<BufferPoolManager>(
+            cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager);
         {
             HeapTable table(filename, *sm, schema);
             auto iter = table.scan();
