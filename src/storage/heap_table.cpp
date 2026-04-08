@@ -39,8 +39,15 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::S
       last_page_id_(0) {}
 
 HeapTable::~HeapTable() {
+    // Note: In some tests, the BufferPoolManager might be destroyed before the HeapTable
+    // causing this to potentially access a dangling reference if we are not careful.
+    // However, the current issue is likely that cached_page_ needs to be unpinned properly.
     if (cached_page_ != nullptr) {
-        bpm_.unpin_page(filename_, cached_page_id_, true);
+        try {
+            bpm_.unpin_page(filename_, cached_page_id_, true);
+        } catch (...) {
+            // Ignore errors during destruction if BPM is already gone
+        }
         cached_page_ = nullptr;
     }
 }
