@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <memory_resource>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -120,14 +121,25 @@ class Schema {
 
 /**
  * @brief A single data row used in the row-oriented (Volcano) execution model.
+ * 
+ * Uses std::pmr::vector to support custom allocators (e.g. ArenaAllocator).
  */
 class Tuple {
    private:
-    std::vector<common::Value> values_;
+    std::pmr::vector<common::Value> values_;
 
    public:
     Tuple() = default;
-    explicit Tuple(std::vector<common::Value> values) : values_(std::move(values)) {}
+    explicit Tuple(std::pmr::vector<common::Value> values) : values_(std::move(values)) {}
+    
+    // Support construction from standard vector (via move or copy)
+    explicit Tuple(std::vector<common::Value> values) 
+        : values_(values.begin(), values.end()) {}
+
+    // Support allocation from a custom memory resource
+    explicit Tuple(std::pmr::memory_resource* mr) : values_(mr) {}
+    Tuple(std::vector<common::Value> values, std::pmr::memory_resource* mr) 
+        : values_(values.begin(), values.end(), mr) {}
 
     Tuple(const Tuple& other) = default;
     Tuple(Tuple&& other) noexcept = default;
@@ -159,8 +171,8 @@ class Tuple {
     [[nodiscard]] size_t size() const { return values_.size(); }
     [[nodiscard]] bool empty() const { return values_.empty(); }
 
-    [[nodiscard]] const std::vector<common::Value>& values() const { return values_; }
-    [[nodiscard]] std::vector<common::Value>& values() { return values_; }
+    [[nodiscard]] const std::pmr::vector<common::Value>& values() const { return values_; }
+    [[nodiscard]] std::pmr::vector<common::Value>& values() { return values_; }
 
     [[nodiscard]] std::string to_string() const;
 };

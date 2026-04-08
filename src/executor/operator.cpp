@@ -48,7 +48,7 @@ bool SeqScanOperator::init() {
 
 bool SeqScanOperator::open() {
     set_state(ExecState::Open);
-    iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan());
+    iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan(get_memory_resource()));
     return true;
 }
 
@@ -306,7 +306,7 @@ bool ProjectOperator::next(Tuple& out_tuple) {
         return false;
     }
 
-    std::vector<common::Value> output_values;
+    std::pmr::vector<common::Value> output_values(get_memory_resource());
     output_values.reserve(columns_.size());
     auto input_schema = child_->output_schema();
     for (const auto& col : columns_) {
@@ -645,7 +645,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             if (iter_state.current != iter_state.end) {
                 auto& build_tuple = iter_state.current->second;
                 const auto& right_tuple = build_tuple.tuple;
-                std::vector<common::Value> joined_values = left_tuple_->values();
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(), left_tuple_->values().end(), get_memory_resource());
                 joined_values.insert(joined_values.end(), right_tuple.values().begin(),
                                      right_tuple.values().end());
 
@@ -661,7 +661,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             match_iter_ = std::nullopt;
             if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
                 !left_had_match_) {
-                std::vector<common::Value> joined_values = left_tuple_->values();
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(), left_tuple_->values().end(), get_memory_resource());
                 for (size_t i = 0; i < right_schema.column_count(); ++i) {
                     joined_values.push_back(common::Value::make_null());
                 }
@@ -685,7 +685,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
                 match_iter_ = {range.first, range.second};
             } else if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
                 /* No match found immediately, emit NULLs if Left/Full join */
-                std::vector<common::Value> joined_values = left_tuple_->values();
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(), left_tuple_->values().end(), get_memory_resource());
                 for (size_t i = 0; i < right_schema.column_count(); ++i) {
                     joined_values.push_back(common::Value::make_null());
                 }
@@ -708,7 +708,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             auto& it = right_idx_iter_.value();
             while (it != hash_table_.end()) {
                 if (!it->second.matched) {
-                    std::vector<common::Value> joined_values;
+                    std::pmr::vector<common::Value> joined_values(get_memory_resource());
                     for (size_t i = 0; i < left_schema.column_count(); ++i) {
                         joined_values.push_back(common::Value::make_null());
                     }

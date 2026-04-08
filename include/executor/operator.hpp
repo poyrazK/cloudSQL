@@ -7,6 +7,7 @@
 #define CLOUDSQL_EXECUTOR_OPERATOR_HPP
 
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -52,6 +53,8 @@ class Operator {
     std::string error_message_;
     Transaction* txn_;
     LockManager* lock_manager_;
+    std::pmr::memory_resource* mr_ = nullptr;
+    const std::vector<common::Value>* params_ = nullptr;
 
    public:
     explicit Operator(OperatorType type, Transaction* txn = nullptr,
@@ -70,6 +73,14 @@ class Operator {
     [[nodiscard]] const std::string& error() const { return error_message_; }
     [[nodiscard]] Transaction* get_txn() const { return txn_; }
     [[nodiscard]] LockManager* get_lock_manager() const { return lock_manager_; }
+
+    void set_memory_resource(std::pmr::memory_resource* mr) { mr_ = mr; }
+    [[nodiscard]] std::pmr::memory_resource* get_memory_resource() const {
+        return mr_ ? mr_ : std::pmr::get_default_resource();
+    }
+
+    void set_params(const std::vector<common::Value>* params) { params_ = params; }
+    [[nodiscard]] const std::vector<common::Value>* get_params() const { return params_; }
 
     virtual bool init() { return true; }
     virtual bool open() { return true; }
