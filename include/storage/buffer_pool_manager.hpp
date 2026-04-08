@@ -102,12 +102,22 @@ class BufferPoolManager {
     [[nodiscard]] recovery::LogManager* get_log_manager() const { return log_manager_; }
 
    private:
-    /**
-     * @brief Generates a unique string key for file and page mapping
-     */
-    static std::string make_page_key(const std::string& file_name, uint32_t page_id) {
-        return file_name + "_" + std::to_string(page_id);
-    }
+    struct PageKey {
+        uint32_t file_id;
+        uint32_t page_id;
+
+        bool operator==(const PageKey& other) const {
+            return file_id == other.file_id && page_id == other.page_id;
+        }
+
+        struct Hash {
+            std::size_t operator()(const PageKey& key) const {
+                return (static_cast<size_t>(key.file_id) << 32) | static_cast<size_t>(key.page_id);
+            }
+        };
+    };
+
+    uint32_t get_file_id(const std::string& file_name);
 
     size_t pool_size_;
     StorageManager& storage_manager_;
@@ -126,7 +136,11 @@ class BufferPoolManager {
     std::list<uint32_t> free_list_;
 
     // Maps page keys (file+pageId) to frame IDs
-    std::unordered_map<std::string, uint32_t> page_table_;
+    std::unordered_map<PageKey, uint32_t, PageKey::Hash> page_table_;
+
+    // Mapping from file name to internal file_id to avoid string keys in page_table_
+    std::unordered_map<std::string, uint32_t> file_id_map_;
+    uint32_t next_file_id_ = 1;
 };
 
 }  // namespace cloudsql::storage

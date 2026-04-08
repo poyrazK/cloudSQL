@@ -14,7 +14,7 @@
 
 namespace cloudsql::transaction {
 
-bool LockManager::acquire_shared(Transaction* txn, const std::string& rid) {
+bool LockManager::acquire_shared(Transaction* txn, const storage::HeapTable::TupleId& rid) {
     std::unique_lock<std::mutex> lock(latch_);
     auto& queue = lock_table_[rid];
 
@@ -60,7 +60,7 @@ bool LockManager::acquire_shared(Transaction* txn, const std::string& rid) {
     return true;
 }
 
-bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
+bool LockManager::acquire_exclusive(Transaction* txn, const storage::HeapTable::TupleId& rid) {
     std::unique_lock<std::mutex> lock(latch_);
     auto& queue = lock_table_[rid];
 
@@ -82,14 +82,6 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
         }
     }
 
-    if (upgrade) {
-        /* Release S lock temporarily or just modify request? */
-        /* Simple upgrade: drop S, queue X. Real implementation needs care for deadlocks/starvation
-         */
-        /* For now, let's just queue a new X request and wait. This is simplistic. */
-        /* NOTE: Upgrades are deadlock-prone without proper handling. */
-    }
-
     queue.request_queue.push_back({txn->get_id(), LockMode::EXCLUSIVE, false});
     const auto my_req = std::prev(queue.request_queue.end());
 
@@ -102,8 +94,6 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
         /* Exclusive requires NO other locks held by OTHERS */
         bool can_grant = true;
         for (auto iter = queue.request_queue.begin(); iter != my_req; ++iter) {
-            /* If it's us (upgrade case), we ignore our own previous lock? */
-            /* Simplified: Strictly FIFO for X locks relative to others */
             if (iter->txn_id != txn->get_id()) {
                 can_grant = false;
                 break;
@@ -122,7 +112,7 @@ bool LockManager::acquire_exclusive(Transaction* txn, const std::string& rid) {
     return true;
 }
 
-bool LockManager::unlock(Transaction* txn, const std::string& rid) {
+bool LockManager::unlock(Transaction* txn, const storage::HeapTable::TupleId& rid) {
     const std::unique_lock<std::mutex> lock(latch_);
     if (lock_table_.find(rid) == lock_table_.end()) {
         return false;

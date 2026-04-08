@@ -33,9 +33,9 @@ class LockManager {
     };
 
     std::mutex latch_;
-    std::unordered_map<std::string, LockQueue> lock_table_;  // RID -> LockQueue
+    std::unordered_map<storage::HeapTable::TupleId, LockQueue, storage::HeapTable::TupleId::Hash> lock_table_;  // RID -> LockQueue
 
-   public:
+    public:
     LockManager() = default;
     ~LockManager() = default;
 
@@ -48,18 +48,19 @@ class LockManager {
     /**
      * @brief Acquire a shared (read) lock on a tuple
      */
-    bool acquire_shared(Transaction* txn, const std::string& rid);
+    bool acquire_shared(Transaction* txn, const storage::HeapTable::TupleId& rid);
 
     /**
      * @brief Acquire an exclusive (write) lock on a tuple
      */
-    bool acquire_exclusive(Transaction* txn, const std::string& rid);
+    bool acquire_exclusive(Transaction* txn, const storage::HeapTable::TupleId& rid);
 
     /**
-     * @brief Unlock a tuple
+     * @brief Release a lock held by a transaction
      */
-    bool unlock(Transaction* txn, const std::string& rid);
-};
+    bool unlock(Transaction* txn, const storage::HeapTable::TupleId& rid);
+    };
+
 
 }  // namespace cloudsql::transaction
 

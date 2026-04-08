@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <memory_resource>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,12 @@ class HeapTable {
         bool operator==(const TupleId& other) const {
             return page_num == other.page_num && slot_num == other.slot_num;
         }
+
+        struct Hash {
+            std::size_t operator()(const TupleId& tid) const {
+                return (static_cast<size_t>(tid.page_num) << 16) ^ static_cast<size_t>(tid.slot_num);
+            }
+        };
     };
 
     /**
@@ -92,9 +99,10 @@ class HeapTable {
         TupleId next_id_;  /**< ID of the next record to be checked */
         TupleId last_id_;  /**< ID of the record returned by the last next() call */
         bool eof_ = false; /**< End-of-file indicator */
+        std::pmr::memory_resource* mr_; /**< Memory resource for tuple allocations */
 
        public:
-        explicit Iterator(HeapTable& table);
+        explicit Iterator(HeapTable& table, std::pmr::memory_resource* mr = nullptr);
 
         /**
          * @brief Fetches the next non-deleted record from the heap
@@ -124,6 +132,10 @@ class HeapTable {
     executor::Schema schema_;
     uint32_t last_page_id_ = 0;
 
+    // Last page cache for fast insertions
+    Page* cached_page_ = nullptr;
+    uint32_t cached_page_id_ = 0xFFFFFFFF;
+
    public:
     /**
      * @brief Constructor
@@ -133,7 +145,7 @@ class HeapTable {
      */
     HeapTable(std::string table_name, BufferPoolManager& bpm, executor::Schema schema);
 
-    ~HeapTable() = default;
+    ~HeapTable();
 
     /* Disable copy semantics */
     HeapTable(const HeapTable&) = delete;
@@ -202,7 +214,7 @@ class HeapTable {
     [[nodiscard]] uint64_t tuple_count() const;
 
     /** @return An iterator starting at the first page */
-    [[nodiscard]] Iterator scan() { return Iterator(*this); }
+    [[nodiscard]] Iterator scan(std::pmr::memory_resource* mr = nullptr) { return Iterator(*this, mr); }
 
     /** @brief Initializes the physical heap file */
     bool create();
