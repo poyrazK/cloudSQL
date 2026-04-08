@@ -147,13 +147,12 @@ bool BufferPoolManager::flush_page(const std::string& file_name, uint32_t page_i
     return true;
 }
 
-Page* BufferPoolManager::new_page(const std::string& file_name, const uint32_t* page_id) {
+Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
     const uint32_t target_page_id = storage_manager_.allocate_page(file_name);
     if (page_id != nullptr) {
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
-        const_cast<uint32_t&>(*page_id) = target_page_id;
+        *page_id = target_page_id;
     }
 
     const uint32_t file_id = get_file_id(file_name);
