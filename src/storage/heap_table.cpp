@@ -123,10 +123,6 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
 
                 size_t cursor = 18;
                 std::pmr::vector<common::Value> values(mr_);
-
-                std::cerr << "DEBUG: Iterator::next_meta values.reserve("
-                          << table_.schema_.column_count() << ") iter=" << this
-                          << " table=" << &table_ << " mr=" << mr_ << std::endl;
                 values.reserve(table_.schema_.column_count());
 
                 for (size_t i = 0; i < table_.schema_.column_count(); ++i) {
