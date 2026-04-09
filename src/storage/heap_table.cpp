@@ -36,14 +36,16 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::S
       filename_(table_name_ + ".heap"),
       bpm_(bpm),
       schema_(std::move(schema)),
-      last_page_id_(0) {}
+      last_page_id_(0) {
+    file_id_ = bpm_.get_file_id(filename_);
+}
 
 HeapTable::~HeapTable() {
     // Note: In some tests, the BufferPoolManager might be destroyed before the HeapTable
     // causing this to potentially access a dangling reference if we are not careful.
     if (cached_page_ != nullptr) {
         try {
-            bpm_.unpin_page(filename_, cached_page_id_, true);
+            bpm_.unpin_page_by_id(file_id_, cached_page_id_, true);
         } catch (...) {
             // Ignore errors during destruction if BPM is already gone
         }
@@ -59,6 +61,39 @@ HeapTable::Iterator::Iterator(HeapTable& table, std::pmr::memory_resource* mr)
       last_id_(0, 0),
       eof_(false),
       mr_(mr ? mr : std::pmr::new_delete_resource()) {}
+
+HeapTable::Iterator::~Iterator() {
+    if (current_page_) {
+        table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+    }
+}
+
+HeapTable::Iterator::Iterator(Iterator&& other) noexcept
+    : table_(other.table_),
+      next_id_(other.next_id_),
+      last_id_(other.last_id_),
+      eof_(other.eof_),
+      mr_(other.mr_),
+      current_page_(other.current_page_),
+      current_page_num_(other.current_page_num_) {
+    other.current_page_ = nullptr;
+}
+
+HeapTable::Iterator& HeapTable::Iterator::operator=(Iterator&& other) noexcept {
+    if (this != &other) {
+        if (current_page_) {
+            table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+        }
+        next_id_ = other.next_id_;
+        last_id_ = other.last_id_;
+        eof_ = other.eof_;
+        mr_ = other.mr_;
+        current_page_ = other.current_page_;
+        current_page_num_ = other.current_page_num_;
+        other.current_page_ = nullptr;
+    }
+    return *this;
+}
 
 bool HeapTable::Iterator::next(executor::Tuple& out_tuple) {
     TupleMeta meta;
@@ -80,18 +115,22 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
     }
 
     while (true) {
-        Page* page = table_.bpm_.fetch_page(table_.filename_, next_id_.page_num);
-        if (!page) {
-            eof_ = true;
-            return false;
+        if (!current_page_) {
+            current_page_ = table_.bpm_.fetch_page_by_id(table_.file_id_, table_.filename_, next_id_.page_num);
+            current_page_num_ = next_id_.page_num;
+            if (!current_page_) {
+                eof_ = true;
+                return false;
+            }
         }
 
-        auto* buffer = page->get_data();
+        auto* buffer = current_page_->get_data();
         PageHeader header{};
         std::memcpy(&header, buffer, sizeof(PageHeader));
 
         if (header.free_space_offset == 0) {
-            table_.bpm_.unpin_page(table_.filename_, next_id_.page_num, false);
+            table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+            current_page_ = nullptr;
             eof_ = true;
             return false;
         }
@@ -113,7 +152,8 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
 
                 const size_t record_len = static_cast<size_t>(tuple_data_len);
                 if (record_len < 18) {  // 2 len + 8 xmin + 8 xmax
-                    table_.bpm_.unpin_page(table_.filename_, next_id_.page_num, false);
+                    table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+                    current_page_ = nullptr;
                     return false;
                 }
 
@@ -171,15 +211,15 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
                 out_meta.tuple = executor::Tuple(std::move(values));
                 last_id_ = next_id_;
                 next_id_.slot_num++;
-
-                table_.bpm_.unpin_page(table_.filename_, next_id_.page_num, false);
+                // Do not unpin here so the page is reused for the next record
                 return true;
             }
             next_id_.slot_num++;
         }
 
         /* Move to the beginning of the next physical page */
-        table_.bpm_.unpin_page(table_.filename_, next_id_.page_num, false);
+        table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+        current_page_ = nullptr;
         next_id_.page_num++;
         next_id_.slot_num = 0;
     }
@@ -251,10 +291,10 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
         // Use cached page if available
         if (cached_page_ == nullptr || cached_page_id_ != last_page_id_) {
             if (cached_page_ != nullptr) {
-                bpm_.unpin_page(filename_, cached_page_id_, true);
+                bpm_.unpin_page_by_id(file_id_, cached_page_id_, true);
             }
             cached_page_id_ = last_page_id_;
-            cached_page_ = bpm_.fetch_page(filename_, cached_page_id_);
+            cached_page_ = bpm_.fetch_page_by_id(file_id_, filename_, cached_page_id_);
             if (!cached_page_) {
                 cached_page_ = bpm_.new_page(filename_, &cached_page_id_);
                 if (!cached_page_) {
@@ -297,7 +337,7 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
         }
 
         /* Page is full; unpin and move to next */
-        bpm_.unpin_page(filename_, cached_page_id_, true);
+        bpm_.unpin_page_by_id(file_id_, cached_page_id_, true);
         cached_page_ = nullptr;
         last_page_id_++;
     }
@@ -323,14 +363,14 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
         return false;
     }
 
-    Page* page = bpm_.fetch_page(filename_, tuple_id.page_num);
+    Page* page = bpm_.fetch_page_by_id(file_id_, filename_, tuple_id.page_num);
     if (!page) return false;
 
     auto* buffer = page->get_data();
     PageHeader header{};
     std::memcpy(&header, buffer, sizeof(PageHeader));
     if (header.free_space_offset == 0 || tuple_id.slot_num >= header.num_slots) {
-        bpm_.unpin_page(filename_, tuple_id.page_num, false);
+        bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
         return false;
     }
 
@@ -338,14 +378,14 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
     std::memcpy(&offset, buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
                 sizeof(uint16_t));
     if (offset == 0) {
-        bpm_.unpin_page(filename_, tuple_id.page_num, false);
+        bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
         return false;
     }
 
     /* In binary format, xmax is at offset + 10 (2 len + 8 xmin) */
     std::memcpy(buffer + offset + 10, &xmax, 8);
 
-    bpm_.unpin_page(filename_, tuple_id.page_num, true);
+    bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, true);
     return true;
 }
 
@@ -361,14 +401,14 @@ bool HeapTable::physical_remove(const TupleId& tuple_id) {
         return true;
     }
 
-    Page* page = bpm_.fetch_page(filename_, tuple_id.page_num);
+    Page* page = bpm_.fetch_page_by_id(file_id_, filename_, tuple_id.page_num);
     if (!page) return false;
 
     auto* buffer = page->get_data();
     PageHeader header{};
     std::memcpy(&header, buffer, sizeof(PageHeader));
     if (header.free_space_offset == 0 || tuple_id.slot_num >= header.num_slots) {
-        bpm_.unpin_page(filename_, tuple_id.page_num, false);
+        bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
         return false;
     }
 
@@ -376,7 +416,7 @@ bool HeapTable::physical_remove(const TupleId& tuple_id) {
     std::memcpy(buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)), &zero,
                 sizeof(uint16_t));
 
-    bpm_.unpin_page(filename_, tuple_id.page_num, true);
+    bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, true);
     return true;
 }
 
@@ -459,14 +499,14 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
         return true;
     }
 
-    Page* page = bpm_.fetch_page(filename_, tuple_id.page_num);
+    Page* page = bpm_.fetch_page_by_id(file_id_, filename_, tuple_id.page_num);
     if (!page) return false;
 
     auto* buffer = page->get_data();
     PageHeader header{};
     std::memcpy(&header, buffer, sizeof(PageHeader));
     if (header.free_space_offset == 0 || tuple_id.slot_num >= header.num_slots) {
-        bpm_.unpin_page(filename_, tuple_id.page_num, false);
+        bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
         return false;
     }
 
@@ -474,7 +514,7 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
     std::memcpy(&offset, buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
                 sizeof(uint16_t));
     if (offset == 0) {
-        bpm_.unpin_page(filename_, tuple_id.page_num, false);
+        bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
         return false;
     }
 
@@ -484,7 +524,7 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
     std::memcpy(&tuple_data_len, data, 2);
     const size_t record_len = static_cast<size_t>(tuple_data_len);
     if (record_len < 18) {
-        bpm_.unpin_page(filename_, tuple_id.page_num, false);
+        bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
         return false;
     }
 
@@ -537,7 +577,7 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
     }
 
     out_meta.tuple = executor::Tuple(std::move(values));
-    bpm_.unpin_page(filename_, tuple_id.page_num, false);
+    bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
     return true;
 }
 
@@ -554,14 +594,14 @@ uint64_t HeapTable::tuple_count() const {
     uint64_t count = 0;
     uint32_t page_num = 0;
     while (true) {
-        Page* page = bpm_.fetch_page(filename_, page_num);
+        Page* page = bpm_.fetch_page_by_id(file_id_, filename_, page_num);
         if (!page) break;
 
         auto* buffer = page->get_data();
         PageHeader header{};
         std::memcpy(&header, buffer, sizeof(PageHeader));
         if (header.free_space_offset == 0) {
-            bpm_.unpin_page(filename_, page_num, false);
+            bpm_.unpin_page_by_id(file_id_, page_num, false);
             break;
         }
 
@@ -575,7 +615,7 @@ uint64_t HeapTable::tuple_count() const {
                 if (xmax == 0) count++;
             }
         }
-        bpm_.unpin_page(filename_, page_num, false);
+        bpm_.unpin_page_by_id(file_id_, page_num, false);
         page_num++;
     }
     return count;
@@ -598,14 +638,14 @@ bool HeapTable::create() {
     header.num_slots = 0;
     std::memcpy(buffer, &header, sizeof(PageHeader));
 
-    bpm_.unpin_page(filename_, page_num, true);
+    bpm_.unpin_page_by_id(file_id_, page_num, true);
     last_page_id_ = 0;
     return true;
 }
 
 bool HeapTable::drop() {
     if (cached_page_ != nullptr) {
-        bpm_.unpin_page(filename_, cached_page_id_, false);
+        bpm_.unpin_page_by_id(file_id_, cached_page_id_, false);
         cached_page_ = nullptr;
     }
     static_cast<void>(bpm_.close_file(filename_));
@@ -617,10 +657,10 @@ bool HeapTable::read_page(uint32_t page_num, char* buffer) const {
         std::memcpy(buffer, cached_page_->get_data(), Page::PAGE_SIZE);
         return true;
     }
-    Page* page = bpm_.fetch_page(filename_, page_num);
+    Page* page = bpm_.fetch_page_by_id(file_id_, filename_, page_num);
     if (!page) return false;
     std::memcpy(buffer, page->get_data(), Page::PAGE_SIZE);
-    bpm_.unpin_page(filename_, page_num, false);
+    bpm_.unpin_page_by_id(file_id_, page_num, false);
     return true;
 }
 
@@ -629,13 +669,13 @@ bool HeapTable::write_page(uint32_t page_num, const char* buffer) {
         std::memcpy(cached_page_->get_data(), buffer, Page::PAGE_SIZE);
         return true;
     }
-    Page* page = bpm_.fetch_page(filename_, page_num);
+    Page* page = bpm_.fetch_page_by_id(file_id_, filename_, page_num);
     if (!page) {
         page = bpm_.new_page(filename_, &page_num);
         if (!page) return false;
     }
     std::memcpy(page->get_data(), buffer, Page::PAGE_SIZE);
-    bpm_.unpin_page(filename_, page_num, true);
+    bpm_.unpin_page_by_id(file_id_, page_num, true);
     return true;
 }
 
