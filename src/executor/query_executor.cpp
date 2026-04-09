@@ -200,12 +200,14 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
 
                 // Index updates using cached index objects
                 std::string err;
-                for (size_t i = 0; i < prepared.indexes.size(); ++i) {
-                    const auto& idx_info = prepared.table_meta->indexes[i];
-                    uint16_t pos = idx_info.column_positions[0];
-                    if (!apply_index_write(*prepared.indexes[i], tuple.get(pos), tid,
-                                           IndexOp::Insert, err)) {
-                        throw std::runtime_error(err);
+                size_t cached_idx_ptr = 0;
+                for (const auto& idx_info : prepared.table_meta->indexes) {
+                    if (!idx_info.column_positions.empty()) {
+                        uint16_t pos = idx_info.column_positions[0];
+                        if (!apply_index_write(*prepared.indexes[cached_idx_ptr++], tuple.get(pos), tid,
+                                               IndexOp::Insert, err)) {
+                            throw std::runtime_error(err);
+                        }
                     }
                 }
 
@@ -388,6 +390,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     }
 
     /* Initialize and open operators */
+    root->set_memory_resource(&arena_);
+    root->set_params(current_params_);
     if (!root->init() || !root->open()) {
         result.set_error(root->error().empty() ? "Failed to open execution plan" : root->error());
         return result;
@@ -399,7 +403,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     /* Pull tuples (Volcano model) */
     Tuple tuple;
     while (root->next(tuple)) {
-        result.add_row(std::move(tuple));
+        // MUST deep-copy tuple to default allocator (heap) so it outlives the arena reset
+        result.add_row(Tuple(tuple.values(), nullptr));
     }
 
     root->close();

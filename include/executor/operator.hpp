@@ -74,12 +74,12 @@ class Operator {
     [[nodiscard]] Transaction* get_txn() const { return txn_; }
     [[nodiscard]] LockManager* get_lock_manager() const { return lock_manager_; }
 
-    void set_memory_resource(std::pmr::memory_resource* mr) { mr_ = mr; }
+    virtual void set_memory_resource(std::pmr::memory_resource* mr) { mr_ = mr; }
     [[nodiscard]] std::pmr::memory_resource* get_memory_resource() const {
         return mr_ ? mr_ : std::pmr::get_default_resource();
     }
 
-    void set_params(const std::vector<common::Value>* params) { params_ = params; }
+    virtual void set_params(const std::vector<common::Value>* params) { params_ = params; }
     [[nodiscard]] const std::vector<common::Value>* get_params() const { return params_; }
 
     virtual bool init() { return true; }
@@ -202,6 +202,9 @@ class FilterOperator : public Operator {
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
+
+    void set_memory_resource(std::pmr::memory_resource* mr) override;
+    void set_params(const std::vector<common::Value>* params) override;
 };
 
 /**
@@ -223,6 +226,9 @@ class ProjectOperator : public Operator {
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
+
+    void set_memory_resource(std::pmr::memory_resource* mr) override;
+    void set_params(const std::vector<common::Value>* params) override;
 };
 
 /**
@@ -247,6 +253,9 @@ class SortOperator : public Operator {
     bool next(Tuple& out_tuple) override;
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
+
+    void set_memory_resource(std::pmr::memory_resource* mr) override;
+    void set_params(const std::vector<common::Value>* params) override;
 };
 
 /**
@@ -281,6 +290,9 @@ class AggregateOperator : public Operator {
     bool next(Tuple& out_tuple) override;
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
+
+    void set_memory_resource(std::pmr::memory_resource* mr) override;
+    void set_params(const std::vector<common::Value>* params) override;
 };
 
 /**
@@ -330,6 +342,9 @@ class HashJoinOperator : public Operator {
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
+
+    void set_memory_resource(std::pmr::memory_resource* mr) override;
+    void set_params(const std::vector<common::Value>* params) override;
 };
 
 /**
@@ -352,6 +367,9 @@ class LimitOperator : public Operator {
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
+
+    void set_memory_resource(std::pmr::memory_resource* mr) override;
+    void set_params(const std::vector<common::Value>* params) override;
 };
 
 }  // namespace cloudsql::executor

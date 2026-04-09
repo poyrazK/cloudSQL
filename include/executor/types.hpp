@@ -11,12 +11,12 @@
 #define CLOUDSQL_EXECUTOR_TYPES_HPP
 
 #include <cstdint>
-#include <initializer_list>
 #include <memory>
 #include <memory_resource>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <initializer_list>
 
 #include "common/value.hpp"
 
@@ -131,23 +131,28 @@ class Tuple {
 
    public:
     Tuple() = default;
-
+    
     // Explicit PMR vector constructor
     explicit Tuple(std::pmr::vector<common::Value> values) : values_(std::move(values)) {}
-
-    // Initializer list constructor to resolve ambiguity for {...}
+    
+    // Initializer list constructor
     Tuple(std::initializer_list<common::Value> list) : values_(list) {}
 
     // Support allocation from a custom memory resource
-    explicit Tuple(std::pmr::memory_resource* mr) : values_(mr) {}
+    explicit Tuple(std::pmr::memory_resource* mr)
+        : values_(mr ? mr : std::pmr::get_default_resource()) {}
+    
+    // Support construction from standard vector or PMR vector with specific resource
+    template <typename VectorType,
+              typename = std::enable_if_t<!std::is_same_v<std::decay_t<VectorType>, Tuple>>,
+              typename std::enable_if_t<!std::is_same_v<std::decay_t<VectorType>, std::pmr::memory_resource*>>* = nullptr>
+    Tuple(const VectorType& values, std::pmr::memory_resource* mr = nullptr)
+        : values_(values.begin(), values.end(), mr ? mr : std::pmr::get_default_resource()) {}
 
-    // Support construction from standard vector
-    Tuple(const std::vector<common::Value>& values) : values_(values.begin(), values.end()) {}
-    Tuple(std::vector<common::Value>&& values)
+    template <typename VectorType,
+              typename = std::enable_if_t<!std::is_same_v<std::decay_t<VectorType>, Tuple>>>
+    explicit Tuple(VectorType&& values)
         : values_(std::make_move_iterator(values.begin()), std::make_move_iterator(values.end())) {}
-
-    Tuple(const std::vector<common::Value>& values, std::pmr::memory_resource* mr)
-        : values_(values.begin(), values.end(), mr) {}
 
     Tuple(const Tuple& other) = default;
     Tuple(Tuple&& other) noexcept = default;

@@ -41,7 +41,6 @@ HeapTable::HeapTable(std::string table_name, BufferPoolManager& bpm, executor::S
 HeapTable::~HeapTable() {
     // Note: In some tests, the BufferPoolManager might be destroyed before the HeapTable
     // causing this to potentially access a dangling reference if we are not careful.
-    // However, the current issue is likely that cached_page_ needs to be unpinned properly.
     if (cached_page_ != nullptr) {
         try {
             bpm_.unpin_page(filename_, cached_page_id_, true);
@@ -55,7 +54,11 @@ HeapTable::~HeapTable() {
 /* --- Iterator Implementation --- */
 
 HeapTable::Iterator::Iterator(HeapTable& table, std::pmr::memory_resource* mr)
-    : table_(table), next_id_(0, 0), last_id_(0, 0), mr_(mr) {}
+    : table_(table),
+      next_id_(0, 0),
+      last_id_(0, 0),
+      eof_(false),
+      mr_(mr ? mr : std::pmr::new_delete_resource()) {}
 
 bool HeapTable::Iterator::next(executor::Tuple& out_tuple) {
     TupleMeta meta;
@@ -103,24 +106,29 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
             if (offset != 0) {
                 /* Found a record: Deserialize it in-place from the pinned buffer */
                 const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
-                const size_t data_len = Page::PAGE_SIZE - offset;
-
-                if (data_len < 16) {
+                
+                // Read Tuple Length (first 2 bytes)
+                uint16_t tuple_data_len;
+                std::memcpy(&tuple_data_len, data, 2);
+                
+                const size_t record_len = static_cast<size_t>(tuple_data_len);
+                if (record_len < 18) { // 2 len + 8 xmin + 8 xmax
                     table_.bpm_.unpin_page(table_.filename_, next_id_.page_num, false);
                     return false;
                 }
 
                 // Read MVCC Header
-                std::memcpy(&out_meta.xmin, data, 8);
-                std::memcpy(&out_meta.xmax, data + 8, 8);
+                std::memcpy(&out_meta.xmin, data + 2, 8);
+                std::memcpy(&out_meta.xmax, data + 10, 8);
 
-                size_t cursor = 16;
-                // Zero-allocation vector construction via Arena (mr_)
+                size_t cursor = 18;
                 std::pmr::vector<common::Value> values(mr_);
+                
+                std::cerr << "DEBUG: Iterator::next_meta values.reserve(" << table_.schema_.column_count() << ") iter=" << this << " table=" << &table_ << " mr=" << mr_ << std::endl;
                 values.reserve(table_.schema_.column_count());
 
                 for (size_t i = 0; i < table_.schema_.column_count(); ++i) {
-                    if (cursor >= data_len) break;
+                    if (cursor >= record_len) break;
                     auto type = static_cast<common::ValueType>(data[cursor++]);
                     if (type == common::ValueType::TYPE_NULL) {
                         values.push_back(common::Value::make_null());
@@ -134,7 +142,7 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
                         type == common::ValueType::TYPE_INT64 ||
                         type == common::ValueType::TYPE_FLOAT32 ||
                         type == common::ValueType::TYPE_FLOAT64) {
-                        if (cursor + 8 > data_len) break;
+                        if (cursor + 8 > record_len) break;
 
                         if (type == common::ValueType::TYPE_FLOAT32 ||
                             type == common::ValueType::TYPE_FLOAT64) {
@@ -151,11 +159,11 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
                         }
                         cursor += 8;
                     } else {
-                        if (cursor + 4 > data_len) break;
+                        if (cursor + 4 > record_len) break;
                         uint32_t len;
                         std::memcpy(&len, data + cursor, 4);
                         cursor += 4;
-                        if (cursor + len > data_len) break;
+                        if (cursor + len > record_len) break;
                         std::string s(reinterpret_cast<const char*>(data + cursor), len);
                         cursor += len;
                         values.push_back(common::Value::make_text(s));
@@ -201,9 +209,11 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
     };
 
     uint64_t xmax = 0;
-    payload_size = 16;
-    std::memcpy(payload_ptr, &xmin, 8);
-    std::memcpy(payload_ptr + 8, &xmax, 8);
+    payload_size = 18; // 2 len + 8 xmin + 8 xmax
+    // placeholder for length
+    std::memset(payload_ptr, 0, 2);
+    std::memcpy(payload_ptr + 2, &xmin, 8);
+    std::memcpy(payload_ptr + 10, &xmax, 8);
 
     for (const auto& val : tuple.values()) {
         ensure_capacity(1);
@@ -221,6 +231,11 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
                 std::memcpy(payload_ptr + payload_size, &v, 8);
             }
             payload_size += 8;
+        } else if (val.type() == common::ValueType::TYPE_BOOL) {
+            ensure_capacity(8);
+            int64_t v = val.as_bool() ? 1 : 0;
+            std::memcpy(payload_ptr + payload_size, &v, 8);
+            payload_size += 8;
         } else {
             const std::string& s = val.as_text();
             uint32_t len = static_cast<uint32_t>(s.size());
@@ -232,6 +247,7 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
     }
 
     const auto required = static_cast<uint16_t>(payload_size);
+    std::memcpy(payload_ptr, &required, 2); // set final length
 
     while (true) {
         // Use cached page if available
@@ -243,7 +259,9 @@ HeapTable::TupleId HeapTable::insert(const executor::Tuple& tuple, uint64_t xmin
             cached_page_ = bpm_.fetch_page(filename_, cached_page_id_);
             if (!cached_page_) {
                 cached_page_ = bpm_.new_page(filename_, &cached_page_id_);
-                if (!cached_page_) return {0, 0};
+                if (!cached_page_) {
+                    return {0, 0}; // Buffer pool full or allocation failed
+                }
                 last_page_id_ = cached_page_id_;
             }
         }
@@ -301,7 +319,7 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
         std::memcpy(&offset, buffer + sizeof(PageHeader) + (tuple_id.slot_num * sizeof(uint16_t)),
                     sizeof(uint16_t));
         if (offset != 0) {
-            std::memcpy(buffer + offset + 8, &xmax, 8);
+            std::memcpy(buffer + offset + 10, &xmax, 8);
             return true;
         }
         return false;
@@ -326,8 +344,8 @@ bool HeapTable::remove(const TupleId& tuple_id, uint64_t xmax) {
         return false;
     }
 
-    /* In binary format, xmax is at offset + 8 */
-    std::memcpy(buffer + offset + 8, &xmax, 8);
+    /* In binary format, xmax is at offset + 10 (2 len + 8 xmin) */
+    std::memcpy(buffer + offset + 10, &xmax, 8);
 
     bpm_.unpin_page(filename_, tuple_id.page_num, true);
     return true;
@@ -388,18 +406,21 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
         if (offset == 0) return false;
 
         const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
-        const size_t data_len = Page::PAGE_SIZE - offset;
-        if (data_len < 16) return false;
+        
+        uint16_t tuple_data_len;
+        std::memcpy(&tuple_data_len, data, 2);
+        const size_t record_len = static_cast<size_t>(tuple_data_len);
+        if (record_len < 18) return false;
 
-        std::memcpy(&out_meta.xmin, data, 8);
-        std::memcpy(&out_meta.xmax, data + 8, 8);
+        std::memcpy(&out_meta.xmin, data + 2, 8);
+        std::memcpy(&out_meta.xmax, data + 10, 8);
 
-        size_t cursor = 16;
+        size_t cursor = 18;
         std::vector<common::Value> values;
         values.reserve(schema_.column_count());
 
         for (size_t i = 0; i < schema_.column_count(); ++i) {
-            if (cursor >= data_len) break;
+            if (cursor >= record_len) break;
             auto type = static_cast<common::ValueType>(data[cursor++]);
             if (type == common::ValueType::TYPE_NULL) {
                 values.push_back(common::Value::make_null());
@@ -410,7 +431,7 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
                 type == common::ValueType::TYPE_INT16 || type == common::ValueType::TYPE_INT32 ||
                 type == common::ValueType::TYPE_INT64 || type == common::ValueType::TYPE_FLOAT32 ||
                 type == common::ValueType::TYPE_FLOAT64) {
-                if (cursor + 8 > data_len) break;
+                if (cursor + 8 > record_len) break;
                 if (type == common::ValueType::TYPE_FLOAT32 ||
                     type == common::ValueType::TYPE_FLOAT64) {
                     double v;
@@ -426,11 +447,11 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
                 }
                 cursor += 8;
             } else {
-                if (cursor + 4 > data_len) break;
+                if (cursor + 4 > record_len) break;
                 uint32_t len;
                 std::memcpy(&len, data + cursor, 4);
                 cursor += 4;
-                if (cursor + len > data_len) break;
+                if (cursor + len > record_len) break;
                 std::string s(reinterpret_cast<const char*>(data + cursor), len);
                 cursor += len;
                 values.push_back(common::Value::make_text(s));
@@ -460,23 +481,25 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
     }
 
     const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
-    const size_t data_len = Page::PAGE_SIZE - offset;
-
-    if (data_len < 16) {
+    
+    uint16_t tuple_data_len;
+    std::memcpy(&tuple_data_len, data, 2);
+    const size_t record_len = static_cast<size_t>(tuple_data_len);
+    if (record_len < 18) {
         bpm_.unpin_page(filename_, tuple_id.page_num, false);
         return false;
     }
 
     // Read MVCC Header
-    std::memcpy(&out_meta.xmin, data, 8);
-    std::memcpy(&out_meta.xmax, data + 8, 8);
+    std::memcpy(&out_meta.xmin, data + 2, 8);
+    std::memcpy(&out_meta.xmax, data + 10, 8);
 
-    size_t cursor = 16;
+    size_t cursor = 18;
     std::vector<common::Value> values;
     values.reserve(schema_.column_count());
 
     for (size_t i = 0; i < schema_.column_count(); ++i) {
-        if (cursor >= data_len) break;
+        if (cursor >= record_len) break;
         auto type = static_cast<common::ValueType>(data[cursor++]);
         if (type == common::ValueType::TYPE_NULL) {
             values.push_back(common::Value::make_null());
@@ -487,7 +510,7 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
             type == common::ValueType::TYPE_INT16 || type == common::ValueType::TYPE_INT32 ||
             type == common::ValueType::TYPE_INT64 || type == common::ValueType::TYPE_FLOAT32 ||
             type == common::ValueType::TYPE_FLOAT64) {
-            if (cursor + 8 > data_len) break;
+            if (cursor + 8 > record_len) break;
 
             if (type == common::ValueType::TYPE_FLOAT32 ||
                 type == common::ValueType::TYPE_FLOAT64) {
@@ -504,11 +527,11 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
             }
             cursor += 8;
         } else {
-            if (cursor + 4 > data_len) break;
+            if (cursor + 4 > record_len) break;
             uint32_t len;
             std::memcpy(&len, data + cursor, 4);
             cursor += 4;
-            if (cursor + len > data_len) break;
+            if (cursor + len > record_len) break;
             std::string s(reinterpret_cast<const char*>(data + cursor), len);
             cursor += len;
             values.push_back(common::Value::make_text(s));
@@ -550,7 +573,7 @@ uint64_t HeapTable::tuple_count() const {
                         sizeof(uint16_t));
             if (offset != 0) {
                 uint64_t xmax = 0;
-                std::memcpy(&xmax, buffer + offset + 8, 8);
+                std::memcpy(&xmax, buffer + offset + 10, 8); // 2 len + 8 xmin
                 if (xmax == 0) count++;
             }
         }

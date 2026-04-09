@@ -104,7 +104,12 @@ class HeapTable {
 
        public:
         explicit Iterator(HeapTable& table, std::pmr::memory_resource* mr = nullptr);
+        ~Iterator() = default;
 
+        Iterator(const Iterator&) = default;
+        Iterator& operator=(const Iterator&) = default;
+        Iterator(Iterator&&) noexcept = default;
+        Iterator& operator=(Iterator&&) noexcept = default;
         /**
          * @brief Fetches the next non-deleted record from the heap
          * @param[out] out_tuple Container for the retrieved record
