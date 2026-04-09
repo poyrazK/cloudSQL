@@ -101,15 +101,17 @@ class HeapTable {
         TupleId last_id_;               /**< ID of the record returned by the last next() call */
         bool eof_ = false;              /**< End-of-file indicator */
         std::pmr::memory_resource* mr_; /**< Memory resource for tuple allocations */
+        Page* current_page_ = nullptr;
+        uint32_t current_page_num_ = 0xFFFFFFFF;
 
        public:
         explicit Iterator(HeapTable& table, std::pmr::memory_resource* mr = nullptr);
-        ~Iterator() = default;
+        ~Iterator();
 
-        Iterator(const Iterator&) = default;
-        Iterator& operator=(const Iterator&) = default;
-        Iterator(Iterator&&) noexcept = default;
-        Iterator& operator=(Iterator&&) noexcept = default;
+        Iterator(const Iterator&) = delete;
+        Iterator& operator=(const Iterator&) = delete;
+        Iterator(Iterator&& other) noexcept;
+        Iterator& operator=(Iterator&& other) noexcept;
         /**
          * @brief Fetches the next non-deleted record from the heap
          * @param[out] out_tuple Container for the retrieved record
@@ -137,6 +139,7 @@ class HeapTable {
     BufferPoolManager& bpm_;
     executor::Schema schema_;
     uint32_t last_page_id_ = 0;
+    uint32_t file_id_ = 0;
 
     // Last page cache for fast insertions
     Page* cached_page_ = nullptr;
@@ -166,6 +169,8 @@ class HeapTable {
 
     /** @return Schema definition */
     [[nodiscard]] const executor::Schema& schema() const { return schema_; }
+
+    [[nodiscard]] uint32_t file_id() const { return file_id_; }
 
     /**
      * @brief Inserts a new record into the heap

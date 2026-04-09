@@ -81,6 +81,11 @@ class QueryExecutor {
     void set_local_only(bool local) { is_local_only_ = local; }
 
     /**
+     * @brief Enable fast-path batch insert mode for prepared statements
+     */
+    void set_batch_insert_mode(bool batch) { batch_insert_mode_ = batch; }
+
+    /**
      * @brief Prepare a SQL string into a reusable PreparedStatement
      */
     std::shared_ptr<PreparedStatement> prepare(const std::string& sql);
@@ -106,6 +111,10 @@ class QueryExecutor {
      */
     common::ArenaAllocator& arena() { return arena_; }
 
+    /* Helper to build operator tree from SELECT */
+    std::unique_ptr<Operator> build_plan(const parser::SelectStatement& stmt,
+                                         transaction::Transaction* txn);
+
    private:
     Catalog& catalog_;
     storage::BufferPoolManager& bpm_;
@@ -116,6 +125,7 @@ class QueryExecutor {
     std::string context_id_;
     transaction::Transaction* current_txn_ = nullptr;
     bool is_local_only_ = false;
+    bool batch_insert_mode_ = false;
 
     // Bound parameters for the current execution
     const std::vector<common::Value>* current_params_ = nullptr;
@@ -140,10 +150,6 @@ class QueryExecutor {
     QueryResult execute_begin();
     QueryResult execute_commit();
     QueryResult execute_rollback();
-
-    /* Helper to build operator tree from SELECT */
-    std::unique_ptr<Operator> build_plan(const parser::SelectStatement& stmt,
-                                         transaction::Transaction* txn);
 };
 
 }  // namespace cloudsql::executor
