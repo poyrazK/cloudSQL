@@ -211,11 +211,13 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
                     }
                 }
 
-                if (txn != nullptr && !batch_insert_mode_) {
+                if (txn != nullptr) {
                     txn->add_undo_log(transaction::UndoLog::Type::INSERT, prepared.table_meta->name,
                                       tid);
-                    if (!lock_manager_.acquire_exclusive(txn, tid)) {
-                        throw std::runtime_error("Failed to acquire exclusive lock");
+                    if (!batch_insert_mode_) {
+                        if (!lock_manager_.acquire_exclusive(txn, tid)) {
+                            throw std::runtime_error("Failed to acquire exclusive lock");
+                        }
                     }
                 }
                 rows_inserted++;

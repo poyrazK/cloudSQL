@@ -174,15 +174,26 @@ static void BM_CloudSQL_Scan(benchmark::State& state) {
             "INSERT INTO bench_table VALUES (" + std::to_string(i) + ", 1.1, 'data');"));
     }
 
+    auto parsed_base = ParseSQL("SELECT * FROM bench_table");
+    if (!parsed_base || parsed_base->type() != parser::StmtType::Select) {
+        state.SkipWithError("Failed to parse SELECT statement");
+        return;
+    }
     auto select_stmt = std::unique_ptr<parser::SelectStatement>(
-        static_cast<parser::SelectStatement*>(ParseSQL("SELECT * FROM bench_table").release()));
+        static_cast<parser::SelectStatement*>(parsed_base.release()));
 
     auto root = ctx.executor->build_plan(*select_stmt, nullptr);
+    if (!root) {
+        state.SkipWithError("Failed to build execution plan");
+        return;
+    }
     root->set_memory_resource(&ctx.executor->arena());
 
     for (auto _ : state) {
-        root->init();
-        root->open();
+        if (!root->init() || !root->open()) {
+            state.SkipWithError("Failed to open plan");
+            return;
+        }
         cloudsql::executor::Tuple tuple;
         while (root->next(tuple)) {
             benchmark::DoNotOptimize(tuple);

@@ -146,7 +146,7 @@ bool BufferPoolManager::unpin_page_by_id(uint32_t file_id, uint32_t page_id, boo
 bool BufferPoolManager::flush_page(const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const uint32_t file_id = get_file_id(file_name);
+    const uint32_t file_id = get_file_id_internal(file_name);
     const PageKey key{file_id, page_id};
 
     if (page_table_.find(key) == page_table_.end()) {
@@ -204,7 +204,7 @@ Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_i
 bool BufferPoolManager::delete_page(const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const uint32_t file_id = get_file_id(file_name);
+    const uint32_t file_id = get_file_id_internal(file_name);
     const PageKey key{file_id, page_id};
 
     if (page_table_.find(key) != page_table_.end()) {

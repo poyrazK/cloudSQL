@@ -81,6 +81,14 @@ HeapTable::Iterator::Iterator(Iterator&& other) noexcept
 
 HeapTable::Iterator& HeapTable::Iterator::operator=(Iterator&& other) noexcept {
     if (this != &other) {
+        if (&table_ != &other.table_) {
+            if (other.current_page_) {
+                other.table_.bpm_.unpin_page_by_id(other.table_.file_id_, other.current_page_num_, false);
+                other.current_page_ = nullptr;
+            }
+            return *this;
+        }
+
         if (current_page_) {
             table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
         }
