@@ -43,7 +43,7 @@ BufferPoolManager::~BufferPoolManager() {
     }
 }
 
-uint32_t BufferPoolManager::get_file_id(const std::string& file_name) {
+uint32_t BufferPoolManager::get_file_id_internal(const std::string& file_name) {
     auto it = file_id_map_.find(file_name);
     if (it != file_id_map_.end()) {
         return it->second;
@@ -53,10 +53,19 @@ uint32_t BufferPoolManager::get_file_id(const std::string& file_name) {
     return id;
 }
 
+uint32_t BufferPoolManager::get_file_id(const std::string& file_name) {
+    const std::scoped_lock<std::mutex> lock(latch_);
+    return get_file_id_internal(file_name);
+}
+
 Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_id) {
+    uint32_t file_id = get_file_id(file_name);
+    return fetch_page_by_id(file_id, file_name, page_id);
+}
+
+Page* BufferPoolManager::fetch_page_by_id(uint32_t file_id, const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, page_id};
 
     if (page_table_.find(key) != page_table_.end()) {
@@ -81,7 +90,7 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
     }
 
     if (!page->file_name_.empty()) {
-        const uint32_t old_file_id = get_file_id(page->file_name_);
+        const uint32_t old_file_id = get_file_id_internal(page->file_name_);
         page_table_.erase({old_file_id, page->page_id_});
     }
     page_table_[key] = frame_id;
@@ -101,9 +110,13 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
 }
 
 bool BufferPoolManager::unpin_page(const std::string& file_name, uint32_t page_id, bool is_dirty) {
+    uint32_t file_id = get_file_id(file_name);
+    return unpin_page_by_id(file_id, page_id, is_dirty);
+}
+
+bool BufferPoolManager::unpin_page_by_id(uint32_t file_id, uint32_t page_id, bool is_dirty) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const uint32_t file_id = get_file_id(file_name);
     const PageKey key{file_id, page_id};
 
     if (page_table_.find(key) == page_table_.end()) {
@@ -155,7 +168,7 @@ Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_i
         *page_id = target_page_id;
     }
 
-    const uint32_t file_id = get_file_id(file_name);
+    const uint32_t file_id = get_file_id_internal(file_name);
     const PageKey key{file_id, target_page_id};
 
     uint32_t frame_id = 0;
@@ -172,7 +185,7 @@ Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_i
     }
 
     if (!page->file_name_.empty()) {
-        const uint32_t old_file_id = get_file_id(page->file_name_);
+        const uint32_t old_file_id = get_file_id_internal(page->file_name_);
         page_table_.erase({old_file_id, page->page_id_});
     }
     page_table_[key] = frame_id;

@@ -64,6 +64,21 @@ class BufferPoolManager {
     bool unpin_page(const std::string& file_name, uint32_t page_id, bool is_dirty);
 
     /**
+     * @brief Get or allocate a file_id for a given file name to be used for fast lookups
+     */
+    uint32_t get_file_id(const std::string& file_name);
+
+    /**
+     * @brief Fetch page using precomputed file_id
+     */
+    Page* fetch_page_by_id(uint32_t file_id, const std::string& file_name, uint32_t page_id);
+
+    /**
+     * @brief Unpin page using precomputed file_id
+     */
+    bool unpin_page_by_id(uint32_t file_id, uint32_t page_id, bool is_dirty);
+
+    /**
      * @brief Flush a single page to disk
      * @param file_name The file the page belongs to
      * @param page_id The id of the page
@@ -117,7 +132,7 @@ class BufferPoolManager {
         };
     };
 
-    uint32_t get_file_id(const std::string& file_name);
+    uint32_t get_file_id_internal(const std::string& file_name);
 
     size_t pool_size_;
     StorageManager& storage_manager_;

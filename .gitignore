@@ -4,6 +4,7 @@
 # Build Artifacts
 # ==============
 build/
+build_bench/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
