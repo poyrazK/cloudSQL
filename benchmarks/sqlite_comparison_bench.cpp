@@ -115,6 +115,8 @@ static void BM_CloudSQL_Insert(benchmark::State& state) {
         return;
     }
 
+    // Enable fast-path batch mode for the benchmark
+    ctx.executor->set_batch_insert_mode(true);
     // Pre-allocate params to avoid heap allocations in the loop
     std::vector<common::Value> params;
     params.reserve(3);
@@ -144,6 +146,8 @@ static void BM_SQLite_Insert(benchmark::State& state) {
     sqlite3_stmt* stmt;
     sqlite3_prepare_v2(ctx.db, "INSERT INTO bench_table VALUES (?, ?, ?)", -1, &stmt, nullptr);
 
+    sqlite3_exec(ctx.db, "BEGIN TRANSACTION", nullptr, nullptr, nullptr);
+
     for (auto _ : state) {
         sqlite3_bind_int64(stmt, 1, state.iterations());
         sqlite3_bind_double(stmt, 2, 3.14);
@@ -153,6 +157,7 @@ static void BM_SQLite_Insert(benchmark::State& state) {
         sqlite3_reset(stmt);
     }
     
+    sqlite3_exec(ctx.db, "COMMIT", nullptr, nullptr, nullptr);
     sqlite3_finalize(stmt);
     state.SetItemsProcessed(state.iterations());
 }
@@ -169,11 +174,21 @@ static void BM_CloudSQL_Scan(benchmark::State& state) {
             "INSERT INTO bench_table VALUES (" + std::to_string(i) + ", 1.1, 'data');"));
     }
 
-    auto select_stmt = ParseSQL("SELECT * FROM bench_table");
+    auto select_stmt = std::unique_ptr<parser::SelectStatement>(
+        static_cast<parser::SelectStatement*>(ParseSQL("SELECT * FROM bench_table").release()));
+
+    auto root = ctx.executor->build_plan(*select_stmt, nullptr);
+    root->set_memory_resource(&ctx.executor->arena());
 
     for (auto _ : state) {
-        auto res = ctx.executor->execute(*select_stmt);
-        benchmark::DoNotOptimize(res);
+        root->init();
+        root->open();
+        cloudsql::executor::Tuple tuple;
+        while (root->next(tuple)) {
+            benchmark::DoNotOptimize(tuple);
+        }
+        root->close();
+        ctx.executor->arena().reset();
     }
     state.SetItemsProcessed(state.iterations() * num_rows);
 }
