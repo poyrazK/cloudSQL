@@ -204,8 +204,8 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
                 for (const auto& idx_info : prepared.table_meta->indexes) {
                     if (!idx_info.column_positions.empty()) {
                         uint16_t pos = idx_info.column_positions[0];
-                        if (!apply_index_write(*prepared.indexes[cached_idx_ptr++], tuple.get(pos), tid,
-                                               IndexOp::Insert, err)) {
+                        if (!apply_index_write(*prepared.indexes[cached_idx_ptr++], tuple.get(pos),
+                                               tid, IndexOp::Insert, err)) {
                             throw std::runtime_error(err);
                         }
                     }

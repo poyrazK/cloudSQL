@@ -382,21 +382,21 @@ bool SortOperator::open() {
     }
 
     /* Perform sort using child schema for evaluation */
-    std::stable_sort(sorted_tuples_.begin(), sorted_tuples_.end(),
-                     [this](const Tuple& a, const Tuple& b) {
-                         for (size_t i = 0; i < sort_keys_.size(); ++i) {
-                             const common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_, get_params());
-                             const common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_, get_params());
-                             const bool asc = ascending_[i];
-                             if (val_a < val_b) {
-                                 return asc;
-                             }
-                             if (val_b < val_a) {
-                                 return !asc;
-                             }
-                         }
-                         return false;
-                     });
+    std::stable_sort(
+        sorted_tuples_.begin(), sorted_tuples_.end(), [this](const Tuple& a, const Tuple& b) {
+            for (size_t i = 0; i < sort_keys_.size(); ++i) {
+                const common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_, get_params());
+                const common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_, get_params());
+                const bool asc = ascending_[i];
+                if (val_a < val_b) {
+                    return asc;
+                }
+                if (val_b < val_a) {
+                    return !asc;
+                }
+            }
+            return false;
+        });
 
     current_index_ = 0;
     set_state(ExecState::Open);
@@ -502,7 +502,8 @@ bool AggregateOperator::open() {
         if (!is_global) {
             key = "";
             for (const auto& gb : group_by_) {
-                auto val = gb ? gb->evaluate(&tuple, &child_schema, get_params()) : common::Value::make_null();
+                auto val = gb ? gb->evaluate(&tuple, &child_schema, get_params())
+                              : common::Value::make_null();
                 key += val.to_string() + "|";
                 gb_vals.push_back(std::move(val));
             }
@@ -724,7 +725,8 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
         if (left_->next(next_left)) {
             left_tuple_ = std::move(next_left);
             left_had_match_ = false;
-            const common::Value key = left_key_->evaluate(&(left_tuple_.value()), &left_schema, get_params());
+            const common::Value key =
+                left_key_->evaluate(&(left_tuple_.value()), &left_schema, get_params());
 
             /* Look up in hash table */
             auto range = hash_table_.equal_range(key.to_string());
