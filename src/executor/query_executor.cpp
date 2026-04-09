@@ -211,7 +211,7 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
                     }
                 }
 
-                if (txn != nullptr) {
+                if (txn != nullptr && !batch_insert_mode_) {
                     txn->add_undo_log(transaction::UndoLog::Type::INSERT, prepared.table_meta->name,
                                       tid);
                     if (!lock_manager_.acquire_exclusive(txn, tid)) {
