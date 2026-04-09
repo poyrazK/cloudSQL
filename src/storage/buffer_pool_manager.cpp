@@ -63,7 +63,8 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
     return fetch_page_by_id(file_id, file_name, page_id);
 }
 
-Page* BufferPoolManager::fetch_page_by_id(uint32_t file_id, const std::string& file_name, uint32_t page_id) {
+Page* BufferPoolManager::fetch_page_by_id(uint32_t file_id, const std::string& file_name,
+                                          uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
     const PageKey key{file_id, page_id};

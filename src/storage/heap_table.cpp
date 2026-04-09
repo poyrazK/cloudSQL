@@ -116,7 +116,8 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
 
     while (true) {
         if (!current_page_) {
-            current_page_ = table_.bpm_.fetch_page_by_id(table_.file_id_, table_.filename_, next_id_.page_num);
+            current_page_ =
+                table_.bpm_.fetch_page_by_id(table_.file_id_, table_.filename_, next_id_.page_num);
             current_page_num_ = next_id_.page_num;
             if (!current_page_) {
                 eof_ = true;

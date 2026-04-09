@@ -169,7 +169,7 @@ class HeapTable {
 
     /** @return Schema definition */
     [[nodiscard]] const executor::Schema& schema() const { return schema_; }
-    
+
     [[nodiscard]] uint32_t file_id() const { return file_id_; }
 
     /**
