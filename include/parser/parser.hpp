@@ -18,6 +18,7 @@ class Parser {
     std::unique_ptr<Lexer> lexer_;
     Token current_token_;
     bool has_current_ = false;
+    uint32_t param_count_ = 0;
 
     Token next_token();
     Token peek_token();

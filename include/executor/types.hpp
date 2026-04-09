@@ -11,7 +11,9 @@
 #define CLOUDSQL_EXECUTOR_TYPES_HPP
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
+#include <memory_resource>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -120,14 +122,38 @@ class Schema {
 
 /**
  * @brief A single data row used in the row-oriented (Volcano) execution model.
+ *
+ * Uses std::pmr::vector to support custom allocators (e.g. ArenaAllocator).
  */
 class Tuple {
    private:
-    std::vector<common::Value> values_;
+    std::pmr::vector<common::Value> values_;
 
    public:
     Tuple() = default;
-    explicit Tuple(std::vector<common::Value> values) : values_(std::move(values)) {}
+
+    // Explicit PMR vector constructor
+    explicit Tuple(std::pmr::vector<common::Value> values) : values_(std::move(values)) {}
+
+    // Initializer list constructor
+    Tuple(std::initializer_list<common::Value> list) : values_(list) {}
+
+    // Support allocation from a custom memory resource
+    explicit Tuple(std::pmr::memory_resource* mr)
+        : values_(mr ? mr : std::pmr::get_default_resource()) {}
+
+    // Support construction from standard vector or PMR vector with specific resource
+    template <typename VectorType,
+              typename = std::enable_if_t<!std::is_same_v<std::decay_t<VectorType>, Tuple>>,
+              typename std::enable_if_t<
+                  !std::is_same_v<std::decay_t<VectorType>, std::pmr::memory_resource*>>* = nullptr>
+    Tuple(const VectorType& values, std::pmr::memory_resource* mr = nullptr)
+        : values_(values.begin(), values.end(), mr ? mr : std::pmr::get_default_resource()) {}
+
+    template <typename VectorType,
+              typename = std::enable_if_t<!std::is_same_v<std::decay_t<VectorType>, Tuple>>>
+    explicit Tuple(VectorType&& values)
+        : values_(std::make_move_iterator(values.begin()), std::make_move_iterator(values.end())) {}
 
     Tuple(const Tuple& other) = default;
     Tuple(Tuple&& other) noexcept = default;
@@ -159,8 +185,8 @@ class Tuple {
     [[nodiscard]] size_t size() const { return values_.size(); }
     [[nodiscard]] bool empty() const { return values_.empty(); }
 
-    [[nodiscard]] const std::vector<common::Value>& values() const { return values_; }
-    [[nodiscard]] std::vector<common::Value>& values() { return values_; }
+    [[nodiscard]] const std::pmr::vector<common::Value>& values() const { return values_; }
+    [[nodiscard]] std::pmr::vector<common::Value>& values() { return values_; }
 
     [[nodiscard]] std::string to_string() const;
 };

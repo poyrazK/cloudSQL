@@ -36,7 +36,6 @@ bool Catalog::load(const std::string& filename) {
     (void)database_;  // Use instance member to satisfy linter
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Cannot open catalog file: " << filename << "\n";
         return false;
     }
     // Simplified - just read database name
@@ -58,7 +57,6 @@ bool Catalog::save(const std::string& filename) const {
     (void)database_;  // Use instance member to satisfy linter
     std::ofstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Cannot open catalog file for writing: " << filename << "\n";
         return false;
     }
     file << "# System Catalog\n";
@@ -71,8 +69,6 @@ bool Catalog::save(const std::string& filename) const {
  * @brief Create a new table
  */
 oid_t Catalog::create_table(const std::string& table_name, std::vector<ColumnInfo> columns) {
-    std::cerr << "--- [Catalog] create_table CALLED for " << table_name << " ---" << std::endl;
-
     // Compute shards from ClusterManager for serialization
     std::vector<ShardInfo> shards;
     if (cluster_manager_ != nullptr) {
@@ -179,9 +175,6 @@ oid_t Catalog::create_table_local(const std::string& table_name, std::vector<Col
         table->shards.push_back(shard);
     }
 
-    std::cerr << "--- [Catalog] Table " << table_name << " initialized with "
-              << table->shards.size() << " shards ---" << std::endl;
-
     const oid_t id = table->table_id;
     tables_[id] = std::move(table);
     version_++;
@@ -217,8 +210,6 @@ bool Catalog::drop_table_local(oid_t table_id) {
 
 void Catalog::apply(const raft::LogEntry& entry) {
     if (entry.data.empty()) return;
-    std::cerr << "--- [Catalog] apply CALLED for entry type " << (int)entry.data[0] << " ---"
-              << std::endl;
 
     uint8_t type = entry.data[0];
     if (type == 1) {  // CreateTable
@@ -300,11 +291,8 @@ std::optional<TableInfo*> Catalog::get_table_by_name(const std::string& table_na
         }
     }
 
-    std::cerr << "--- [Catalog] Table NOT FOUND: " << table_name << ". Catalog contains: ";
     for (auto& pair : tables_) {
-        std::cerr << pair.second->name << ", ";
     }
-    std::cerr << " ---" << std::endl;
 
     return std::nullopt;
 }

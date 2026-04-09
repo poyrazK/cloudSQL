@@ -21,10 +21,10 @@ namespace cloudsql::parser {
 /**
  * @brief Evaluate binary expression
  */
-common::Value BinaryExpr::evaluate(const executor::Tuple* tuple,
-                                   const executor::Schema* schema) const {
-    const common::Value left_val = left_->evaluate(tuple, schema);
-    const common::Value right_val = right_->evaluate(tuple, schema);
+common::Value BinaryExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                   const std::vector<common::Value>* params) const {
+    const common::Value left_val = left_->evaluate(tuple, schema, params);
+    const common::Value right_val = right_->evaluate(tuple, schema, params);
 
     switch (op_) {
         case TokenType::Plus:
@@ -186,17 +186,20 @@ std::unique_ptr<Expression> BinaryExpr::clone() const {
 /**
  * @brief Evaluate unary expression
  */
-common::Value UnaryExpr::evaluate(const executor::Tuple* tuple,
-                                  const executor::Schema* schema) const {
-    const common::Value val = expr_->evaluate(tuple, schema);
+common::Value UnaryExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                  const std::vector<common::Value>* params) const {
+    const common::Value val = expr_->evaluate(tuple, schema, params);
     switch (op_) {
         case TokenType::Minus:
             if (val.is_numeric()) {
-                return common::Value(-val.to_float64());
+                if (val.type() == common::ValueType::TYPE_FLOAT64) {
+                    return common::Value::make_float64(-val.to_float64());
+                }
+                return common::Value::make_int64(-val.to_int64());
             }
             break;
         case TokenType::Not:
-            return common::Value(!val.as_bool());
+            return common::Value::make_bool(!val.as_bool());
         default:
             break;
     }
@@ -229,8 +232,9 @@ std::unique_ptr<Expression> UnaryExpr::clone() const {
 /**
  * @brief Evaluate column expression using tuple and schema
  */
-common::Value ColumnExpr::evaluate(const executor::Tuple* tuple,
-                                   const executor::Schema* schema) const {
+common::Value ColumnExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                   const std::vector<common::Value>* params) const {
+    (void)params;
     if (tuple == nullptr || schema == nullptr) {
         return common::Value::make_null();
     }
@@ -288,10 +292,11 @@ std::unique_ptr<Expression> ColumnExpr::clone() const {
                        : std::make_unique<ColumnExpr>(name_);
 }
 
-common::Value ConstantExpr::evaluate(const executor::Tuple* tuple,
-                                     const executor::Schema* schema) const {
+common::Value ConstantExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                     const std::vector<common::Value>* params) const {
     (void)tuple;
     (void)schema;
+    (void)params;
     return value_;
 }
 
@@ -317,10 +322,40 @@ std::unique_ptr<Expression> ConstantExpr::clone() const {
 }
 
 /**
+ * @brief Evaluate parameter expression
+ */
+common::Value ParameterExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                      const std::vector<common::Value>* params) const {
+    (void)tuple;
+    (void)schema;
+    if (params == nullptr || index_ >= params->size()) {
+        return common::Value::make_null();
+    }
+    return (*params)[index_];
+}
+
+void ParameterExpr::evaluate_vectorized(const executor::VectorBatch& batch,
+                                        const executor::Schema& schema,
+                                        executor::ColumnVector& result) const {
+    (void)batch;
+    (void)schema;
+    (void)result;
+}
+
+std::string ParameterExpr::to_string() const {
+    return "?";
+}
+
+std::unique_ptr<Expression> ParameterExpr::clone() const {
+    return std::make_unique<ParameterExpr>(index_);
+}
+
+/**
  * @brief Evaluate function expression
  */
-common::Value FunctionExpr::evaluate(const executor::Tuple* tuple,
-                                     const executor::Schema* schema) const {
+common::Value FunctionExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                     const std::vector<common::Value>* params) const {
+    (void)params;
     if (tuple == nullptr || schema == nullptr) {
         return common::Value::make_null();
     }
@@ -381,10 +416,11 @@ std::unique_ptr<Expression> FunctionExpr::clone() const {
 /**
  * @brief Evaluate IN expression
  */
-common::Value InExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema) const {
-    const common::Value col_val = column_->evaluate(tuple, schema);
+common::Value InExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                               const std::vector<common::Value>* params) const {
+    const common::Value col_val = column_->evaluate(tuple, schema, params);
     for (const auto& val : values_) {
-        if (col_val == val->evaluate(tuple, schema)) {
+        if (col_val == val->evaluate(tuple, schema, params)) {
             return common::Value(!not_flag_);
         }
     }
@@ -431,9 +467,9 @@ std::unique_ptr<Expression> InExpr::clone() const {
 /**
  * @brief Evaluate IS NULL expression
  */
-common::Value IsNullExpr::evaluate(const executor::Tuple* tuple,
-                                   const executor::Schema* schema) const {
-    const common::Value val = expr_->evaluate(tuple, schema);
+common::Value IsNullExpr::evaluate(const executor::Tuple* tuple, const executor::Schema* schema,
+                                   const std::vector<common::Value>* params) const {
+    const common::Value val = expr_->evaluate(tuple, schema, params);
     const bool result = val.is_null();
     return common::Value(not_flag_ ? !result : result);
 }

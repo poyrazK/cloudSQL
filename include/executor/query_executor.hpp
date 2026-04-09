@@ -6,7 +6,11 @@
 #ifndef CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP
 #define CLOUDSQL_EXECUTOR_QUERY_EXECUTOR_HPP
 
+#include <mutex>
+#include <unordered_map>
+
 #include "catalog/catalog.hpp"
+#include "common/arena_allocator.hpp"
 #include "common/cluster_manager.hpp"
 #include "distributed/raft_types.hpp"
 #include "executor/operator.hpp"
@@ -17,6 +21,20 @@
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
+
+/**
+ * @brief Represents a pre-parsed and pre-planned SQL statement
+ */
+struct PreparedStatement {
+    std::shared_ptr<parser::Statement> stmt;
+    std::string sql;
+
+    // Cached execution state for hot-path optimization
+    const TableInfo* table_meta = nullptr;
+    std::unique_ptr<Schema> schema;
+    std::unique_ptr<storage::HeapTable> table;
+    std::vector<std::unique_ptr<storage::BTreeIndex>> indexes;
+};
 
 /**
  * @brief State machine for a specific data shard
@@ -63,9 +81,30 @@ class QueryExecutor {
     void set_local_only(bool local) { is_local_only_ = local; }
 
     /**
+     * @brief Prepare a SQL string into a reusable PreparedStatement
+     */
+    std::shared_ptr<PreparedStatement> prepare(const std::string& sql);
+
+    /**
      * @brief Execute a SQL statement and return results
      */
     QueryResult execute(const parser::Statement& stmt);
+
+    /**
+     * @brief Execute a SQL string (includes parsing and cache lookup)
+     */
+    QueryResult execute(const std::string& sql);
+
+    /**
+     * @brief Execute a PreparedStatement with bound parameters
+     */
+    QueryResult execute(const PreparedStatement& prepared,
+                        const std::vector<common::Value>& params);
+
+    /**
+     * @brief Get access to the query-scoped arena
+     */
+    common::ArenaAllocator& arena() { return arena_; }
 
    private:
     Catalog& catalog_;
@@ -77,6 +116,16 @@ class QueryExecutor {
     std::string context_id_;
     transaction::Transaction* current_txn_ = nullptr;
     bool is_local_only_ = false;
+
+    // Bound parameters for the current execution
+    const std::vector<common::Value>* current_params_ = nullptr;
+
+    // Performance structures
+    common::ArenaAllocator arena_;
+
+    // Global statement cache (thread-safe)
+    static std::unordered_map<std::string, std::shared_ptr<parser::Statement>> statement_cache_;
+    static std::mutex cache_mutex_;
 
     QueryResult execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn);
     QueryResult execute_create_table(const parser::CreateTableStatement& stmt);

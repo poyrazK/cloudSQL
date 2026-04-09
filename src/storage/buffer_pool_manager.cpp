@@ -43,10 +43,22 @@ BufferPoolManager::~BufferPoolManager() {
     }
 }
 
+uint32_t BufferPoolManager::get_file_id(const std::string& file_name) {
+    auto it = file_id_map_.find(file_name);
+    if (it != file_id_map_.end()) {
+        return it->second;
+    }
+    uint32_t id = next_file_id_++;
+    file_id_map_[file_name] = id;
+    return id;
+}
+
 Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const std::string key = make_page_key(file_name, page_id);
+    const uint32_t file_id = get_file_id(file_name);
+    const PageKey key{file_id, page_id};
+
     if (page_table_.find(key) != page_table_.end()) {
         const uint32_t frame_id = page_table_[key];
         Page* const page = &pages_[frame_id];
@@ -68,7 +80,10 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
         storage_manager_.write_page(page->file_name_, page->page_id_, page->get_data());
     }
 
-    page_table_.erase(make_page_key(page->file_name_, page->page_id_));
+    if (!page->file_name_.empty()) {
+        const uint32_t old_file_id = get_file_id(page->file_name_);
+        page_table_.erase({old_file_id, page->page_id_});
+    }
     page_table_[key] = frame_id;
 
     page->page_id_ = page_id;
@@ -88,7 +103,9 @@ Page* BufferPoolManager::fetch_page(const std::string& file_name, uint32_t page_
 bool BufferPoolManager::unpin_page(const std::string& file_name, uint32_t page_id, bool is_dirty) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const std::string key = make_page_key(file_name, page_id);
+    const uint32_t file_id = get_file_id(file_name);
+    const PageKey key{file_id, page_id};
+
     if (page_table_.find(key) == page_table_.end()) {
         return false;
     }
@@ -115,7 +132,9 @@ bool BufferPoolManager::unpin_page(const std::string& file_name, uint32_t page_i
 bool BufferPoolManager::flush_page(const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const std::string key = make_page_key(file_name, page_id);
+    const uint32_t file_id = get_file_id(file_name);
+    const PageKey key{file_id, page_id};
+
     if (page_table_.find(key) == page_table_.end()) {
         return false;
     }
@@ -128,15 +147,16 @@ bool BufferPoolManager::flush_page(const std::string& file_name, uint32_t page_i
     return true;
 }
 
-Page* BufferPoolManager::new_page(const std::string& file_name, const uint32_t* page_id) {
+Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
     const uint32_t target_page_id = storage_manager_.allocate_page(file_name);
     if (page_id != nullptr) {
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
-        const_cast<uint32_t&>(*page_id) = target_page_id;
+        *page_id = target_page_id;
     }
-    const std::string key = make_page_key(file_name, target_page_id);
+
+    const uint32_t file_id = get_file_id(file_name);
+    const PageKey key{file_id, target_page_id};
 
     uint32_t frame_id = 0;
     if (!free_list_.empty()) {
@@ -151,7 +171,10 @@ Page* BufferPoolManager::new_page(const std::string& file_name, const uint32_t* 
         storage_manager_.write_page(page->file_name_, page->page_id_, page->get_data());
     }
 
-    page_table_.erase(make_page_key(page->file_name_, page->page_id_));
+    if (!page->file_name_.empty()) {
+        const uint32_t old_file_id = get_file_id(page->file_name_);
+        page_table_.erase({old_file_id, page->page_id_});
+    }
     page_table_[key] = frame_id;
 
     page->page_id_ = target_page_id;
@@ -167,7 +190,9 @@ Page* BufferPoolManager::new_page(const std::string& file_name, const uint32_t* 
 bool BufferPoolManager::delete_page(const std::string& file_name, uint32_t page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
-    const std::string key = make_page_key(file_name, page_id);
+    const uint32_t file_id = get_file_id(file_name);
+    const PageKey key{file_id, page_id};
+
     if (page_table_.find(key) != page_table_.end()) {
         const uint32_t frame_id = page_table_[key];
         Page* const page = &pages_[frame_id];

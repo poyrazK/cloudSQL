@@ -28,6 +28,8 @@
 #include "executor/types.hpp"
 #include "network/rpc_message.hpp"
 #include "parser/expression.hpp"
+#include "parser/lexer.hpp"
+#include "parser/parser.hpp"
 #include "parser/statement.hpp"
 #include "parser/token.hpp"
 #include "recovery/log_manager.hpp"
@@ -40,6 +42,10 @@
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
+
+// Define static members for statement cache
+std::unordered_map<std::string, std::shared_ptr<parser::Statement>> QueryExecutor::statement_cache_;
+std::mutex QueryExecutor::cache_mutex_;
 
 namespace {
 enum class IndexOp { Insert, Remove };
@@ -124,6 +130,150 @@ QueryExecutor::~QueryExecutor() {
     }
 }
 
+std::shared_ptr<PreparedStatement> QueryExecutor::prepare(const std::string& sql) {
+    auto lexer = std::make_unique<parser::Lexer>(sql);
+    parser::Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    if (!stmt) return nullptr;
+
+    auto prepared = std::make_shared<PreparedStatement>();
+    prepared->stmt = std::shared_ptr<parser::Statement>(stmt.release());
+    prepared->sql = sql;
+
+    // Cache metadata for INSERT fast-path
+    if (prepared->stmt->type() == parser::StmtType::Insert) {
+        const auto& insert_stmt = dynamic_cast<const parser::InsertStatement&>(*prepared->stmt);
+        if (insert_stmt.table()) {
+            const std::string table_name = insert_stmt.table()->to_string();
+            auto table_meta_opt = catalog_.get_table_by_name(table_name);
+            if (table_meta_opt.has_value()) {
+                prepared->table_meta = table_meta_opt.value();
+                prepared->schema = std::make_unique<Schema>();
+                for (const auto& col : prepared->table_meta->columns) {
+                    prepared->schema->add_column(col.name, col.type);
+                }
+                prepared->table =
+                    std::make_unique<storage::HeapTable>(table_name, bpm_, *prepared->schema);
+
+                // Cache B-tree index objects
+                for (const auto& idx_info : prepared->table_meta->indexes) {
+                    if (!idx_info.column_positions.empty()) {
+                        uint16_t pos = idx_info.column_positions[0];
+                        common::ValueType ktype = prepared->table_meta->columns[pos].type;
+                        prepared->indexes.push_back(
+                            std::make_unique<storage::BTreeIndex>(idx_info.name, bpm_, ktype));
+                    }
+                }
+            }
+        }
+    }
+
+    return prepared;
+}
+
+QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
+                                   const std::vector<common::Value>& params) {
+    // Fast-path for INSERT
+    if (prepared.stmt->type() == parser::StmtType::Insert && prepared.table) {
+        const auto start = std::chrono::high_resolution_clock::now();
+        QueryResult result;
+        current_params_ = &params;
+
+        const bool is_auto_commit = (current_txn_ == nullptr);
+        transaction::Transaction* txn = current_txn_;
+        if (is_auto_commit) txn = transaction_manager_.begin();
+
+        try {
+            const auto& insert_stmt = dynamic_cast<const parser::InsertStatement&>(*prepared.stmt);
+            uint64_t rows_inserted = 0;
+            const uint64_t xmin = (txn != nullptr) ? txn->get_id() : 0;
+
+            for (const auto& row_exprs : insert_stmt.values()) {
+                std::pmr::vector<common::Value> values(&arena_);
+                values.reserve(row_exprs.size());
+                for (const auto& expr : row_exprs) {
+                    values.push_back(expr->evaluate(nullptr, nullptr, current_params_));
+                }
+
+                const Tuple tuple(std::move(values));
+                const auto tid = prepared.table->insert(tuple, xmin);
+
+                // Index updates using cached index objects
+                std::string err;
+                size_t cached_idx_ptr = 0;
+                for (const auto& idx_info : prepared.table_meta->indexes) {
+                    if (!idx_info.column_positions.empty()) {
+                        uint16_t pos = idx_info.column_positions[0];
+                        if (!apply_index_write(*prepared.indexes[cached_idx_ptr++], tuple.get(pos),
+                                               tid, IndexOp::Insert, err)) {
+                            throw std::runtime_error(err);
+                        }
+                    }
+                }
+
+                if (txn != nullptr) {
+                    txn->add_undo_log(transaction::UndoLog::Type::INSERT, prepared.table_meta->name,
+                                      tid);
+                    if (!lock_manager_.acquire_exclusive(txn, tid)) {
+                        throw std::runtime_error("Failed to acquire exclusive lock");
+                    }
+                }
+                rows_inserted++;
+            }
+
+            if (is_auto_commit && txn != nullptr) transaction_manager_.commit(txn);
+            result.set_rows_affected(rows_inserted);
+        } catch (const std::exception& e) {
+            if (is_auto_commit && txn != nullptr) transaction_manager_.abort(txn);
+            result.set_error(std::string("Execution error: ") + e.what());
+        }
+
+        current_params_ = nullptr;
+        const auto end = std::chrono::high_resolution_clock::now();
+        result.set_execution_time(
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+        arena_.reset();
+        return result;
+    }
+
+    // Fallback for other statement types
+    current_params_ = &params;
+    QueryResult res = execute(*(prepared.stmt));
+    current_params_ = nullptr;
+    return res;
+}
+
+QueryResult QueryExecutor::execute(const std::string& sql) {
+    std::shared_ptr<parser::Statement> stmt = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto it = statement_cache_.find(sql);
+        if (it != statement_cache_.end()) {
+            stmt = it->second;
+        }
+    }
+
+    if (!stmt) {
+        auto lexer = std::make_unique<parser::Lexer>(sql);
+        parser::Parser parser(std::move(lexer));
+        auto parsed_stmt = parser.parse_statement();
+        if (parsed_stmt) {
+            stmt = std::shared_ptr<parser::Statement>(parsed_stmt.release());
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            statement_cache_[sql] = stmt;
+        }
+    }
+
+    if (!stmt) {
+        QueryResult res;
+        res.set_error("Failed to parse SQL statement");
+        return res;
+    }
+
+    return execute(*stmt);
+}
+
 QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     const auto start = std::chrono::high_resolution_clock::now();
     QueryResult result;
@@ -190,6 +340,9 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
     const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
     result.set_execution_time(static_cast<uint64_t>(duration.count()));
 
+    // Reset arena for the next query to reclaim zero-allocation memory
+    arena_.reset();
+
     return result;
 }
 
@@ -237,6 +390,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     }
 
     /* Initialize and open operators */
+    root->set_memory_resource(&arena_);
+    root->set_params(current_params_);
     if (!root->init() || !root->open()) {
         result.set_error(root->error().empty() ? "Failed to open execution plan" : root->error());
         return result;
@@ -248,7 +403,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     /* Pull tuples (Volcano model) */
     Tuple tuple;
     while (root->next(tuple)) {
-        result.add_row(std::move(tuple));
+        // MUST deep-copy tuple to default allocator (heap) so it outlives the arena reset
+        result.add_row(Tuple(tuple.values(), nullptr));
     }
 
     root->close();
@@ -412,10 +568,12 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
     const uint64_t xmin = (txn != nullptr) ? txn->get_id() : 0;
 
     for (const auto& row_exprs : stmt.values()) {
-        std::vector<common::Value> values;
+        // Zero-allocation vector construction via Arena
+        std::pmr::vector<common::Value> values(&arena_);
         values.reserve(row_exprs.size());
         for (const auto& expr : row_exprs) {
-            values.push_back(expr->evaluate());
+            // Include bound parameters in expression evaluation
+            values.push_back(expr->evaluate(nullptr, nullptr, current_params_));
         }
 
         const Tuple tuple(std::move(values));
@@ -431,8 +589,6 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
 
             if (shard_info_opt.has_value()) {
                 const auto& shard_info = shard_info_opt.value();
-                std::cerr << "--- [QueryExecutor] Routing tuple to data node "
-                          << shard_info.node_address << " ---" << std::endl;
                 network::RpcClient client(shard_info.node_address, shard_info.port);
                 if (client.connect()) {
                     network::ExecuteFragmentArgs args;
@@ -483,8 +639,7 @@ QueryResult QueryExecutor::execute_insert(const parser::InsertStatement& stmt,
         /* Record undo log and Acquire Exclusive Lock if in transaction */
         if (txn != nullptr) {
             txn->add_undo_log(transaction::UndoLog::Type::INSERT, table_name, tid);
-            if (!lock_manager_.acquire_exclusive(
-                    txn, std::to_string(tid.page_num) + ":" + std::to_string(tid.slot_num))) {
+            if (!lock_manager_.acquire_exclusive(txn, tid)) {
                 throw std::runtime_error("Failed to acquire exclusive lock");
             }
         }
@@ -523,7 +678,8 @@ QueryResult QueryExecutor::execute_delete(const parser::DeleteStatement& stmt,
     while (iter.next_meta(meta)) {
         bool match = true;
         if (stmt.where()) {
-            match = stmt.where()->evaluate(&meta.tuple, &schema).as_bool();
+            // Support parameters in DELETE WHERE
+            match = stmt.where()->evaluate(&meta.tuple, &schema, current_params_).as_bool();
         }
 
         if (match && meta.xmax == 0) {
@@ -632,7 +788,7 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
     while (iter.next_meta(meta)) {
         bool match = true;
         if (stmt.where()) {
-            match = stmt.where()->evaluate(&meta.tuple, &schema).as_bool();
+            match = stmt.where()->evaluate(&meta.tuple, &schema, current_params_).as_bool();
         }
 
         if (match && meta.xmax == 0) {
@@ -642,7 +798,7 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
                 const std::string col_name = col_expr->to_string();
                 const size_t idx = schema.find_column(col_name);
                 if (idx != static_cast<size_t>(-1)) {
-                    new_tuple.set(idx, val_expr->evaluate(&meta.tuple, &schema));
+                    new_tuple.set(idx, val_expr->evaluate(&meta.tuple, &schema, current_params_));
                 }
             }
             updates.push_back({iter.current_id(), meta.tuple, std::move(new_tuple)});
@@ -734,9 +890,6 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             }
         }
 
-        std::cerr << "--- [BuildPlan] Table " << base_table_name
-                  << " found in SHUFFLE buffer. Schema size=" << buffer_schema.column_count()
-                  << " ---" << std::endl;
         current_root = std::make_unique<BufferScanOperator>(
             context_id_, base_table_name, std::move(data), std::move(buffer_schema));
     } else {
@@ -767,12 +920,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 if (bin_expr->left().type() == parser::ExprType::Column &&
                     bin_expr->right().type() == parser::ExprType::Constant) {
                     col_name = bin_expr->left().to_string();
-                    const_val = bin_expr->right().evaluate();
+                    const_val = bin_expr->right().evaluate(nullptr, nullptr, current_params_);
                     eligible = true;
                 } else if (bin_expr->right().type() == parser::ExprType::Column &&
                            bin_expr->left().type() == parser::ExprType::Constant) {
                     col_name = bin_expr->right().to_string();
-                    const_val = bin_expr->left().evaluate();
+                    const_val = bin_expr->left().evaluate(nullptr, nullptr, current_params_);
                     eligible = true;
                 }
 
@@ -803,15 +956,16 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
         if (!index_used) {
             current_root = std::make_unique<SeqScanOperator>(
-                std::make_unique<storage::HeapTable>(base_table_name, bpm_, base_schema), txn,
+                std::make_shared<storage::HeapTable>(base_table_name, bpm_, base_schema), txn,
                 &lock_manager_);
         }
     }
 
     if (!current_root) return nullptr;
 
-    std::cerr << "--- [BuildPlan] Base root schema size="
-              << current_root->output_schema().column_count() << " ---" << std::endl;
+    // Propagate memory resource and bound parameters to the operator tree
+    current_root->set_memory_resource(&arena_);
+    current_root->set_params(current_params_);
 
     /* 2. Add JOINs */
     for (const auto& join : stmt.joins()) {
@@ -831,9 +985,6 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 }
             }
 
-            std::cerr << "--- [BuildPlan] JOIN Table " << join_table_name
-                      << " found in SHUFFLE buffer. Schema size=" << buffer_schema.column_count()
-                      << " ---" << std::endl;
             join_scan = std::make_unique<BufferScanOperator>(
                 context_id_, join_table_name, std::move(data), std::move(buffer_schema));
         } else {
@@ -849,12 +1000,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             }
 
             join_scan = std::make_unique<SeqScanOperator>(
-                std::make_unique<storage::HeapTable>(join_table_name, bpm_, join_schema), txn,
+                std::make_shared<storage::HeapTable>(join_table_name, bpm_, join_schema), txn,
                 &lock_manager_);
-            std::cerr << "--- [BuildPlan] JOIN Table " << join_table_name
-                      << " from LOCAL. Schema size=" << join_scan->output_schema().column_count()
-                      << " ---" << std::endl;
         }
+
+        join_scan->set_memory_resource(&arena_);
+        join_scan->set_params(current_params_);
 
         bool use_hash_join = false;
         std::unique_ptr<parser::Expression> left_key = nullptr;
@@ -904,11 +1055,12 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
                 exec_join_type = executor::JoinType::Full;
             }
 
-            current_root = std::make_unique<HashJoinOperator>(
+            auto join_op = std::make_unique<HashJoinOperator>(
                 std::move(current_root), std::move(join_scan), std::move(left_key),
                 std::move(right_key), exec_join_type);
-            std::cerr << "--- [BuildPlan] Added HashJoin. Combined schema size="
-                      << current_root->output_schema().column_count() << " ---" << std::endl;
+            join_op->set_memory_resource(&arena_);
+            join_op->set_params(current_params_);
+            current_root = std::move(join_op);
         } else {
             /* TODO: Implement NestedLoopJoin for non-equality or missing conditions */
             return nullptr;
@@ -917,8 +1069,11 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 
     /* 3. Filter (WHERE) - Only if not already handled by IndexScan */
     if (stmt.where()) {
-        current_root =
+        auto filter_op =
             std::make_unique<FilterOperator>(std::move(current_root), stmt.where()->clone());
+        filter_op->set_memory_resource(&arena_);
+        filter_op->set_params(current_params_);
+        current_root = std::move(filter_op);
     }
 
     /* 3. Aggregate (GROUP BY or implicit aggregates) */
@@ -971,13 +1126,19 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         for (const auto& gb : stmt.group_by()) {
             group_by.push_back(gb->clone());
         }
-        current_root = std::make_unique<AggregateOperator>(std::move(current_root),
-                                                           std::move(group_by), std::move(aggs));
+        auto agg_op = std::make_unique<AggregateOperator>(std::move(current_root),
+                                                          std::move(group_by), std::move(aggs));
+        agg_op->set_memory_resource(&arena_);
+        agg_op->set_params(current_params_);
+        current_root = std::move(agg_op);
 
         /* 3.5. Having */
         if (stmt.having()) {
-            current_root =
+            auto having_filter =
                 std::make_unique<FilterOperator>(std::move(current_root), stmt.having()->clone());
+            having_filter->set_memory_resource(&arena_);
+            having_filter->set_params(current_params_);
+            current_root = std::move(having_filter);
         }
     }
 
@@ -989,8 +1150,11 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
             sort_keys.push_back(ob->clone());
             ascending.push_back(true); /* Default to ASC */
         }
-        current_root = std::make_unique<SortOperator>(std::move(current_root), std::move(sort_keys),
+        auto sort_op = std::make_unique<SortOperator>(std::move(current_root), std::move(sort_keys),
                                                       std::move(ascending));
+        sort_op->set_memory_resource(&arena_);
+        sort_op->set_params(current_params_);
+        current_root = std::move(sort_op);
     }
 
     /* 5. Project (SELECT columns) */
@@ -999,16 +1163,20 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         for (const auto& col : stmt.columns()) {
             projection.push_back(col->clone());
         }
-        current_root =
+        auto project_op =
             std::make_unique<ProjectOperator>(std::move(current_root), std::move(projection));
-        std::cerr << "--- [BuildPlan] Added Projection. Result schema size="
-                  << current_root->output_schema().column_count() << " ---" << std::endl;
+        project_op->set_memory_resource(&arena_);
+        project_op->set_params(current_params_);
+        current_root = std::move(project_op);
     }
 
     /* 6. Limit */
     if (stmt.has_limit() || stmt.has_offset()) {
-        current_root =
+        auto limit_op =
             std::make_unique<LimitOperator>(std::move(current_root), stmt.limit(), stmt.offset());
+        limit_op->set_memory_resource(&arena_);
+        limit_op->set_params(current_params_);
+        current_root = std::move(limit_op);
     }
 
     return current_root;

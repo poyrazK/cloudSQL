@@ -91,19 +91,20 @@ TEST(TransactionCoverageTestsStandalone, LockManagerConcurrency) {
     std::atomic<bool> stop{false};
 
     Transaction writer_txn(100);
+    storage::HeapTable::TupleId rid(1, 1);
 
     // Writers holds exclusive lock initially
-    ASSERT_TRUE(lm.acquire_exclusive(&writer_txn, "RESOURCE"));
+    ASSERT_TRUE(lm.acquire_exclusive(&writer_txn, rid));
 
     for (int i = 0; i < num_readers; ++i) {
-        readers.emplace_back([&, i]() {
+        readers.emplace_back([&, i, rid]() {
             Transaction reader_txn(i);
-            if (lm.acquire_shared(&reader_txn, "RESOURCE")) {
+            if (lm.acquire_shared(&reader_txn, rid)) {
                 shared_granted++;
                 while (!stop) {
                     std::this_thread::yield();
                 }
-                lm.unlock(&reader_txn, "RESOURCE");
+                lm.unlock(&reader_txn, rid);
             }
         });
     }
@@ -113,7 +114,7 @@ TEST(TransactionCoverageTestsStandalone, LockManagerConcurrency) {
     EXPECT_EQ(shared_granted.load(), 0);
 
     // Release writer lock, readers should proceed
-    lm.unlock(&writer_txn, "RESOURCE");
+    lm.unlock(&writer_txn, rid);
 
     // Wait for all readers to get the lock
     for (int i = 0; i < 50 && shared_granted.load() < num_readers; ++i) {
@@ -139,21 +140,22 @@ TEST_F(TransactionCoverageTests, DeepRollback) {
     txn = tm.begin();
 
     // 1. Insert some data
-    auto rid1 =
-        table.insert(executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A")}),
-                     txn->get_id());
+    auto rid1 = table.insert(executor::Tuple(std::pmr::vector<common::Value>(
+                                 {common::Value::make_int64(1), common::Value::make_text("A")})),
+                             txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid1);
 
-    auto rid2 =
-        table.insert(executor::Tuple({common::Value::make_int64(2), common::Value::make_text("B")}),
-                     txn->get_id());
+    auto rid2 = table.insert(executor::Tuple(std::pmr::vector<common::Value>(
+                                 {common::Value::make_int64(2), common::Value::make_text("B")})),
+                             txn->get_id());
     txn->add_undo_log(UndoLog::Type::INSERT, "rollback_stress", rid2);
 
     // 2. Update data
     table.remove(rid1, txn->get_id());  // Mark old version deleted
-    auto rid1_new = table.insert(
-        executor::Tuple({common::Value::make_int64(1), common::Value::make_text("A_NEW")}),
-        txn->get_id());
+    auto rid1_new =
+        table.insert(executor::Tuple(std::pmr::vector<common::Value>(
+                         {common::Value::make_int64(1), common::Value::make_text("A_NEW")})),
+                     txn->get_id());
     txn->add_undo_log(UndoLog::Type::UPDATE, "rollback_stress", rid1_new, rid1);
 
     // 3. Delete data

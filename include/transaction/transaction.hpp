@@ -73,8 +73,10 @@ class Transaction {
 
     // Locks held by this transaction (for auto-release on commit/abort)
     std::mutex lock_set_mutex_;
-    std::unordered_set<std::string> shared_locks_;  // RID string
-    std::unordered_set<std::string> exclusive_locks_;
+    std::unordered_set<storage::HeapTable::TupleId, storage::HeapTable::TupleId::Hash>
+        shared_locks_;
+    std::unordered_set<storage::HeapTable::TupleId, storage::HeapTable::TupleId::Hash>
+        exclusive_locks_;
 
     // Changes to undo on rollback
     std::vector<UndoLog> undo_logs_;
@@ -102,21 +104,23 @@ class Transaction {
     [[nodiscard]] int32_t get_prev_lsn() const { return prev_lsn_; }
     void set_prev_lsn(int32_t lsn) { prev_lsn_ = lsn; }
 
-    void add_shared_lock(const std::string& rid) {
+    void add_shared_lock(const storage::HeapTable::TupleId& rid) {
         const std::scoped_lock<std::mutex> lock(lock_set_mutex_);
         shared_locks_.insert(rid);
     }
 
-    void add_exclusive_lock(const std::string& rid) {
+    void add_exclusive_lock(const storage::HeapTable::TupleId& rid) {
         const std::scoped_lock<std::mutex> lock(lock_set_mutex_);
         exclusive_locks_.insert(rid);
     }
 
-    [[nodiscard]] std::unordered_set<std::string> get_shared_lock_set() {
+    [[nodiscard]] std::unordered_set<storage::HeapTable::TupleId, storage::HeapTable::TupleId::Hash>
+    get_shared_lock_set() {
         const std::scoped_lock<std::mutex> lock(lock_set_mutex_);
         return shared_locks_;
     }
-    [[nodiscard]] std::unordered_set<std::string> get_exclusive_lock_set() {
+    [[nodiscard]] std::unordered_set<storage::HeapTable::TupleId, storage::HeapTable::TupleId::Hash>
+    get_exclusive_lock_set() {
         const std::scoped_lock<std::mutex> lock(lock_set_mutex_);
         return exclusive_locks_;
     }

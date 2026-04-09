@@ -48,7 +48,7 @@ bool SeqScanOperator::init() {
 
 bool SeqScanOperator::open() {
     set_state(ExecState::Open);
-    iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan());
+    iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan(get_memory_resource()));
     return true;
 }
 
@@ -237,7 +237,7 @@ bool FilterOperator::next(Tuple& out_tuple) {
     Tuple tuple;
     while (child_->next(tuple)) {
         /* Evaluate condition against the current tuple context */
-        const common::Value result = condition_->evaluate(&tuple, &schema_);
+        const common::Value result = condition_->evaluate(&tuple, &schema_, get_params());
         if (result.as_bool()) {
             out_tuple = std::move(tuple);
             return true;
@@ -258,6 +258,16 @@ Schema& FilterOperator::output_schema() {
 
 void FilterOperator::add_child(std::unique_ptr<Operator> child) {
     child_ = std::move(child);
+}
+
+void FilterOperator::set_memory_resource(std::pmr::memory_resource* mr) {
+    Operator::set_memory_resource(mr);
+    if (child_) child_->set_memory_resource(mr);
+}
+
+void FilterOperator::set_params(const std::vector<common::Value>* params) {
+    Operator::set_params(params);
+    if (child_) child_->set_params(params);
 }
 
 /* --- ProjectOperator --- */
@@ -306,12 +316,12 @@ bool ProjectOperator::next(Tuple& out_tuple) {
         return false;
     }
 
-    std::vector<common::Value> output_values;
+    std::pmr::vector<common::Value> output_values(get_memory_resource());
     output_values.reserve(columns_.size());
     auto input_schema = child_->output_schema();
     for (const auto& col : columns_) {
         /* Evaluate projection expression with input tuple context */
-        common::Value v = col->evaluate(&input, &input_schema);
+        common::Value v = col->evaluate(&input, &input_schema, get_params());
         output_values.push_back(std::move(v));
     }
     out_tuple = Tuple(std::move(output_values));
@@ -329,6 +339,17 @@ Schema& ProjectOperator::output_schema() {
 
 void ProjectOperator::add_child(std::unique_ptr<Operator> child) {
     child_ = std::move(child);
+}
+
+/* Override propagation for ProjectOperator */
+void ProjectOperator::set_memory_resource(std::pmr::memory_resource* mr) {
+    Operator::set_memory_resource(mr);
+    if (child_) child_->set_memory_resource(mr);
+}
+
+void ProjectOperator::set_params(const std::vector<common::Value>* params) {
+    Operator::set_params(params);
+    if (child_) child_->set_params(params);
 }
 
 /* --- SortOperator --- */
@@ -361,21 +382,21 @@ bool SortOperator::open() {
     }
 
     /* Perform sort using child schema for evaluation */
-    std::stable_sort(sorted_tuples_.begin(), sorted_tuples_.end(),
-                     [this](const Tuple& a, const Tuple& b) {
-                         for (size_t i = 0; i < sort_keys_.size(); ++i) {
-                             const common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_);
-                             const common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_);
-                             const bool asc = ascending_[i];
-                             if (val_a < val_b) {
-                                 return asc;
-                             }
-                             if (val_b < val_a) {
-                                 return !asc;
-                             }
-                         }
-                         return false;
-                     });
+    std::stable_sort(
+        sorted_tuples_.begin(), sorted_tuples_.end(), [this](const Tuple& a, const Tuple& b) {
+            for (size_t i = 0; i < sort_keys_.size(); ++i) {
+                const common::Value val_a = sort_keys_[i]->evaluate(&a, &schema_, get_params());
+                const common::Value val_b = sort_keys_[i]->evaluate(&b, &schema_, get_params());
+                const bool asc = ascending_[i];
+                if (val_a < val_b) {
+                    return asc;
+                }
+                if (val_b < val_a) {
+                    return !asc;
+                }
+            }
+            return false;
+        });
 
     current_index_ = 0;
     set_state(ExecState::Open);
@@ -399,6 +420,17 @@ void SortOperator::close() {
 
 Schema& SortOperator::output_schema() {
     return schema_;
+}
+
+/* Override propagation for SortOperator */
+void SortOperator::set_memory_resource(std::pmr::memory_resource* mr) {
+    Operator::set_memory_resource(mr);
+    if (child_) child_->set_memory_resource(mr);
+}
+
+void SortOperator::set_params(const std::vector<common::Value>* params) {
+    Operator::set_params(params);
+    if (child_) child_->set_params(params);
 }
 
 /* --- AggregateOperator --- */
@@ -470,7 +502,8 @@ bool AggregateOperator::open() {
         if (!is_global) {
             key = "";
             for (const auto& gb : group_by_) {
-                auto val = gb ? gb->evaluate(&tuple, &child_schema) : common::Value::make_null();
+                auto val = gb ? gb->evaluate(&tuple, &child_schema, get_params())
+                              : common::Value::make_null();
                 key += val.to_string() + "|";
                 gb_vals.push_back(std::move(val));
             }
@@ -486,7 +519,7 @@ bool AggregateOperator::open() {
         for (size_t i = 0; i < aggregates_.size(); ++i) {
             common::Value val;
             if (aggregates_[i].expr) {
-                val = aggregates_[i].expr->evaluate(&tuple, &child_schema);
+                val = aggregates_[i].expr->evaluate(&tuple, &child_schema, get_params());
             } else {
                 val = common::Value::make_int64(static_cast<int64_t>(1));
             }
@@ -578,6 +611,17 @@ Schema& AggregateOperator::output_schema() {
     return schema_;
 }
 
+/* Override propagation for AggregateOperator */
+void AggregateOperator::set_memory_resource(std::pmr::memory_resource* mr) {
+    Operator::set_memory_resource(mr);
+    if (child_) child_->set_memory_resource(mr);
+}
+
+void AggregateOperator::set_params(const std::vector<common::Value>* params) {
+    Operator::set_params(params);
+    if (child_) child_->set_params(params);
+}
+
 /* --- HashJoinOperator --- */
 
 HashJoinOperator::HashJoinOperator(std::unique_ptr<Operator> left, std::unique_ptr<Operator> right,
@@ -623,7 +667,7 @@ bool HashJoinOperator::open() {
     Tuple right_tuple;
     auto right_schema = right_->output_schema();
     while (right_->next(right_tuple)) {
-        const common::Value key = right_key_->evaluate(&right_tuple, &right_schema);
+        const common::Value key = right_key_->evaluate(&right_tuple, &right_schema, get_params());
         hash_table_.emplace(key.to_string(), BuildTuple{std::move(right_tuple), false});
     }
 
@@ -645,7 +689,9 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             if (iter_state.current != iter_state.end) {
                 auto& build_tuple = iter_state.current->second;
                 const auto& right_tuple = build_tuple.tuple;
-                std::vector<common::Value> joined_values = left_tuple_->values();
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
+                                                              left_tuple_->values().end(),
+                                                              get_memory_resource());
                 joined_values.insert(joined_values.end(), right_tuple.values().begin(),
                                      right_tuple.values().end());
 
@@ -661,7 +707,9 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             match_iter_ = std::nullopt;
             if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
                 !left_had_match_) {
-                std::vector<common::Value> joined_values = left_tuple_->values();
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
+                                                              left_tuple_->values().end(),
+                                                              get_memory_resource());
                 for (size_t i = 0; i < right_schema.column_count(); ++i) {
                     joined_values.push_back(common::Value::make_null());
                 }
@@ -677,7 +725,8 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
         if (left_->next(next_left)) {
             left_tuple_ = std::move(next_left);
             left_had_match_ = false;
-            const common::Value key = left_key_->evaluate(&(left_tuple_.value()), &left_schema);
+            const common::Value key =
+                left_key_->evaluate(&(left_tuple_.value()), &left_schema, get_params());
 
             /* Look up in hash table */
             auto range = hash_table_.equal_range(key.to_string());
@@ -685,7 +734,9 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
                 match_iter_ = {range.first, range.second};
             } else if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
                 /* No match found immediately, emit NULLs if Left/Full join */
-                std::vector<common::Value> joined_values = left_tuple_->values();
+                std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
+                                                              left_tuple_->values().end(),
+                                                              get_memory_resource());
                 for (size_t i = 0; i < right_schema.column_count(); ++i) {
                     joined_values.push_back(common::Value::make_null());
                 }
@@ -708,7 +759,7 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             auto& it = right_idx_iter_.value();
             while (it != hash_table_.end()) {
                 if (!it->second.matched) {
-                    std::vector<common::Value> joined_values;
+                    std::pmr::vector<common::Value> joined_values(get_memory_resource());
                     for (size_t i = 0; i < left_schema.column_count(); ++i) {
                         joined_values.push_back(common::Value::make_null());
                     }
@@ -747,6 +798,19 @@ void HashJoinOperator::add_child(std::unique_ptr<Operator> child) {
     } else {
         right_ = std::move(child);
     }
+}
+
+/* Override propagation for HashJoinOperator */
+void HashJoinOperator::set_memory_resource(std::pmr::memory_resource* mr) {
+    Operator::set_memory_resource(mr);
+    if (left_) left_->set_memory_resource(mr);
+    if (right_) right_->set_memory_resource(mr);
+}
+
+void HashJoinOperator::set_params(const std::vector<common::Value>* params) {
+    Operator::set_params(params);
+    if (left_) left_->set_params(params);
+    if (right_) right_->set_params(params);
 }
 
 /* --- LimitOperator --- */
@@ -806,6 +870,17 @@ Schema& LimitOperator::output_schema() {
 
 void LimitOperator::add_child(std::unique_ptr<Operator> child) {
     child_ = std::move(child);
+}
+
+/* Override propagation for LimitOperator */
+void LimitOperator::set_memory_resource(std::pmr::memory_resource* mr) {
+    Operator::set_memory_resource(mr);
+    if (child_) child_->set_memory_resource(mr);
+}
+
+void LimitOperator::set_params(const std::vector<common::Value>* params) {
+    Operator::set_params(params);
+    if (child_) child_->set_params(params);
 }
 
 }  // namespace cloudsql::executor

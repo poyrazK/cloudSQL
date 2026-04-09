@@ -288,6 +288,8 @@ Token Lexer::read_operator() {
                 return {TokenType::Ne, "!="};
             }
             return {TokenType::Error, "!"};
+        case '?':
+            return {TokenType::Param, "?"};
         default:
             return {TokenType::Error, std::string(1, c)};
     }

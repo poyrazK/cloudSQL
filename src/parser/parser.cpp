@@ -769,6 +769,11 @@ std::unique_ptr<Expression> Parser::parse_primary() {  // NOLINT(misc-no-recursi
         return std::make_unique<ColumnExpr>("*");
     }
 
+    if (tok.type() == TokenType::Param) {
+        static_cast<void>(next_token());
+        return std::make_unique<ParameterExpr>(param_count_++);
+    }
+
     if (tok.type() == TokenType::Identifier || tok.is_keyword()) {
         const Token id = next_token();
 
