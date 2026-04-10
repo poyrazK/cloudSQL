@@ -55,32 +55,27 @@ HeapTable::~HeapTable() {
 
 /* --- Iterator Implementation --- */
 
-
 common::Value HeapTable::TupleView::get_value(size_t col_index) const {
     if (!schema || col_index >= schema->column_count()) {
         return common::Value::make_null();
     }
-    
+
     // We must walk the serialized payload from the beginning to reach col_index
     size_t cursor = 0;
     for (size_t i = 0; i <= col_index; ++i) {
         if (cursor >= payload_len) return common::Value::make_null();
-        
+
         auto type = static_cast<common::ValueType>(payload_data[cursor++]);
-        
+
         if (type == common::ValueType::TYPE_NULL) {
             if (i == col_index) return common::Value::make_null();
             continue;
         }
 
-        if (type == common::ValueType::TYPE_BOOL ||
-            type == common::ValueType::TYPE_INT8 ||
-            type == common::ValueType::TYPE_INT16 ||
-            type == common::ValueType::TYPE_INT32 ||
-            type == common::ValueType::TYPE_INT64 ||
-            type == common::ValueType::TYPE_FLOAT32 ||
+        if (type == common::ValueType::TYPE_BOOL || type == common::ValueType::TYPE_INT8 ||
+            type == common::ValueType::TYPE_INT16 || type == common::ValueType::TYPE_INT32 ||
+            type == common::ValueType::TYPE_INT64 || type == common::ValueType::TYPE_FLOAT32 ||
             type == common::ValueType::TYPE_FLOAT64) {
-            
             if (cursor + 8 > payload_len) return common::Value::make_null();
 
             if (i == col_index) {
@@ -105,9 +100,9 @@ common::Value HeapTable::TupleView::get_value(size_t col_index) const {
             uint32_t len;
             std::memcpy(&len, payload_data + cursor, 4);
             cursor += 4;
-            
+
             if (cursor + len > payload_len) return common::Value::make_null();
-            
+
             if (i == col_index) {
                 std::string s(reinterpret_cast<const char*>(payload_data + cursor), len);
                 return common::Value::make_text(s);
@@ -201,14 +196,13 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
                 eof_ = true;
                 return false;
             }
-            
+
             // Cache page header and buffer pointer (Phase 2 optimization)
             cached_buffer_ = reinterpret_cast<const uint8_t*>(current_page_->get_data());
             std::memcpy(&cached_header_, cached_buffer_, sizeof(PageHeader));
         }
 
         if (cached_header_.free_space_offset == 0) {
-
             table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
             current_page_ = nullptr;
             cached_buffer_ = nullptr;
@@ -219,9 +213,10 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
         /* Scan slots in the current page starting from next_id_.slot_num */
         while (next_id_.slot_num < cached_header_.num_slots) {
             uint16_t offset = 0;
-            std::memcpy(&offset,
-                        cached_buffer_ + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
-                        sizeof(uint16_t));
+            std::memcpy(
+                &offset,
+                cached_buffer_ + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
+                sizeof(uint16_t));
 
             if (offset != 0) {
                 /* Found a record: Deserialize it in-place from the pinned buffer */
@@ -599,7 +594,7 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
         return false;
     }
 
-        const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
+    const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
 
     uint16_t tuple_data_len;
     std::memcpy(&tuple_data_len, data, 2);
@@ -761,7 +756,6 @@ bool HeapTable::write_page(uint32_t page_num, const char* buffer) {
 }
 
 bool HeapTable::Iterator::next_view(TupleView& out_view) {
-
     if (eof_) {
         return false;
     }
@@ -775,14 +769,13 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
                 eof_ = true;
                 return false;
             }
-            
+
             // Cache page header and buffer pointer (Phase 2 optimization)
             cached_buffer_ = reinterpret_cast<const uint8_t*>(current_page_->get_data());
             std::memcpy(&cached_header_, cached_buffer_, sizeof(PageHeader));
         }
 
         if (cached_header_.free_space_offset == 0) {
-
             table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
             current_page_ = nullptr;
             cached_buffer_ = nullptr;
@@ -793,9 +786,10 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
         /* Scan slots in the current page starting from next_id_.slot_num */
         while (next_id_.slot_num < cached_header_.num_slots) {
             uint16_t offset = 0;
-            std::memcpy(&offset,
-                        cached_buffer_ + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
-                        sizeof(uint16_t));
+            std::memcpy(
+                &offset,
+                cached_buffer_ + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
+                sizeof(uint16_t));
 
             if (offset != 0) {
                 const uint8_t* const data = cached_buffer_ + offset;
@@ -840,4 +834,3 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
 }
 
 }  // namespace cloudsql::storage
-

@@ -120,7 +120,7 @@ class HeapTable {
         std::pmr::memory_resource* mr_; /**< Memory resource for tuple allocations */
         Page* current_page_ = nullptr;
         uint32_t current_page_num_ = 0xFFFFFFFF;
-        
+
         /* Caching for Phase 2 optimization */
         const uint8_t* cached_buffer_ = nullptr;
         PageHeader cached_header_{};

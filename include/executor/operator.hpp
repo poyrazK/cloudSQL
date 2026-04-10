@@ -89,7 +89,7 @@ class Operator {
         state_ = ExecState::Done;
         return false;
     }
-    
+
     // Forward declare TupleView inside Operator pointer context
     virtual bool next_view(storage::HeapTable::TupleView& out_view) {
         (void)out_view;
