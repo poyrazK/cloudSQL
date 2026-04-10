@@ -91,6 +91,23 @@ class HeapTable {
     };
 
     /**
+     * @struct TupleView
+     * @brief Zero-allocation view into a serialized tuple residing on a pinned page
+     */
+    struct TupleView {
+        const uint8_t* payload_data = nullptr;
+        uint16_t payload_len = 0;
+        const executor::Schema* schema = nullptr;
+        uint64_t xmin = 0;
+        uint64_t xmax = 0;
+
+        /**
+         * @brief Materialize a common::Value for a specific column index via lazy parsing
+         */
+        common::Value get_value(size_t col_index) const;
+    };
+
+    /**
      * @class Iterator
      * @brief Forward-only iterator for scanning heap table records
      */
@@ -103,6 +120,10 @@ class HeapTable {
         std::pmr::memory_resource* mr_; /**< Memory resource for tuple allocations */
         Page* current_page_ = nullptr;
         uint32_t current_page_num_ = 0xFFFFFFFF;
+        
+        /* Caching for Phase 2 optimization */
+        const uint8_t* cached_buffer_ = nullptr;
+        PageHeader cached_header_{};
 
        public:
         explicit Iterator(HeapTable& table, std::pmr::memory_resource* mr = nullptr);
@@ -125,6 +146,13 @@ class HeapTable {
          * @return true if a record was successfully retrieved, false on EOF
          */
         bool next_meta(TupleMeta& out_meta);
+
+        /**
+         * @brief Phase 1 optimization: Yields a zero-allocation TupleView
+         * @param[out] out_view The view struct to populate
+         * @return true if a record was successfully retrieved, false on EOF
+         */
+        bool next_view(TupleView& out_view);
 
         /** @return true if the scan has reached the end of the table */
         [[nodiscard]] bool is_done() const { return eof_; }

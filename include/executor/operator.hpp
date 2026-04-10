@@ -89,6 +89,13 @@ class Operator {
         state_ = ExecState::Done;
         return false;
     }
+    
+    // Forward declare TupleView inside Operator pointer context
+    virtual bool next_view(storage::HeapTable::TupleView& out_view) {
+        (void)out_view;
+        state_ = ExecState::Done;
+        return false;
+    }
     virtual void close() {}
 
     [[nodiscard]] virtual Schema& output_schema() = 0;
@@ -120,6 +127,7 @@ class SeqScanOperator : public Operator {
     std::unique_ptr<storage::HeapTable::Iterator> iterator_;
 
     Schema schema_;
+    bool no_txn_ = false;
 
    public:
     explicit SeqScanOperator(std::shared_ptr<storage::HeapTable> table, Transaction* txn = nullptr,
@@ -128,6 +136,7 @@ class SeqScanOperator : public Operator {
     bool init() override;
     bool open() override;
     bool next(Tuple& out_tuple) override;
+    virtual bool next_view(storage::HeapTable::TupleView& out_view) override;
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     [[nodiscard]] const std::string& table_name() const { return table_name_; }
@@ -199,6 +208,7 @@ class FilterOperator : public Operator {
     bool init() override;
     bool open() override;
     bool next(Tuple& out_tuple) override;
+    virtual bool next_view(storage::HeapTable::TupleView& out_view) override;
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
@@ -223,6 +233,7 @@ class ProjectOperator : public Operator {
     bool init() override;
     bool open() override;
     bool next(Tuple& out_tuple) override;
+    virtual bool next_view(storage::HeapTable::TupleView& out_view) override;
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
@@ -364,6 +375,7 @@ class LimitOperator : public Operator {
     bool init() override;
     bool open() override;
     bool next(Tuple& out_tuple) override;
+    virtual bool next_view(storage::HeapTable::TupleView& out_view) override;
     void close() override;
     [[nodiscard]] Schema& output_schema() override;
     void add_child(std::unique_ptr<Operator> child) override;
