@@ -236,7 +236,20 @@ static void BM_CloudSQL_ScanView(benchmark::State& state) {
         }
         cloudsql::storage::HeapTable::TupleView view;
         size_t count = 0;
+        bool verified = false;
         while (root->next_view(view)) {
+            if (!verified && count == 0) {
+                state.PauseTiming();
+                // Sanity check: ensure we can read the first column
+                auto val = view.get_value(0);
+                if (val.is_null()) {
+                   state.SkipWithError("TupleView returned NULL for non-null column");
+                   state.ResumeTiming();
+                   break;
+                }
+                verified = true;
+                state.ResumeTiming();
+            }
             benchmark::DoNotOptimize(view);
             count++;
         }

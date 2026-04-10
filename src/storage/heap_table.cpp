@@ -839,5 +839,17 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
     }
 }
 
+
+executor::Tuple HeapTable::TupleView::materialize(std::pmr::memory_resource* mr) const {
+    if (!mr) mr = std::pmr::get_default_resource();
+    size_t num_cols = schema->columns().size();
+    
+    std::pmr::vector<common::Value> values(mr);
+    values.reserve(num_cols);
+    for (size_t i = 0; i < num_cols; ++i) {
+        values.push_back(get_value(i));
+    }
+    return executor::Tuple(std::move(values));
+}
 }  // namespace cloudsql::storage
 

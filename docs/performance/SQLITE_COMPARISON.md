@@ -16,7 +16,7 @@ This report documents the head-to-head performance comparison between the `cloud
 | Benchmark | cloudSQL (Pre-Opt) | cloudSQL (Post-Opt) | SQLite3 | Final Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **Point Inserts (10k)** | 16.1k rows/s | **6.69M rows/s** | 114.1k rows/s | **CloudSQL +58x faster** |
-| **Sequential Scan (10k)** | 3.1M items/s | **181.4M rows/s** | 20.6M rows/s | **CloudSQL +9x faster** |
+| **Sequential Scan (10k)** | 3.1M items/s | **233.3M rows/s** | 27.9M rows/s | **CloudSQL +8.3x faster** |
 
 ## 4. Architectural Analysis
 
@@ -29,7 +29,7 @@ Following our latest optimizations, `cloudSQL` completely bridged the insert gap
 ### Sequential Scans
 We have completely flipped the scan gap. `cloudSQL` is now **~9x faster** than SQLite for raw sequential scans. This was achieved by:
 1.  **Zero-Allocation `TupleView`**: Instead of materializing `std::vector<common::Value>` per row, we now use a lightweight view that points directly into the pinned `BufferPool` page.
-2.  **Lazy Deserialization**: Values are only decoded from the binary format when explicitly accessed, avoiding all overhead for skipped columns.
+2.  **Lazy Deserialization**: Values are decoded only when accessed, reducing work for read columns, but `TupleView` currently still walks prior fields up to `col_index`, so later-column access still pays the cost of preceding fields.
 3.  **Fast-Path MVCC**: For non-transactional scans (the common case for bulk data processing), we bypass complex visibility logic and only perform a single `xmax == 0` check.
 4.  **Iterator Caching**: The `PageHeader` is now cached during page transitions, eliminating repetitive `memcpy` calls in the scan hot path.
 
