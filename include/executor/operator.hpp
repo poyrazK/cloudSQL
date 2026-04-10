@@ -225,6 +225,8 @@ class ProjectOperator : public Operator {
     std::unique_ptr<Operator> child_;
     std::vector<std::unique_ptr<parser::Expression>> columns_;
     Schema schema_;
+    std::vector<size_t> column_mapping_;
+    bool is_simple_projection_ = false;
 
    public:
     ProjectOperator(std::unique_ptr<Operator> child,
