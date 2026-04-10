@@ -49,7 +49,7 @@ bool SeqScanOperator::init() {
 bool SeqScanOperator::open() {
     set_state(ExecState::Open);
     iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan(get_memory_resource()));
-    no_txn_ = (get_txn() == nullptr);
+    no_txn_ = (get_txn() == nullptr && enable_non_mvcc_fastpath());
     return true;
 }
 
@@ -61,6 +61,7 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
 
     storage::HeapTable::TupleMeta meta;
     while (iterator_->next_meta(meta)) {
+        // Only use no_txn_ fast-path if explicitly enabled (e.g. for benchmarks)
         if (no_txn_) {
             if (meta.xmax == 0) {
                 out_tuple = std::move(meta.tuple);
@@ -104,6 +105,7 @@ bool SeqScanOperator::next_view(storage::HeapTable::TupleView& out_view) {
     }
 
     while (iterator_->next_view(out_view)) {
+        // Only use no_txn_ fast-path if explicitly enabled (e.g. for benchmarks)
         if (no_txn_) {
             if (out_view.xmax == 0) return true;
             continue;
@@ -340,7 +342,48 @@ ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child,
 }
 
 bool ProjectOperator::init() {
-    return child_->init();
+    if (!child_->init()) return false;
+    
+    is_simple_projection_ = true;
+    column_mapping_.clear();
+    auto& child_schema = child_->output_schema();
+    
+    // Check if we have a single "*" column and expand it
+    bool has_star = false;
+    if (columns_.size() == 1 && columns_[0]->type() == parser::ExprType::Column) {
+        const auto* c_expr = static_cast<const parser::ColumnExpr*>(columns_[0].get());
+        if (c_expr->name() == "*") {
+            has_star = true;
+            schema_.clear(); // Clear the "*" placeholder
+            for (size_t i = 0; i < child_schema.columns().size(); ++i) {
+                column_mapping_.push_back(i);
+                schema_.add_column(child_schema.get_column(i));
+            }
+        }
+    }
+
+    if (!has_star) {
+        for (const auto& expr : columns_) {
+            if (expr->type() == parser::ExprType::Column) {
+                const auto* c_expr = static_cast<const parser::ColumnExpr*>(expr.get());
+                size_t idx = child_schema.find_column(c_expr->to_string());
+                if (idx == static_cast<size_t>(-1)) idx = child_schema.find_column(c_expr->name());
+                
+                if (idx != static_cast<size_t>(-1)) {
+                    column_mapping_.push_back(idx);
+                } else {
+                    is_simple_projection_ = false;
+                    break;
+                }
+            } else {
+                is_simple_projection_ = false;
+                break;
+            }
+        }
+    }
+    
+    set_state(ExecState::Init);
+    return true;
 }
 
 bool ProjectOperator::open() {
@@ -927,21 +970,49 @@ void LimitOperator::set_params(const std::vector<common::Value>* params) {
 
 bool ProjectOperator::next_view(storage::HeapTable::TupleView& out_view) {
     if (!child_) return false;
-    return child_->next_view(out_view);
+    if (child_->next_view(out_view)) {
+        if (is_simple_projection_) {
+            out_view.column_mapping = &column_mapping_;
+            out_view.schema = &schema_;
+            return true;
+        } else {
+            // Finding 2: Fallback for complex projections.
+            // Materialize the computed values into scratch storage.
+            std::pmr::vector<common::Value> output_values(get_memory_resource());
+            output_values.reserve(columns_.size());
+            auto input_schema = child_->output_schema();
+            
+            // We need a materialized input tuple to evaluate complex expressions.
+            executor::Tuple input = out_view.materialize(get_memory_resource());
+
+            for (const auto& col : columns_) {
+                common::Value v = col->evaluate(&input, &input_schema, get_params());
+                output_values.push_back(std::move(v));
+            }
+            
+            materialized_scratch_ = Tuple(std::move(output_values));
+            out_view.payload_data = nullptr; // Indicating this is a materialized view
+            out_view.materialized_tuple = &materialized_scratch_.value();
+            out_view.schema = &schema_;
+            out_view.column_mapping = nullptr; // Flat materialized tuple
+            return true;
+        }
+    }
+    return false;
 }
 
 bool FilterOperator::next_view(storage::HeapTable::TupleView& out_view) {
     if (!child_) return false;
+    Schema& child_schema = child_->output_schema();
     while (child_->next_view(out_view)) {
         if (!condition_) return true;
-        // Correctly handle Filters: Since we dont have materialized values yet,
-        // we might need to materialize for the condition check.
-        // For benchmarks with NO condition, next_view is still fast.
-        bool result = true;
-        // Evaluation would require materialization. For now we skip condition if next_view is
-        // called or we materialize. For PARITY with SQLite scan view, we assume no condition in the
-        // bench.
-        if (result) return true;
+        // Evaluate condition against the view.
+        // For performance, we materialize into a thread-local or arena-based Tuple
+        // if we wanted to avoid allocation per row, but for now we use the operator memory resource.
+        executor::Tuple t = out_view.materialize(get_memory_resource());
+        if (condition_->evaluate(&t, &child_schema, get_params()).as_bool()) {
+            return true;
+        }
     }
     set_state(ExecState::Done);
     return false;

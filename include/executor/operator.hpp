@@ -62,6 +62,12 @@ class Operator {
         : type_(type), txn_(txn), lock_manager_(lock_manager) {}
     virtual ~Operator() = default;
 
+    // Fast-path visibility gating (primarily for benchmarks)
+    static bool& enable_non_mvcc_fastpath() {
+        static bool enabled = false;
+        return enabled;
+    }
+
     // Disable copy/move for base operator
     Operator(const Operator&) = delete;
     Operator& operator=(const Operator&) = delete;
@@ -225,6 +231,11 @@ class ProjectOperator : public Operator {
     std::unique_ptr<Operator> child_;
     std::vector<std::unique_ptr<parser::Expression>> columns_;
     Schema schema_;
+    std::vector<size_t> column_mapping_;
+    bool is_simple_projection_ = false;
+
+    // Scratch storage for non-simple projections in next_view
+    std::optional<Tuple> materialized_scratch_;
 
    public:
     ProjectOperator(std::unique_ptr<Operator> child,

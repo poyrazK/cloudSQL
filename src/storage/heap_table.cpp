@@ -56,29 +56,37 @@ HeapTable::~HeapTable() {
 /* --- Iterator Implementation --- */
 
 common::Value HeapTable::TupleView::get_value(size_t col_index) const {
-    if (!schema || col_index >= schema->column_count()) {
+    if (materialized_tuple) {
+        if (col_index < materialized_tuple->values().size()) {
+            return materialized_tuple->values()[col_index];
+        }
         return common::Value::make_null();
     }
 
-    // We must walk the serialized payload from the beginning to reach col_index
-    size_t cursor = 0;
-    for (size_t i = 0; i <= col_index; ++i) {
-        if (cursor >= payload_len) return common::Value::make_null();
+    if (!payload_data || !table_schema) return common::Value::make_null();
 
-        auto type = static_cast<common::ValueType>(payload_data[cursor++]);
+    // Finding 4: Translate logical index to physical index via mapping
+    size_t target_physical_index = col_index;
+    if (column_mapping) {
+        if (col_index >= column_mapping->size()) return common::Value::make_null();
+        target_physical_index = (*column_mapping)[col_index];
+    }
+
+    size_t cursor = 0;
+    const auto& columns = table_schema->columns();
+    for (size_t i = 0; i < columns.size(); ++i) {
+        const auto& col = columns[i];
+        common::ValueType type = col.type();
 
         if (type == common::ValueType::TYPE_NULL) {
-            if (i == col_index) return common::Value::make_null();
+            if (i == target_physical_index) return common::Value::make_null();
             continue;
         }
 
-        if (type == common::ValueType::TYPE_BOOL || type == common::ValueType::TYPE_INT8 ||
-            type == common::ValueType::TYPE_INT16 || type == common::ValueType::TYPE_INT32 ||
-            type == common::ValueType::TYPE_INT64 || type == common::ValueType::TYPE_FLOAT32 ||
-            type == common::ValueType::TYPE_FLOAT64) {
+        if (type != common::ValueType::TYPE_TEXT && type != common::ValueType::TYPE_VARCHAR) {
             if (cursor + 8 > payload_len) return common::Value::make_null();
 
-            if (i == col_index) {
+            if (i == target_physical_index) {
                 if (type == common::ValueType::TYPE_FLOAT32 ||
                     type == common::ValueType::TYPE_FLOAT64) {
                     double v;
@@ -103,12 +111,14 @@ common::Value HeapTable::TupleView::get_value(size_t col_index) const {
 
             if (cursor + len > payload_len) return common::Value::make_null();
 
-            if (i == col_index) {
+            if (i == target_physical_index) {
                 std::string s(reinterpret_cast<const char*>(payload_data + cursor), len);
                 return common::Value::make_text(s);
             }
             cursor += len;
         }
+        
+        if (i >= target_physical_index) break;
     }
     return common::Value::make_null();
 }
@@ -811,7 +821,7 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
                 std::memcpy(&out_view.xmin, data + 2, 8);
                 std::memcpy(&out_view.xmax, data + 10, 8);
 
-                out_view.schema = &table_.schema_;
+                out_view.table_schema = &table_.schema_;
                 out_view.payload_data = data + 18;
                 out_view.payload_len = record_len - 18;
 
@@ -833,4 +843,22 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
     }
 }
 
+
+executor::Tuple HeapTable::TupleView::materialize(std::pmr::memory_resource* mr) const {
+    if (materialized_tuple) {
+        return *materialized_tuple;
+    }
+    
+    const executor::Schema* output_schema = schema ? schema : table_schema;
+    if (!output_schema) return executor::Tuple();
+    
+    std::pmr::vector<common::Value> values(mr ? mr : std::pmr::get_default_resource());
+    values.reserve(output_schema->column_count());
+    
+    for (size_t i = 0; i < output_schema->column_count(); ++i) {
+        values.push_back(get_value(i));
+    }
+    
+    return executor::Tuple(std::move(values));
+}
 }  // namespace cloudsql::storage

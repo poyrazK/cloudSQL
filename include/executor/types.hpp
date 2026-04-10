@@ -83,6 +83,11 @@ class Schema {
     void add_column(std::string name, common::ValueType type, bool nullable = true) {
         columns_.emplace_back(std::move(name), type, nullable);
     }
+    
+    /**
+     * @brief Clears all column definitions.
+     */
+    void clear() { columns_.clear(); }
 
     [[nodiscard]] size_t column_count() const { return columns_.size(); }
     [[nodiscard]] const ColumnMeta& get_column(size_t index) const { return columns_.at(index); }

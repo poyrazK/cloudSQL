@@ -97,7 +97,10 @@ class HeapTable {
     struct TupleView {
         const uint8_t* payload_data = nullptr;
         uint16_t payload_len = 0;
-        const executor::Schema* schema = nullptr;
+        const executor::Schema* table_schema = nullptr; /**< Physical schema of payload_data */
+        const executor::Schema* schema = nullptr;       /**< Logical schema of this view */
+        const std::vector<size_t>* column_mapping = nullptr;
+        const executor::Tuple* materialized_tuple = nullptr; /**< Flat pre-materialized tuple */
         uint64_t xmin = 0;
         uint64_t xmax = 0;
 
@@ -105,6 +108,11 @@ class HeapTable {
          * @brief Materialize a common::Value for a specific column index via lazy parsing
          */
         common::Value get_value(size_t col_index) const;
+
+        /**
+         * @brief Materialize the entire view into a Tuple
+         */
+        executor::Tuple materialize(std::pmr::memory_resource* mr = nullptr) const;
     };
 
     /**
@@ -148,9 +156,15 @@ class HeapTable {
         bool next_meta(TupleMeta& out_meta);
 
         /**
-         * @brief Phase 1 optimization: Yields a zero-allocation TupleView
-         * @param[out] out_view The view struct to populate
-         * @return true if a record was successfully retrieved, false on EOF
+         * @brief Move to the next tuple and return a view into its data.
+         * 
+         * @note The returned TupleView points into the iterator's currently pinned page and
+         * therefore becomes invalid as soon as the iterator advances to a different page,
+         * is closed, or is destroyed. Callers must copy data out of the TupleView if they
+         * need it beyond the iterator's current position (e.g., during materialization).
+         * 
+         * @param out_view Output parameter to store the view.
+         * @return true if a tuple was found, false if EOF.
          */
         bool next_view(TupleView& out_view);
 

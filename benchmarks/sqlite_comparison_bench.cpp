@@ -54,6 +54,7 @@ struct CloudSQLContext {
         txn_manager = std::make_unique<transaction::TransactionManager>(*lock_manager, *catalog, *bpm);
         executor = std::make_unique<QueryExecutor>(*catalog, *bpm, *lock_manager, *txn_manager);
         executor->set_local_only(true);
+        Operator::enable_non_mvcc_fastpath() = true;
 
         // Create table
         CreateTableStatement create_stmt;
@@ -236,7 +237,20 @@ static void BM_CloudSQL_ScanView(benchmark::State& state) {
         }
         cloudsql::storage::HeapTable::TupleView view;
         size_t count = 0;
+        bool verified = false;
         while (root->next_view(view)) {
+            if (!verified && count == 0) {
+                state.PauseTiming();
+                // Sanity check: ensure we can read the first column
+                auto val = view.get_value(0);
+                if (val.is_null()) {
+                   state.SkipWithError("TupleView returned NULL for non-null column");
+                   state.ResumeTiming();
+                   break;
+                }
+                verified = true;
+                state.ResumeTiming();
+            }
             benchmark::DoNotOptimize(view);
             count++;
         }
