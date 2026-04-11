@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "catalog/catalog.hpp"
+#include "common/bloom_filter.hpp"
 #include "common/cluster_manager.hpp"
 #include "common/value.hpp"
 #include "distributed/shard_manager.hpp"
@@ -212,6 +213,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                 left_args.join_key_col = left_key;
                 auto left_payload = left_args.serialize();
 
+                // Bloom filter built from left table will be sent before Phase 2
+                bool phase1_success = true;
                 for (const auto& node : data_nodes) {
                     network::RpcClient client(node.address, node.cluster_port);
                     if (!client.connect()) {
@@ -227,13 +230,46 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     }
                     auto reply = network::QueryResultsReply::deserialize(resp);
                     if (!reply.success) {
-                        QueryResult res;
-                        res.set_error("Shuffle failed on node " + node.id + ": " + reply.error_msg);
-                        return res;
+                        phase1_success = false;
+                        break;
                     }
                 }
 
-                // Phase 2: Instruct nodes to shuffle Right Table
+                if (!phase1_success) {
+                    QueryResult res;
+                    res.set_error("Shuffle failed on node during Phase 1");
+                    return res;
+                }
+
+                // After Phase 1, each node will have received left table data.
+                // Now broadcast bloom filter built from that data to all nodes for Phase 2 filtering.
+                // The filter is sent as a separate RPC that data nodes will store and apply to their
+                // right table shuffle. For now, we send a simple metadata-only filter that signals
+                // "filtering enabled" - the actual filter building happens on each data node during
+                // Phase 1 and they stash it for use during Phase 2.
+                //
+                // In production, we'd collect and OR all local bloom filters, but for POC
+                // we just signal that bloom filtering is enabled for this context.
+                network::BloomFilterArgs bf_args;
+                bf_args.context_id = context_id;
+                bf_args.build_table = left_table;
+                bf_args.probe_table = right_table;
+                bf_args.probe_key_col = right_key;  // Tell probe side which column to filter on
+                bf_args.filter_data.clear();  // Empty = filter built distributed
+                bf_args.expected_elements = data_nodes.size() * 1000;  // Estimate
+                bf_args.num_hashes = 4;
+                auto bf_payload = bf_args.serialize();
+
+                for (const auto& node : data_nodes) {
+                    network::RpcClient client(node.address, node.cluster_port);
+                    if (!client.connect()) {
+                        continue;  // Best effort for POC
+                    }
+                    std::vector<uint8_t> resp;
+                    client.call(network::RpcType::BloomFilterPush, bf_payload, resp);
+                }
+
+                // Phase 2: Instruct nodes to shuffle Right Table (now with bloom filter available)
                 network::ShuffleFragmentArgs right_args;
                 right_args.context_id = context_id;
                 right_args.table_name = right_table;
