@@ -590,19 +590,25 @@ int main(int argc, char* argv[]) {
                                     }
 
                                     // Apply bloom filter on sender side before sending
-                                    std::vector<cloudsql::executor::Tuple> rows_to_send = std::move(rows);
+                                    std::vector<cloudsql::executor::Tuple> rows_to_send =
+                                        std::move(rows);
                                     if (cluster_manager->has_bloom_filter(args.context_id)) {
-                                        auto bloom = cluster_manager->get_bloom_filter(args.context_id);
-                                        std::string probe_key_col = cluster_manager->get_probe_key_col(args.context_id);
+                                        auto bloom =
+                                            cluster_manager->get_bloom_filter(args.context_id);
+                                        std::string probe_key_col =
+                                            cluster_manager->get_probe_key_col(args.context_id);
 
                                         if (!probe_key_col.empty()) {
                                             // Find key column index in current table
-                                            auto table_meta_opt = catalog->get_table_by_name(args.table_name);
+                                            auto table_meta_opt =
+                                                catalog->get_table_by_name(args.table_name);
                                             if (table_meta_opt.has_value()) {
                                                 const auto* table_meta = table_meta_opt.value();
                                                 size_t key_idx = static_cast<size_t>(-1);
-                                                for (size_t i = 0; i < table_meta->columns.size(); ++i) {
-                                                    if (table_meta->columns[i].name == probe_key_col) {
+                                                for (size_t i = 0; i < table_meta->columns.size();
+                                                     ++i) {
+                                                    if (table_meta->columns[i].name ==
+                                                        probe_key_col) {
                                                         key_idx = i;
                                                         break;
                                                     }
