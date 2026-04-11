@@ -114,7 +114,7 @@ TEST(ShardManagerTests, GetTargetNodeNotFound) {
 // ============= DistributedExecutor Basic Tests =============
 
 class DistributedExecutorTests : public ::testing::Test {
- protected:
+   protected:
     void SetUp() override {
         catalog_ = Catalog::create();
         config_.mode = config::RunMode::Coordinator;
@@ -226,7 +226,7 @@ TEST_F(DistributedExecutorTests, ExecuteUnknownStatementType) {
 // ============= Expression Sharding Key Extraction Tests =============
 
 class ShardingKeyExtractionTests : public ::testing::Test {
- protected:
+   protected:
     void SetUp() override {}
 };
 
@@ -317,13 +317,13 @@ TEST(NullSafetyTests, ExecuteWithEmptyCluster) {
 
     // DDL succeeds (local catalog update), DML/SELECT fail
     std::vector<std::pair<std::string, bool>> statements = {
-        {"CREATE TABLE t (id INT)", true},   // succeeds - local catalog
+        {"CREATE TABLE t (id INT)", true},    // succeeds - local catalog
         {"DROP TABLE t", true},               // succeeds - local catalog
         {"INSERT INTO t VALUES (1)", false},  // fails - needs nodes
-        {"SELECT * FROM t", false},          // fails - needs nodes
-        {"UPDATE t SET id = 1", false},      // fails - needs nodes
+        {"SELECT * FROM t", false},           // fails - needs nodes
+        {"UPDATE t SET id = 1", false},       // fails - needs nodes
         {"DELETE FROM t", false},             // fails - needs nodes
-        {"BEGIN", false},                    // fails - needs nodes
+        {"BEGIN", false},                     // fails - needs nodes
         {"COMMIT", false},                    // fails - needs nodes
         {"ROLLBACK", false}};                 // fails - needs nodes
 
