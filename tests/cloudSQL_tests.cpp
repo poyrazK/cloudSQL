@@ -1195,14 +1195,14 @@ TEST(TupleViewTests, ComputedProjectionDoesNotConsumeRows) {
     ASSERT_TRUE(proj2->open());
 
     Tuple t;
-    int count = 0;
-    while (proj2->next(t)) {
-        count++;
-        // id + 1: first row is 5+1=6, second is 6+1=7
-        EXPECT_GT(t.get(0).to_int64(), 5);
-    }
+    ASSERT_TRUE(proj2->next(t));
+    EXPECT_EQ(t.size(), 1u);
+    EXPECT_EQ(t.get(0).to_int64(), 6);
+    ASSERT_TRUE(proj2->next(t));
+    EXPECT_EQ(t.size(), 1u);
+    EXPECT_EQ(t.get(0).to_int64(), 7);
+    ASSERT_FALSE(proj2->next(t));
     proj2->close();
-    EXPECT_EQ(count, 2);
 
     static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
 }

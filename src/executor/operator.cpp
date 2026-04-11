@@ -350,6 +350,7 @@ bool ProjectOperator::init() {
             for (size_t i = 0; i < child_schema.columns().size(); ++i) {
                 column_mapping_.push_back(i);
             }
+            schema_ = child_schema;
         }
     }
 

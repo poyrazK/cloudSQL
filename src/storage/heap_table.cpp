@@ -56,7 +56,7 @@ HeapTable::~HeapTable() {
 /* --- Iterator Implementation --- */
 
 common::Value HeapTable::TupleView::get_value(size_t col_index) const {
-    if (!schema) return common::Value::make_null();
+    if (!schema || !payload_data) return common::Value::make_null();
 
     // When a column_mapping is present its size determines the number of
     // accessible logical columns (it may differ from schema->column_count()
@@ -821,6 +821,15 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
                     return false;
                 }
 
+                // Verify the record stays within the page buffer to prevent OOB reads.
+                if (data + record_len > cached_buffer_ + Page::PAGE_SIZE) {
+                    std::cerr << "next_view failed: record extends beyond page boundary\n";
+                    table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+                    current_page_ = nullptr;
+                    cached_buffer_ = nullptr;
+                    return false;
+                }
+
                 // Read MVCC Header
                 std::memcpy(&out_view.xmin, data + 2, 8);
                 std::memcpy(&out_view.xmax, data + 10, 8);
@@ -854,8 +863,11 @@ executor::Tuple HeapTable::TupleView::materialize(std::pmr::memory_resource* mr)
     // Use the same logical_count logic as get_value so that SELECT * views
     // (which have column_mapping with more entries than schema->column_count())
     // are materialized correctly.
-    const size_t num_cols = (column_mapping && !column_mapping->empty()) ? column_mapping->size()
-                                                                         : schema->columns().size();
+    const size_t num_cols = (column_mapping && !column_mapping->empty())
+                                ? column_mapping->size()
+                                : (schema != nullptr ? schema->columns().size() : 0);
+
+    if (num_cols == 0) return executor::Tuple{};
 
     std::pmr::vector<common::Value> values(mr);
     values.reserve(num_cols);
