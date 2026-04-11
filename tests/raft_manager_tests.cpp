@@ -31,7 +31,7 @@ class RaftManagerTests : public ::testing::Test {
         config_.cluster_port = TEST_PORT;
         cm_ = std::make_unique<ClusterManager>(&config_);
         rpc_ = std::make_unique<RpcServer>(TEST_PORT);
-        rpc_->start();
+        ASSERT_TRUE(rpc_->start()) << "RpcServer failed to start - port may be in use";
         manager_ = std::make_unique<RaftManager>("node1", *cm_, *rpc_);
     }
 

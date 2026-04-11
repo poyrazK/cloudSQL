@@ -110,8 +110,8 @@ TEST_F(StorageManagerTests, PartialReadReturnsFalse) {
     ASSERT_TRUE(sm_->open_file(filename));
 
     // Write a small amount of data
-    char write_buf[512];
-    std::memset(write_buf, 0xAB, 512);
+    char write_buf[StorageManager::PAGE_SIZE];
+    std::memset(write_buf, 0xAB, StorageManager::PAGE_SIZE);
     ASSERT_TRUE(sm_->write_page(filename, 0, write_buf));
 
     // Try to read the small write as a full page should succeed (EOF handling fills zeros)
