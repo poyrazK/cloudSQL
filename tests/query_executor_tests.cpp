@@ -66,12 +66,12 @@ struct TestEnvironment {
 QueryResult execute_sql(QueryExecutor& exec, const char* sql) {
     auto lexer = std::make_unique<Lexer>(sql);
     auto stmt = Parser(std::move(lexer)).parse_statement();
+    if (!stmt) {
+        QueryResult res;
+        res.set_error("Parse error: invalid SQL");
+        return res;
+    }
     return exec.execute(*stmt);
-}
-
-// Helper to create a simple table
-void create_test_table(QueryExecutor& exec, const char* name, const char* schema_sql) {
-    execute_sql(exec, schema_sql);
 }
 
 class QueryExecutorTests : public ::testing::Test {
@@ -283,13 +283,10 @@ TEST_F(QueryExecutorTests, SelectNonExistentTable) {
 TEST_F(QueryExecutorTests, SelectNonExistentColumn) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (id INT)");
-    // Note: Some implementations may succeed even with non-existent column
-    // This test documents actual behavior
     const auto res = execute_sql(env.executor, "SELECT nonexistent FROM test_table");
-    // Either success with empty/error is acceptable
-    if (res.success()) {
-        EXPECT_EQ(res.row_count(), 0U);
-    }
+    // Implementation returns success with empty result for non-existent column
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.row_count(), 0U);
 }
 
 // ============= UPDATE Tests =============
@@ -457,10 +454,10 @@ TEST_F(QueryExecutorTests, DivisionByZero) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (id INT)");
     execute_sql(env.executor, "INSERT INTO test_table VALUES (1)");
-    // Depending on implementation, division by zero may return error or special value
     const auto res = execute_sql(env.executor, "SELECT 10 / 0 FROM test_table");
-    // Just verify the query executed (behavior depends on implementation)
-    SUCCEED();
+    // Division by zero succeeds with result (implementation-dependent behavior)
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.row_count(), 1U);
 }
 
 }  // namespace
