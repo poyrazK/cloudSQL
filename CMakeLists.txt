@@ -72,6 +72,7 @@ set(CORE_SOURCES
     src/distributed/raft_group.cpp
     src/distributed/raft_manager.cpp
     src/distributed/distributed_executor.cpp
+    src/common/bloom_filter.cpp
     src/storage/columnar_table.cpp
 )
 
@@ -117,6 +118,7 @@ if(BUILD_TESTS)
     add_cloudsql_test(catalog_coverage_tests tests/catalog_coverage_tests.cpp)
     add_cloudsql_test(transaction_coverage_tests tests/transaction_coverage_tests.cpp)
     add_cloudsql_test(utils_coverage_tests tests/utils_coverage_tests.cpp)
+    add_cloudsql_test(bloom_filter_tests tests/bloom_filter_test.cpp)
     add_cloudsql_test(cloudSQL_tests tests/cloudSQL_tests.cpp)
     add_cloudsql_test(server_tests tests/server_tests.cpp)
     add_cloudsql_test(statement_tests tests/statement_tests.cpp)
