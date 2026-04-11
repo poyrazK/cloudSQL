@@ -45,8 +45,10 @@ struct TestEnvironment {
     QueryExecutor executor;
 
     TestEnvironment()
-        : disk_manager("./test_data"), bpm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager),
-          catalog(Catalog::create()), lock_manager(),
+        : disk_manager("./test_data"),
+          bpm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager),
+          catalog(Catalog::create()),
+          lock_manager(),
           txn_manager(lock_manager, *catalog, bpm, bpm.get_log_manager()),
           executor(*catalog, bpm, lock_manager, txn_manager) {
         disk_manager.create_dir_if_not_exists();
@@ -73,7 +75,7 @@ void create_test_table(QueryExecutor& exec, const char* name, const char* schema
 }
 
 class QueryExecutorTests : public ::testing::Test {
- protected:
+   protected:
     void SetUp() override {}
     void TearDown() override {}
 };
@@ -156,8 +158,8 @@ TEST_F(QueryExecutorTests, InsertSingleRow) {
 TEST_F(QueryExecutorTests, InsertMultipleRows) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (id INT, val INT)");
-    const auto res = execute_sql(env.executor,
-                                 "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
+    const auto res =
+        execute_sql(env.executor, "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.rows_affected(), 3U);
 }
@@ -165,8 +167,7 @@ TEST_F(QueryExecutorTests, InsertMultipleRows) {
 TEST_F(QueryExecutorTests, InsertWithColumnList) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (id INT, val INT, name TEXT)");
-    const auto res = execute_sql(env.executor,
-                                 "INSERT INTO test_table (id, val) VALUES (1, 100)");
+    const auto res = execute_sql(env.executor, "INSERT INTO test_table (id, val) VALUES (1, 100)");
     EXPECT_TRUE(res.success());
 }
 
@@ -268,8 +269,7 @@ TEST_F(QueryExecutorTests, SelectWithGroupBy) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (cat TEXT, val INT)");
     execute_sql(env.executor, "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5)");
-    const auto res = execute_sql(env.executor,
-                                 "SELECT cat, SUM(val) FROM test_table GROUP BY cat");
+    const auto res = execute_sql(env.executor, "SELECT cat, SUM(val) FROM test_table GROUP BY cat");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.row_count(), 2U);
 }
@@ -298,8 +298,7 @@ TEST_F(QueryExecutorTests, UpdateWithCondition) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (id INT, val INT)");
     execute_sql(env.executor, "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
-    const auto res = execute_sql(env.executor,
-                                 "UPDATE test_table SET val = 100 WHERE id = 2");
+    const auto res = execute_sql(env.executor, "UPDATE test_table SET val = 100 WHERE id = 2");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.rows_affected(), 1U);
 }
@@ -435,9 +434,9 @@ TEST_F(QueryExecutorTests, LeftJoin) {
     execute_sql(env.executor, "INSERT INTO table_a VALUES (1, 'Alice'), (2, 'Bob')");
     execute_sql(env.executor, "INSERT INTO table_b VALUES (1, 100), (2, 200)");
 
-    const auto res = execute_sql(
-        env.executor,
-        "SELECT table_a.name, table_b.val FROM table_a LEFT JOIN table_b ON table_a.id = table_b.id");
+    const auto res = execute_sql(env.executor,
+                                 "SELECT table_a.name, table_b.val FROM table_a LEFT JOIN table_b "
+                                 "ON table_a.id = table_b.id");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.row_count(), 2U);
 }
