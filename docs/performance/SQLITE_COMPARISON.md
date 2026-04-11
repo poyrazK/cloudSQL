@@ -39,22 +39,16 @@ We addressed the gaps via the following optimizations:
 2.  **Pinned Page Iteration**: Modifying our `HeapTable::Iterator` to hold pages pinned across slot iteration avoids repetitive atomic checks and LRU updates per-row.
 3.  **Batch Insert Mode**: Skipping single-row undo logs and exclusive locks to exploit pure in-memory bump allocation. This drove the `INSERT` speedup well past SQLite limits, as we write raw tuples uninterrupted.
 
-## 6. Post-Optimization Enhancements
-We addressed the gaps via the following optimizations:
-1.  **Buffer Pool Bypass (`fetch_page_by_id`)**: Reduced global std::mutex latch contention by explicitly caching ID lookups, yielding a ~30% improvement in scan logic.
-2.  **Pinned Page Iteration**: Modifying our `HeapTable::Iterator` to hold pages pinned across slot iteration avoids repetitive atomic checks and LRU updates per-row.
-3.  **Batch Insert Mode**: Skipping single-row undo logs and exclusive locks to exploit pure in-memory bump allocation. This drove the `INSERT` speedup well past SQLite limits, as we write raw tuples uninterrupted.
-
-## 7. Distributed Join Optimization: Bloom Filters
+## 6. Distributed Join Optimization: Bloom Filters
 
 ### Problem
 Distributed shuffle joins send **all tuples** across the network to partitioned nodes, even when many will never match. This causes unnecessary network traffic and buffer memory usage.
 
 ### Solution: Bloom Filter Integration
 Implemented bloom filters to filter tuples at the source before network transmission:
-- **One-sided bloom filter**: Built from the inner/right table, applied to filter the outer/left table
-- **Distributed construction**: Each data node builds bloom filter locally during its scan phase
-- **Coordinator coordination**: `BloomFilterPush` RPC broadcasts filter metadata to all nodes
+- **One-sided bloom filter**: Built from the left/build table, applied to filter the right/probe table
+- **Distributed construction**: Each data node constructs its local bloom during the left/build scan phase
+- **Coordinator coordination**: `BloomFilterPush` RPC broadcasts filter metadata to all nodes before the right/probe shuffle
 
 ### Architecture
 ```

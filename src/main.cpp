@@ -472,50 +472,9 @@ int main(int argc, char* argv[]) {
                         (void)h;
                         auto args = cloudsql::network::PushDataArgs::deserialize(p);
                         if (cluster_manager != nullptr) {
-                            // Apply bloom filter if available for this context
-                            if (cluster_manager->has_bloom_filter(args.context_id)) {
-                                auto bloom = cluster_manager->get_bloom_filter(args.context_id);
-                                std::string probe_key_col =
-                                    cluster_manager->get_probe_key_col(args.context_id);
-
-                                // Get probe table schema to find key column index
-                                auto table_meta_opt = catalog->get_table_by_name(args.table_name);
-                                if (table_meta_opt.has_value() && !probe_key_col.empty()) {
-                                    const auto* table_meta = table_meta_opt.value();
-                                    size_t key_idx = static_cast<size_t>(-1);
-                                    for (size_t i = 0; i < table_meta->columns.size(); ++i) {
-                                        if (table_meta->columns[i].name == probe_key_col) {
-                                            key_idx = i;
-                                            break;
-                                        }
-                                    }
-
-                                    if (key_idx != static_cast<size_t>(-1)) {
-                                        // Filter rows using bloom filter
-                                        std::vector<cloudsql::executor::Tuple> filtered_rows;
-                                        filtered_rows.reserve(args.rows.size());
-                                        for (auto& row : args.rows) {
-                                            if (bloom.might_contain(row.get(key_idx))) {
-                                                filtered_rows.push_back(std::move(row));
-                                            }
-                                        }
-                                        cluster_manager->buffer_shuffle_data(
-                                            args.context_id, args.table_name,
-                                            std::move(filtered_rows));
-                                    } else {
-                                        // Key column not found, buffer as-is
-                                        cluster_manager->buffer_shuffle_data(
-                                            args.context_id, args.table_name, std::move(args.rows));
-                                    }
-                                } else {
-                                    // No metadata, buffer as-is
-                                    cluster_manager->buffer_shuffle_data(
-                                        args.context_id, args.table_name, std::move(args.rows));
-                                }
-                            } else {
-                                cluster_manager->buffer_shuffle_data(
-                                    args.context_id, args.table_name, std::move(args.rows));
-                            }
+                            // Receiver-side: buffer data as-is (bloom filtering done on sender)
+                            cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
+                                                                 std::move(args.rows));
                         }
 
                         cloudsql::network::QueryResultsReply reply;
@@ -630,10 +589,43 @@ int main(int argc, char* argv[]) {
                                         continue;
                                     }
 
+                                    // Apply bloom filter on sender side before sending
+                                    std::vector<cloudsql::executor::Tuple> rows_to_send = std::move(rows);
+                                    if (cluster_manager->has_bloom_filter(args.context_id)) {
+                                        auto bloom = cluster_manager->get_bloom_filter(args.context_id);
+                                        std::string probe_key_col = cluster_manager->get_probe_key_col(args.context_id);
+
+                                        if (!probe_key_col.empty()) {
+                                            // Find key column index in current table
+                                            auto table_meta_opt = catalog->get_table_by_name(args.table_name);
+                                            if (table_meta_opt.has_value()) {
+                                                const auto* table_meta = table_meta_opt.value();
+                                                size_t key_idx = static_cast<size_t>(-1);
+                                                for (size_t i = 0; i < table_meta->columns.size(); ++i) {
+                                                    if (table_meta->columns[i].name == probe_key_col) {
+                                                        key_idx = i;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if (key_idx != static_cast<size_t>(-1)) {
+                                                    std::vector<cloudsql::executor::Tuple> filtered;
+                                                    filtered.reserve(rows_to_send.size());
+                                                    for (auto& row : rows_to_send) {
+                                                        if (bloom.might_contain(row.get(key_idx))) {
+                                                            filtered.push_back(std::move(row));
+                                                        }
+                                                    }
+                                                    rows_to_send = std::move(filtered);
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     cloudsql::network::PushDataArgs push_args;
                                     push_args.context_id = args.context_id;
                                     push_args.table_name = args.table_name;
-                                    push_args.rows = std::move(rows);
+                                    push_args.rows = std::move(rows_to_send);
                                     std::vector<uint8_t> resp;
                                     if (!client.call(cloudsql::network::RpcType::PushData,
                                                      push_args.serialize(), resp)) {

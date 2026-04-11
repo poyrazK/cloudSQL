@@ -230,8 +230,9 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     }
                     auto reply = network::QueryResultsReply::deserialize(resp);
                     if (!reply.success) {
-                        phase1_success = false;
-                        break;
+                        QueryResult res;
+                        res.set_error("Shuffle failed on node " + node.id + ": " + reply.error_msg);
+                        return res;
                     }
                 }
 
