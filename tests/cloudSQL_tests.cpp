@@ -1033,8 +1033,7 @@ struct TupleViewTestCtx {
     std::unique_ptr<HeapTable> table;
 
     explicit TupleViewTestCtx(const std::string& name)
-        : disk("./test_data"),
-          sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk) {
+        : disk("./test_data"), sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk) {
         schema.add_column("id", ValueType::TYPE_INT64);
         schema.add_column("tag", ValueType::TYPE_TEXT);
         table = std::make_unique<HeapTable>(name, sm, schema);
@@ -1063,8 +1062,7 @@ TEST(TupleViewTests, BasicScanSelectStar) {
 
     auto scan = std::make_unique<SeqScanOperator>(
         std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
-    auto proj =
-        std::make_unique<ProjectOperator>(std::move(scan), std::move(cols));
+    auto proj = std::make_unique<ProjectOperator>(std::move(scan), std::move(cols));
 
     ASSERT_TRUE(proj->init());
     ASSERT_TRUE(proj->open());

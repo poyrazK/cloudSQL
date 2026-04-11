@@ -62,18 +62,17 @@ common::Value HeapTable::TupleView::get_value(size_t col_index) const {
     // accessible logical columns (it may differ from schema->column_count()
     // for SELECT * queries where the projected schema is built before the star
     // is expanded into concrete column entries).
-    const size_t logical_count =
-        (column_mapping && !column_mapping->empty()) ? column_mapping->size()
-                                                     : schema->column_count();
+    const size_t logical_count = (column_mapping && !column_mapping->empty())
+                                     ? column_mapping->size()
+                                     : schema->column_count();
     if (col_index >= logical_count) return common::Value::make_null();
 
     // Resolve the physical column index through the mapping when present.
     // col_index is a logical index into the (possibly projected) schema; the
     // serialized payload is always laid out in physical table column order.
-    const size_t physical_idx =
-        (column_mapping && col_index < column_mapping->size())
-            ? (*column_mapping)[col_index]
-            : col_index;
+    const size_t physical_idx = (column_mapping && col_index < column_mapping->size())
+                                    ? (*column_mapping)[col_index]
+                                    : col_index;
 
     // Walk the serialized payload from the beginning to reach physical_idx.
     size_t cursor = 0;
@@ -855,9 +854,8 @@ executor::Tuple HeapTable::TupleView::materialize(std::pmr::memory_resource* mr)
     // Use the same logical_count logic as get_value so that SELECT * views
     // (which have column_mapping with more entries than schema->column_count())
     // are materialized correctly.
-    const size_t num_cols =
-        (column_mapping && !column_mapping->empty()) ? column_mapping->size()
-                                                     : schema->columns().size();
+    const size_t num_cols = (column_mapping && !column_mapping->empty()) ? column_mapping->size()
+                                                                         : schema->columns().size();
 
     std::pmr::vector<common::Value> values(mr);
     values.reserve(num_cols);
