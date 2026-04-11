@@ -84,10 +84,46 @@ BloomFilter::BloomFilter(const uint8_t* data, size_t size) {
     expected_elements_ = static_cast<size_t>(tmp_expected);
     offset += sizeof(uint64_t);
 
-    // Validate bit array size
-    size_t bit_bytes = (num_bits_ + 7) / 8;
-    if (size < offset + bit_bytes) {
-        // Truncated payload - reset to safe empty state
+    // Validate header fields before using them
+    constexpr size_t MAX_BITS = (1ULL << 40);   // ~1TB max, reasonable upper bound
+    constexpr size_t MAX_HASHES = 64;           // reasonable upper bound
+    constexpr size_t MAX_EXPECTED = (1ULL << 30); // ~1B elements max
+
+    if (num_bits_ == 0 || num_bits_ > MAX_BITS) {
+        num_bits_ = 0;
+        num_hashes_ = 0;
+        expected_elements_ = 0;
+        bits_.clear();
+        return;
+    }
+    if (num_hashes_ > MAX_HASHES) {
+        num_bits_ = 0;
+        num_hashes_ = 0;
+        expected_elements_ = 0;
+        bits_.clear();
+        return;
+    }
+    if (expected_elements_ > MAX_EXPECTED) {
+        num_bits_ = 0;
+        num_hashes_ = 0;
+        expected_elements_ = 0;
+        bits_.clear();
+        return;
+    }
+
+    // Validate bit array size and overflow safety
+    size_t bit_bytes = 0;
+    if (num_bits_ > (SIZE_MAX - 7) / 8) {
+        num_bits_ = 0;
+        num_hashes_ = 0;
+        expected_elements_ = 0;
+        bits_.clear();
+        return;
+    }
+    bit_bytes = (num_bits_ + 7) / 8;
+
+    // Check that bit_bytes fits in remaining payload
+    if (bit_bytes > size || offset > size || bit_bytes > size - offset) {
         num_bits_ = 0;
         num_hashes_ = 0;
         expected_elements_ = 0;

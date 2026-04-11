@@ -499,8 +499,8 @@ int main(int argc, char* argv[]) {
                         if (cluster_manager != nullptr) {
                             cluster_manager->set_bloom_filter(
                                 args.context_id, args.build_table, args.probe_table,
-                                args.probe_key_col, args.filter_data, args.expected_elements,
-                                args.num_hashes);
+                                args.probe_key_col, std::move(args.filter_data),
+                                args.expected_elements, args.num_hashes);
                         }
                         cloudsql::network::QueryResultsReply reply;
                         reply.success = true;
@@ -571,6 +571,30 @@ int main(int argc, char* argv[]) {
                             bool overall_success = true;
                             std::string delivery_errors;
 
+                            // Hoist bloom filter and key resolution out of per-destination loop
+                            cloudsql::common::BloomFilter bloom;
+                            bool have_bloom = false;
+                            size_t key_idx = static_cast<size_t>(-1);
+
+                            if (cluster_manager->has_bloom_filter(args.context_id)) {
+                                bloom = cluster_manager->get_bloom_filter(args.context_id);
+                                std::string probe_key_col = cluster_manager->get_probe_key_col(args.context_id);
+
+                                if (!probe_key_col.empty()) {
+                                    auto table_meta_opt = catalog->get_table_by_name(args.table_name);
+                                    if (table_meta_opt.has_value()) {
+                                        const auto* table_meta = table_meta_opt.value();
+                                        for (size_t i = 0; i < table_meta->columns.size(); ++i) {
+                                            if (table_meta->columns[i].name == probe_key_col) {
+                                                key_idx = i;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                have_bloom = (key_idx != static_cast<size_t>(-1));
+                            }
+
                             for (auto& [node_id, rows] : partitions) {
                                 const cloudsql::cluster::NodeInfo* target_node = nullptr;
                                 for (const auto& n : data_nodes) {
@@ -590,42 +614,16 @@ int main(int argc, char* argv[]) {
                                     }
 
                                     // Apply bloom filter on sender side before sending
-                                    std::vector<cloudsql::executor::Tuple> rows_to_send =
-                                        std::move(rows);
-                                    if (cluster_manager->has_bloom_filter(args.context_id)) {
-                                        auto bloom =
-                                            cluster_manager->get_bloom_filter(args.context_id);
-                                        std::string probe_key_col =
-                                            cluster_manager->get_probe_key_col(args.context_id);
-
-                                        if (!probe_key_col.empty()) {
-                                            // Find key column index in current table
-                                            auto table_meta_opt =
-                                                catalog->get_table_by_name(args.table_name);
-                                            if (table_meta_opt.has_value()) {
-                                                const auto* table_meta = table_meta_opt.value();
-                                                size_t key_idx = static_cast<size_t>(-1);
-                                                for (size_t i = 0; i < table_meta->columns.size();
-                                                     ++i) {
-                                                    if (table_meta->columns[i].name ==
-                                                        probe_key_col) {
-                                                        key_idx = i;
-                                                        break;
-                                                    }
-                                                }
-
-                                                if (key_idx != static_cast<size_t>(-1)) {
-                                                    std::vector<cloudsql::executor::Tuple> filtered;
-                                                    filtered.reserve(rows_to_send.size());
-                                                    for (auto& row : rows_to_send) {
-                                                        if (bloom.might_contain(row.get(key_idx))) {
-                                                            filtered.push_back(std::move(row));
-                                                        }
-                                                    }
-                                                    rows_to_send = std::move(filtered);
-                                                }
+                                    std::vector<cloudsql::executor::Tuple> rows_to_send = std::move(rows);
+                                    if (have_bloom) {
+                                        std::vector<cloudsql::executor::Tuple> filtered;
+                                        filtered.reserve(rows_to_send.size());
+                                        for (auto& row : rows_to_send) {
+                                            if (bloom.might_contain(row.get(key_idx))) {
+                                                filtered.push_back(std::move(row));
                                             }
                                         }
+                                        rows_to_send = std::move(filtered);
                                     }
 
                                     cloudsql::network::PushDataArgs push_args;

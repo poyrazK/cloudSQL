@@ -165,14 +165,21 @@ TEST(BloomFilterTests, DifferentValueTypes) {
  * @brief Tests BloomFilterArgs serialization round-trip.
  */
 TEST(BloomFilterTests, BloomFilterArgsSerialization) {
+    // Create a real bloom filter and use its serialized form
+    BloomFilter original(50);
+    original.insert(Value::make_int64(10));
+    original.insert(Value::make_int64(20));
+    original.insert(Value::make_text("hello"));
+    std::vector<uint8_t> real_filter_data = original.serialize();
+
     BloomFilterArgs args;
     args.context_id = "ctx_123";
     args.build_table = "users";
     args.probe_table = "orders";
     args.probe_key_col = "user_id";
-    args.filter_data = {0x01, 0x02, 0x03};
-    args.expected_elements = 1000;
-    args.num_hashes = 4;
+    args.filter_data = real_filter_data;
+    args.expected_elements = original.expected_elements();
+    args.num_hashes = original.num_hashes();
 
     auto serialized = args.serialize();
     auto deserialized = BloomFilterArgs::deserialize(serialized);
@@ -185,6 +192,14 @@ TEST(BloomFilterTests, BloomFilterArgsSerialization) {
     EXPECT_EQ(args.num_hashes, deserialized.num_hashes);
     ASSERT_EQ(args.filter_data.size(), deserialized.filter_data.size());
     EXPECT_EQ(args.filter_data, deserialized.filter_data);
+
+    // Reconstruct bloom filter from deserialized data and verify it works
+    BloomFilter reconstructed(deserialized.filter_data.data(), deserialized.filter_data.size());
+    EXPECT_EQ(reconstructed.expected_elements(), original.expected_elements());
+    EXPECT_EQ(reconstructed.num_hashes(), original.num_hashes());
+    EXPECT_TRUE(reconstructed.might_contain(Value::make_int64(10)));
+    EXPECT_TRUE(reconstructed.might_contain(Value::make_int64(20)));
+    EXPECT_TRUE(reconstructed.might_contain(Value::make_text("hello")));
 }
 
 /**

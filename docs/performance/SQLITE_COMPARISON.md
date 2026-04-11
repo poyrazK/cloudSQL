@@ -70,14 +70,15 @@ from join keys              before buffering
 | `BloomFilter` class | `include/common/bloom_filter.hpp` | MurmurHash3-based bloom filter |
 | `BloomFilterArgs` RPC | `include/network/rpc_message.hpp` | Serialization for network transfer |
 | `ClusterManager` storage | `include/common/cluster_manager.hpp` | Stores bloom filter per context |
-| `PushData` handler | `src/main.cpp` | Applies bloom filter before buffering |
+| `PushData` handler | `src/main.cpp` | Receives and buffers filtered tuples |
+| `ShuffleFragment` handler | `src/main.cpp` | Applies bloom filter before sending |
 | Coordinator | `src/distributed/distributed_executor.cpp` | Broadcasts filter after Phase 1 |
 
 ### Test Coverage
 - 10 unit tests covering: BloomFilter class, BloomFilterArgs serialization, ClusterManager storage, filter application logic
 - Tests located in `tests/bloom_filter_test.cpp`
 
-## 8. Future Roadmap
+## 7. Future Roadmap
 With the scan gap closed, our focus shifts to higher-level analytical throughput:
 *   **Stage 1: SIMD-Accelerated Filtering**: Utilize AVX-512/NEON instructions to filter multiple rows in a single CPU cycle.
 *   **Stage 2: Vectorized Execution**: Move from row-at-a-time `TupleView` to batch-at-a-time `VectorBatch` processing.
