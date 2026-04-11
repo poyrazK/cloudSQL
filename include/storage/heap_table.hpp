@@ -156,12 +156,12 @@ class HeapTable {
 
         /**
          * @brief Move to the next tuple and return a view into its data.
-         * 
+         *
          * @note The returned TupleView points into the iterator's currently pinned page and
          * therefore becomes invalid as soon as the iterator advances to a different page,
          * is closed, or is destroyed. Callers must copy data out of the TupleView if they
          * need it beyond the iterator's current position (e.g., during materialization).
-         * 
+         *
          * @param out_view Output parameter to store the view.
          * @return true if a tuple was found, false if EOF.
          */

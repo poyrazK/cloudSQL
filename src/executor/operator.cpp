@@ -341,11 +341,11 @@ ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child,
 
 bool ProjectOperator::init() {
     if (!child_->init()) return false;
-    
+
     is_simple_projection_ = true;
     column_mapping_.clear();
     auto& child_schema = child_->output_schema();
-    
+
     // Check if we have a single "*" column and expand it
     bool has_star = false;
     if (columns_.size() == 1 && columns_[0]->type() == parser::ExprType::Column) {
@@ -364,7 +364,7 @@ bool ProjectOperator::init() {
                 const auto* c_expr = static_cast<const parser::ColumnExpr*>(expr.get());
                 size_t idx = child_schema.find_column(c_expr->to_string());
                 if (idx == static_cast<size_t>(-1)) idx = child_schema.find_column(c_expr->name());
-                
+
                 if (idx != static_cast<size_t>(-1)) {
                     column_mapping_.push_back(idx);
                 } else {
@@ -377,7 +377,7 @@ bool ProjectOperator::init() {
             }
         }
     }
-    
+
     set_state(ExecState::Init);
     return true;
 }
@@ -974,9 +974,9 @@ bool ProjectOperator::next_view(storage::HeapTable::TupleView& out_view) {
         } else {
             // Fallback: This is not optimal but satisfies the semantics.
             // Future work: Batch materialization or local buffer.
-            // For now, we dont return true for computed stuff in next_view 
+            // For now, we dont return true for computed stuff in next_view
             // to avoid exposing raw data incorrectly.
-            return false; 
+            return false;
         }
     }
     return false;
@@ -989,7 +989,8 @@ bool FilterOperator::next_view(storage::HeapTable::TupleView& out_view) {
         if (!condition_) return true;
         // Evaluate condition against the view.
         // For performance, we materialize into a thread-local or arena-based Tuple
-        // if we wanted to avoid allocation per row, but for now we use the operator memory resource.
+        // if we wanted to avoid allocation per row, but for now we use the operator memory
+        // resource.
         executor::Tuple t = out_view.materialize(get_memory_resource());
         if (condition_->evaluate(&t, &child_schema, get_params()).as_bool()) {
             return true;
