@@ -39,8 +39,53 @@ We addressed the gaps via the following optimizations:
 2.  **Pinned Page Iteration**: Modifying our `HeapTable::Iterator` to hold pages pinned across slot iteration avoids repetitive atomic checks and LRU updates per-row.
 3.  **Batch Insert Mode**: Skipping single-row undo logs and exclusive locks to exploit pure in-memory bump allocation. This drove the `INSERT` speedup well past SQLite limits, as we write raw tuples uninterrupted.
 
-## 6. Future Roadmap
+## 6. Post-Optimization Enhancements
+We addressed the gaps via the following optimizations:
+1.  **Buffer Pool Bypass (`fetch_page_by_id`)**: Reduced global std::mutex latch contention by explicitly caching ID lookups, yielding a ~30% improvement in scan logic.
+2.  **Pinned Page Iteration**: Modifying our `HeapTable::Iterator` to hold pages pinned across slot iteration avoids repetitive atomic checks and LRU updates per-row.
+3.  **Batch Insert Mode**: Skipping single-row undo logs and exclusive locks to exploit pure in-memory bump allocation. This drove the `INSERT` speedup well past SQLite limits, as we write raw tuples uninterrupted.
+
+## 7. Distributed Join Optimization: Bloom Filters
+
+### Problem
+Distributed shuffle joins send **all tuples** across the network to partitioned nodes, even when many will never match. This causes unnecessary network traffic and buffer memory usage.
+
+### Solution: Bloom Filter Integration
+Implemented bloom filters to filter tuples at the source before network transmission:
+- **One-sided bloom filter**: Built from the inner/right table, applied to filter the outer/left table
+- **Distributed construction**: Each data node builds bloom filter locally during its scan phase
+- **Coordinator coordination**: `BloomFilterPush` RPC broadcasts filter metadata to all nodes
+
+### Architecture
+```
+[Phase 1: Shuffle Left]     [Phase 2: Shuffle Right]
+     |                             |
+     v                             v
+Build local bloom           Apply bloom filter
+from join keys              before buffering
+     |                             |
+     +---- BloomFilterPush ----->---+
+     (filter metadata)              |
+                                    v
+                         Filtered tuples buffered
+```
+
+### Key Components
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `BloomFilter` class | `include/common/bloom_filter.hpp` | MurmurHash3-based bloom filter |
+| `BloomFilterArgs` RPC | `include/network/rpc_message.hpp` | Serialization for network transfer |
+| `ClusterManager` storage | `include/common/cluster_manager.hpp` | Stores bloom filter per context |
+| `PushData` handler | `src/main.cpp` | Applies bloom filter before buffering |
+| Coordinator | `src/distributed/distributed_executor.cpp` | Broadcasts filter after Phase 1 |
+
+### Test Coverage
+- 10 unit tests covering: BloomFilter class, BloomFilterArgs serialization, ClusterManager storage, filter application logic
+- Tests located in `tests/bloom_filter_test.cpp`
+
+## 8. Future Roadmap
 With the scan gap closed, our focus shifts to higher-level analytical throughput:
 *   **Stage 1: SIMD-Accelerated Filtering**: Utilize AVX-512/NEON instructions to filter multiple rows in a single CPU cycle.
 *   **Stage 2: Vectorized Execution**: Move from row-at-a-time `TupleView` to batch-at-a-time `VectorBatch` processing.
 *   **Stage 3: Columnar Storage**: Transition from row-oriented heap files to columnar persistence for extreme analytical scanning.
+*   **Stage 4: Distributed Hash Join**: Enhance the single `HashJoinOperator` with parallel partitioned hash join for multi-node execution.
