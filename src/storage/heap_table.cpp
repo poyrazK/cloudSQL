@@ -55,6 +55,78 @@ HeapTable::~HeapTable() {
 
 /* --- Iterator Implementation --- */
 
+common::Value HeapTable::TupleView::get_value(size_t col_index) const {
+    if (!schema || !payload_data) return common::Value::make_null();
+
+    // When a column_mapping is present its size determines the number of
+    // accessible logical columns (it may differ from schema->column_count()
+    // for SELECT * queries where the projected schema is built before the star
+    // is expanded into concrete column entries).
+    const size_t logical_count = (column_mapping && !column_mapping->empty())
+                                     ? column_mapping->size()
+                                     : schema->column_count();
+    if (col_index >= logical_count) return common::Value::make_null();
+
+    // Resolve the physical column index through the mapping when present.
+    // col_index is a logical index into the (possibly projected) schema; the
+    // serialized payload is always laid out in physical table column order.
+    const size_t physical_idx = (column_mapping && col_index < column_mapping->size())
+                                    ? (*column_mapping)[col_index]
+                                    : col_index;
+
+    // Walk the serialized payload from the beginning to reach physical_idx.
+    size_t cursor = 0;
+    for (size_t i = 0; i <= physical_idx; ++i) {
+        if (cursor >= payload_len) return common::Value::make_null();
+
+        auto type = static_cast<common::ValueType>(payload_data[cursor++]);
+
+        if (type == common::ValueType::TYPE_NULL) {
+            if (i == physical_idx) return common::Value::make_null();
+            continue;
+        }
+
+        if (type == common::ValueType::TYPE_BOOL || type == common::ValueType::TYPE_INT8 ||
+            type == common::ValueType::TYPE_INT16 || type == common::ValueType::TYPE_INT32 ||
+            type == common::ValueType::TYPE_INT64 || type == common::ValueType::TYPE_FLOAT32 ||
+            type == common::ValueType::TYPE_FLOAT64) {
+            if (cursor + 8 > payload_len) return common::Value::make_null();
+
+            if (i == physical_idx) {
+                if (type == common::ValueType::TYPE_FLOAT32 ||
+                    type == common::ValueType::TYPE_FLOAT64) {
+                    double v;
+                    std::memcpy(&v, payload_data + cursor, 8);
+                    return common::Value::make_float64(v);
+                } else {
+                    int64_t v;
+                    std::memcpy(&v, payload_data + cursor, 8);
+                    if (type == common::ValueType::TYPE_BOOL)
+                        return common::Value::make_bool(v != 0);
+                    else
+                        return common::Value::make_int64(v);
+                }
+            }
+            cursor += 8;
+        } else {
+            // Text-based
+            if (cursor + 4 > payload_len) return common::Value::make_null();
+            uint32_t len;
+            std::memcpy(&len, payload_data + cursor, 4);
+            cursor += 4;
+
+            if (cursor + len > payload_len) return common::Value::make_null();
+
+            if (i == physical_idx) {
+                std::string s(reinterpret_cast<const char*>(payload_data + cursor), len);
+                return common::Value::make_text(s);
+            }
+            cursor += len;
+        }
+    }
+    return common::Value::make_null();
+}
+
 HeapTable::Iterator::Iterator(HeapTable& table, std::pmr::memory_resource* mr)
     : table_(table),
       next_id_(0, 0),
@@ -75,8 +147,11 @@ HeapTable::Iterator::Iterator(Iterator&& other) noexcept
       eof_(other.eof_),
       mr_(other.mr_),
       current_page_(other.current_page_),
-      current_page_num_(other.current_page_num_) {
+      current_page_num_(other.current_page_num_),
+      cached_buffer_(other.cached_buffer_),
+      cached_header_(other.cached_header_) {
     other.current_page_ = nullptr;
+    other.cached_buffer_ = nullptr;
 }
 
 HeapTable::Iterator& HeapTable::Iterator::operator=(Iterator&& other) noexcept {
@@ -99,7 +174,10 @@ HeapTable::Iterator& HeapTable::Iterator::operator=(Iterator&& other) noexcept {
         mr_ = other.mr_;
         current_page_ = other.current_page_;
         current_page_num_ = other.current_page_num_;
+        cached_buffer_ = other.cached_buffer_;
+        cached_header_ = other.cached_header_;
         other.current_page_ = nullptr;
+        other.cached_buffer_ = nullptr;
     }
     return *this;
 }
@@ -132,29 +210,31 @@ bool HeapTable::Iterator::next_meta(TupleMeta& out_meta) {
                 eof_ = true;
                 return false;
             }
+
+            // Cache page header and buffer pointer (Phase 2 optimization)
+            cached_buffer_ = reinterpret_cast<const uint8_t*>(current_page_->get_data());
+            std::memcpy(&cached_header_, cached_buffer_, sizeof(PageHeader));
         }
 
-        auto* buffer = current_page_->get_data();
-        PageHeader header{};
-        std::memcpy(&header, buffer, sizeof(PageHeader));
-
-        if (header.free_space_offset == 0) {
+        if (cached_header_.free_space_offset == 0) {
             table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
             current_page_ = nullptr;
+            cached_buffer_ = nullptr;
             eof_ = true;
             return false;
         }
 
         /* Scan slots in the current page starting from next_id_.slot_num */
-        while (next_id_.slot_num < header.num_slots) {
+        while (next_id_.slot_num < cached_header_.num_slots) {
             uint16_t offset = 0;
-            std::memcpy(&offset,
-                        buffer + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
-                        sizeof(uint16_t));
+            std::memcpy(
+                &offset,
+                cached_buffer_ + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
+                sizeof(uint16_t));
 
             if (offset != 0) {
                 /* Found a record: Deserialize it in-place from the pinned buffer */
-                const uint8_t* const data = reinterpret_cast<const uint8_t*>(buffer + offset);
+                const uint8_t* const data = cached_buffer_ + offset;
 
                 // Read Tuple Length (first 2 bytes)
                 uint16_t tuple_data_len;
@@ -689,4 +769,111 @@ bool HeapTable::write_page(uint32_t page_num, const char* buffer) {
     return true;
 }
 
+bool HeapTable::Iterator::next_view(TupleView& out_view) {
+    if (eof_) {
+        return false;
+    }
+
+    while (true) {
+        if (!current_page_) {
+            current_page_ =
+                table_.bpm_.fetch_page_by_id(table_.file_id_, table_.filename_, next_id_.page_num);
+            current_page_num_ = next_id_.page_num;
+            if (!current_page_) {
+                eof_ = true;
+                return false;
+            }
+
+            // Cache page header and buffer pointer (Phase 2 optimization)
+            cached_buffer_ = reinterpret_cast<const uint8_t*>(current_page_->get_data());
+            std::memcpy(&cached_header_, cached_buffer_, sizeof(PageHeader));
+        }
+
+        if (cached_header_.free_space_offset == 0) {
+            table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+            current_page_ = nullptr;
+            cached_buffer_ = nullptr;
+            eof_ = true;
+            return false;
+        }
+
+        /* Scan slots in the current page starting from next_id_.slot_num */
+        while (next_id_.slot_num < cached_header_.num_slots) {
+            uint16_t offset = 0;
+            std::memcpy(
+                &offset,
+                cached_buffer_ + sizeof(PageHeader) + (next_id_.slot_num * sizeof(uint16_t)),
+                sizeof(uint16_t));
+
+            if (offset != 0) {
+                const uint8_t* const data = cached_buffer_ + offset;
+
+                // Read Tuple Length (first 2 bytes)
+                uint16_t tuple_data_len;
+                std::memcpy(&tuple_data_len, data, 2);
+
+                const size_t record_len = static_cast<size_t>(tuple_data_len);
+                if (record_len < 18) {  // 2 len + 8 xmin + 8 xmax
+                    std::cerr << "next_view failed: record_len < 18, it is " << record_len << "\n";
+                    table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+                    current_page_ = nullptr;
+                    cached_buffer_ = nullptr;
+                    return false;
+                }
+
+                // Verify the record stays within the page buffer to prevent OOB reads.
+                if (data + record_len > cached_buffer_ + Page::PAGE_SIZE) {
+                    std::cerr << "next_view failed: record extends beyond page boundary\n";
+                    table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+                    current_page_ = nullptr;
+                    cached_buffer_ = nullptr;
+                    return false;
+                }
+
+                // Read MVCC Header
+                std::memcpy(&out_view.xmin, data + 2, 8);
+                std::memcpy(&out_view.xmax, data + 10, 8);
+
+                out_view.table_schema = &table_.schema_;
+                out_view.schema = &table_.schema_;
+                out_view.column_mapping = nullptr;
+                out_view.payload_data = data + 18;
+                out_view.payload_len = record_len - 18;
+
+                last_id_ = next_id_;
+                next_id_.slot_num++;
+                // Do not unpin here so the page is reused for the next record
+                return true;
+            }
+            next_id_.slot_num++;
+        }
+
+        /* Move to the next page */
+        table_.bpm_.unpin_page_by_id(table_.file_id_, current_page_num_, false);
+        current_page_ = nullptr;
+        cached_buffer_ = nullptr;
+
+        next_id_.page_num++;
+        next_id_.slot_num = 0;
+    }
+}
+
+executor::Tuple HeapTable::TupleView::materialize(std::pmr::memory_resource* mr) const {
+    if (!mr) mr = std::pmr::get_default_resource();
+    // Use the same logical_count logic as get_value so that SELECT * views
+    // (which have column_mapping with more entries than schema->column_count())
+    // are materialized correctly.
+    const size_t num_cols = (column_mapping && !column_mapping->empty())
+                                ? column_mapping->size()
+                                : (schema != nullptr ? schema->columns().size() : 0);
+
+    if (num_cols == 0) return executor::Tuple{};
+
+    std::pmr::vector<common::Value> values(mr);
+    values.reserve(num_cols);
+    for (size_t i = 0; i < num_cols; ++i) {
+        values.push_back(get_value(i));
+    }
+    return executor::Tuple(std::move(values));
+}
 }  // namespace cloudsql::storage

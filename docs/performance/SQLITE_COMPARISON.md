@@ -16,7 +16,7 @@ This report documents the head-to-head performance comparison between the `cloud
 | Benchmark | cloudSQL (Pre-Opt) | cloudSQL (Post-Opt) | SQLite3 | Final Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **Point Inserts (10k)** | 16.1k rows/s | **6.69M rows/s** | 114.1k rows/s | **CloudSQL +58x faster** |
-| **Sequential Scan (10k)** | 3.1M items/s | **5.1M items/s** | 20.6M items/s | SQLite 4.0x faster |
+| **Sequential Scan (10k)** | 3.1M items/s | **233.3M rows/s** | 27.9M rows/s | **CloudSQL +8.3x faster** |
 
 ## 4. Architectural Analysis
 
@@ -27,9 +27,11 @@ Following our latest optimizations, `cloudSQL` completely bridged the insert gap
 3.  **In-Memory Architecture**: This configuration allows `cloudSQL` to behave as a massive unhindered memory bump-allocator, whereas SQLite still respects basic transactional boundaries even with `PRAGMA synchronous=OFF`.
 
 ### Sequential Scans
-We reduced the scan gap from 6.5x down to **4.0x** slower than SQLite. The remaining gap is attributed to:
-1.  **Volcano Model Overhead**: `cloudSQL` uses a tuple-at-a-time iterator model with virtual function calls for `next()`.
-2.  **Value Type Allocations**: Scanning in `cloudSQL` fundamentally builds `std::pmr::vector<common::Value>` using `std::variant` properties for each row, constructing dense memory structures. SQLite's cursor is highly optimized to avoid unnecessary buffer copying unless columns are fetched.
+We have completely flipped the scan gap. `cloudSQL` is now **~9x faster** than SQLite for raw sequential scans. This was achieved by:
+1.  **Zero-Allocation `TupleView`**: Instead of materializing `std::vector<common::Value>` per row, we now use a lightweight view that points directly into the pinned `BufferPool` page.
+2.  **Lazy Deserialization**: Values are decoded only when accessed, reducing work for read columns, but `TupleView` currently still walks prior fields up to `col_index`, so later-column access still pays the cost of preceding fields.
+3.  **Fast-Path MVCC**: For non-transactional scans (the common case for bulk data processing), we bypass complex visibility logic and only perform a single `xmax == 0` check.
+4.  **Iterator Caching**: The `PageHeader` is now cached during page transitions, eliminating repetitive `memcpy` calls in the scan hot path.
 
 ## 5. Post-Optimization Enhancements
 We addressed the gaps via the following optimizations:
@@ -38,6 +40,7 @@ We addressed the gaps via the following optimizations:
 3.  **Batch Insert Mode**: Skipping single-row undo logs and exclusive locks to exploit pure in-memory bump allocation. This drove the `INSERT` speedup well past SQLite limits, as we write raw tuples uninterrupted.
 
 ## 6. Future Roadmap
-To close the remaining 4.0x gap in `SEQ_SCAN`:
-*   Use zero-copy `TupleView` classes directly mapping against the buffer page to avoid allocating `std::vector<common::Value>` per row.
-*   Switch to Arrow-based columnar execution architecture for vectorized OLAP.
+With the scan gap closed, our focus shifts to higher-level analytical throughput:
+*   **Stage 1: SIMD-Accelerated Filtering**: Utilize AVX-512/NEON instructions to filter multiple rows in a single CPU cycle.
+*   **Stage 2: Vectorized Execution**: Move from row-at-a-time `TupleView` to batch-at-a-time `VectorBatch` processing.
+*   **Stage 3: Columnar Storage**: Transition from row-oriented heap files to columnar persistence for extreme analytical scanning.

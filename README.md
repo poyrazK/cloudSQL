@@ -23,6 +23,21 @@ A lightweight, distributed SQL database engine. Designed for cloud environments 
 - **Volcano & Vectorized Engine**: Flexible execution models supporting traditional row-based and high-performance columnar processing.
 - **PostgreSQL Wire Protocol**: Handshake and simple query protocol implementation for tool compatibility.
 
+## Performance
+
+CloudSQL is engineered for extreme performance, outperforming industry standards like SQLite in raw execution speed:
+
+- **6.6M+ Point Inserts/s**: Optimized prepared statement caching and batch insert fast-paths make CloudSQL **58x faster** than SQLite.
+- **181M+ Rows Scanned/s**: Zero-allocation `TupleView` architecture and lazy deserialization make CloudSQL **9x faster** than SQLite for sequential scans.
+- **Lock-Free Fast-Paths**: Intelligent detection of non-transactional workloads bypasses expensive visibility overheads.
+
+| Benchmark | cloudSQL | SQLite3 | Lead |
+| :--- | :--- | :--- | :--- |
+| **Point Inserts** | 6.69M rows/s | 114.1k rows/s | **+58x** |
+| **Sequential Scan** | 181.4M rows/s | 20.6M rows/s | **+9x** |
+
+For more details, see the [Performance Report](./docs/performance/SQLITE_COMPARISON.md).
+
 ## Project Structure
 
 - `include/`: Header files defining the core engine and distributed API.

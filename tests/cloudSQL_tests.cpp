@@ -1022,4 +1022,242 @@ TEST(ParserTests, ExhaustiveParserErrors) {
     }
 }
 
+// ============= TupleView / next_view Tests =============
+
+// Helper: build a two-column (INT, TEXT) HeapTable with N rows.
+namespace {
+struct TupleViewTestCtx {
+    StorageManager disk;
+    BufferPoolManager sm;
+    Schema schema;
+    std::unique_ptr<HeapTable> table;
+
+    explicit TupleViewTestCtx(const std::string& name)
+        : disk("./test_data"), sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk) {
+        schema.add_column("id", ValueType::TYPE_INT64);
+        schema.add_column("tag", ValueType::TYPE_TEXT);
+        table = std::make_unique<HeapTable>(name, sm, schema);
+        table->create();
+    }
+
+    void insert(int64_t id, const std::string& tag) {
+        table->insert(Tuple({Value::make_int64(id), Value::make_text(tag)}));
+    }
+};
+}  // namespace
+
+// 1. Basic scan via next_view: correct row count and values for SELECT *
+TEST(TupleViewTests, BasicScanSelectStar) {
+    const std::string name = "tv_basic";
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+
+    TupleViewTestCtx ctx(name);
+    ctx.insert(1, "a");
+    ctx.insert(2, "b");
+    ctx.insert(3, "c");
+
+    // Build a SeqScan wrapped by a SELECT * ProjectOperator (no txn = fast path)
+    std::vector<std::unique_ptr<parser::Expression>> cols;
+    cols.push_back(std::make_unique<parser::ColumnExpr>("*"));
+
+    auto scan = std::make_unique<SeqScanOperator>(
+        std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
+    auto proj = std::make_unique<ProjectOperator>(std::move(scan), std::move(cols));
+
+    ASSERT_TRUE(proj->init());
+    ASSERT_TRUE(proj->open());
+
+    HeapTable::TupleView view;
+    int count = 0;
+    while (proj->next_view(view)) {
+        count++;
+        // Values should be accessible through the view
+        EXPECT_FALSE(view.get_value(0).is_null());
+        EXPECT_FALSE(view.get_value(1).is_null());
+    }
+    proj->close();
+
+    EXPECT_EQ(count, 3);
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+}
+
+// 2. Deleted tuples (xmax != 0) are skipped by next_view
+TEST(TupleViewTests, DeletedTuplesSkipped) {
+    const std::string name = "tv_deleted";
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+
+    TupleViewTestCtx ctx(name);
+    auto id1 = ctx.table->insert(Tuple({Value::make_int64(10), Value::make_text("alive")}));
+    auto id2 = ctx.table->insert(Tuple({Value::make_int64(20), Value::make_text("dead")}));
+    // Mark id2 as deleted by setting xmax != 0
+    ctx.table->remove(id2, /*xmax=*/1);
+
+    std::vector<std::unique_ptr<parser::Expression>> cols;
+    cols.push_back(std::make_unique<parser::ColumnExpr>("*"));
+
+    auto scan = std::make_unique<SeqScanOperator>(
+        std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
+    auto proj = std::make_unique<ProjectOperator>(std::move(scan), std::move(cols));
+
+    ASSERT_TRUE(proj->init());
+    ASSERT_TRUE(proj->open());
+
+    HeapTable::TupleView view;
+    int count = 0;
+    while (proj->next_view(view)) {
+        count++;
+        // Only the alive row should come through
+        EXPECT_EQ(view.get_value(0).to_int64(), 10);
+    }
+    proj->close();
+
+    EXPECT_EQ(count, 1);
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+}
+
+// 3. Non-identity column projection: SELECT tag, id (columns reversed)
+//    get_value must resolve physical indices through column_mapping.
+TEST(TupleViewTests, NonIdentityProjectionValues) {
+    const std::string name = "tv_proj";
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+
+    TupleViewTestCtx ctx(name);
+    ctx.insert(42, "hello");
+
+    // SELECT tag, id  (logical 0 -> physical 1, logical 1 -> physical 0)
+    std::vector<std::unique_ptr<parser::Expression>> cols;
+    cols.push_back(std::make_unique<parser::ColumnExpr>("tag"));
+    cols.push_back(std::make_unique<parser::ColumnExpr>("id"));
+
+    auto scan = std::make_unique<SeqScanOperator>(
+        std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
+    auto proj = std::make_unique<ProjectOperator>(std::move(scan), std::move(cols));
+
+    ASSERT_TRUE(proj->init());
+    ASSERT_TRUE(proj->open());
+
+    HeapTable::TupleView view;
+    ASSERT_TRUE(proj->next_view(view));
+
+    // Logical column 0 is "tag" -> physical index 1 -> "hello"
+    EXPECT_EQ(view.get_value(0).as_text(), "hello");
+    // Logical column 1 is "id" -> physical index 0 -> 42
+    EXPECT_EQ(view.get_value(1).to_int64(), 42);
+
+    // No more rows
+    EXPECT_FALSE(proj->next_view(view));
+    proj->close();
+
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+}
+
+// 4. Computed-expression projection returns false immediately without consuming rows.
+//    Callers must fall back to next() for computed projections.
+TEST(TupleViewTests, ComputedProjectionDoesNotConsumeRows) {
+    const std::string name = "tv_computed";
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+
+    TupleViewTestCtx ctx(name);
+    ctx.insert(5, "x");
+    ctx.insert(6, "y");
+
+    // SELECT id + 1  (computed expression — not a simple column reference)
+    std::vector<std::unique_ptr<parser::Expression>> cols;
+    cols.push_back(std::make_unique<parser::BinaryExpr>(
+        std::make_unique<parser::ColumnExpr>("id"), parser::TokenType::Plus,
+        std::make_unique<parser::ConstantExpr>(Value::make_int64(1))));
+
+    auto scan = std::make_unique<SeqScanOperator>(
+        std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
+    auto proj = std::make_unique<ProjectOperator>(std::move(scan), std::move(cols));
+
+    ASSERT_TRUE(proj->init());
+    ASSERT_TRUE(proj->open());
+
+    // next_view should return false immediately (unsupported path).
+    HeapTable::TupleView view;
+    EXPECT_FALSE(proj->next_view(view));
+
+    // Rows must still be readable via the regular next() path.
+    // Reopen to reset state — use a fresh operator.
+    proj->close();
+
+    std::vector<std::unique_ptr<parser::Expression>> cols2;
+    cols2.push_back(std::make_unique<parser::BinaryExpr>(
+        std::make_unique<parser::ColumnExpr>("id"), parser::TokenType::Plus,
+        std::make_unique<parser::ConstantExpr>(Value::make_int64(1))));
+
+    auto scan2 = std::make_unique<SeqScanOperator>(
+        std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
+    auto proj2 = std::make_unique<ProjectOperator>(std::move(scan2), std::move(cols2));
+
+    ASSERT_TRUE(proj2->init());
+    ASSERT_TRUE(proj2->open());
+
+    Tuple t;
+    ASSERT_TRUE(proj2->next(t));
+    EXPECT_EQ(t.size(), 1u);
+    EXPECT_EQ(t.get(0).to_int64(), 6);
+    ASSERT_TRUE(proj2->next(t));
+    EXPECT_EQ(t.size(), 1u);
+    EXPECT_EQ(t.get(0).to_int64(), 7);
+    ASSERT_FALSE(proj2->next(t));
+    proj2->close();
+
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+}
+
+// 5. table_schema is set correctly in next_view (non-null)
+TEST(TupleViewTests, TableSchemaSetByNextView) {
+    const std::string name = "tv_schema";
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+
+    TupleViewTestCtx ctx(name);
+    ctx.insert(99, "z");
+
+    auto iter = ctx.table->scan();
+    HeapTable::TupleView view;
+    ASSERT_TRUE(iter.next_view(view));
+
+    EXPECT_NE(view.table_schema, nullptr);
+    EXPECT_NE(view.schema, nullptr);
+    EXPECT_EQ(view.table_schema->column_count(), 2u);
+
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+}
+
+// 6. FilterOperator::next_view filters correctly (materializes per-row for condition eval)
+TEST(TupleViewTests, FilterOperatorNextView) {
+    const std::string name = "tv_filter";
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+
+    TupleViewTestCtx ctx(name);
+    ctx.insert(1, "a");
+    ctx.insert(2, "b");
+    ctx.insert(3, "c");
+
+    // WHERE id >= 2
+    auto condition = std::make_unique<parser::BinaryExpr>(
+        std::make_unique<parser::ColumnExpr>("id"), parser::TokenType::Ge,
+        std::make_unique<parser::ConstantExpr>(Value::make_int64(2)));
+
+    auto scan = std::make_unique<SeqScanOperator>(
+        std::make_shared<HeapTable>(name, ctx.sm, ctx.schema), nullptr, nullptr);
+    auto filter = std::make_unique<FilterOperator>(std::move(scan), std::move(condition));
+
+    ASSERT_TRUE(filter->init());
+    ASSERT_TRUE(filter->open());
+
+    HeapTable::TupleView view;
+    int count = 0;
+    while (filter->next_view(view)) {
+        count++;
+        EXPECT_GE(view.get_value(0).to_int64(), 2);
+    }
+    filter->close();
+
+    EXPECT_EQ(count, 2);
+    static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
+}
+
 }  // namespace

@@ -49,6 +49,7 @@ bool SeqScanOperator::init() {
 bool SeqScanOperator::open() {
     set_state(ExecState::Open);
     iterator_ = std::make_unique<storage::HeapTable::Iterator>(table_->scan(get_memory_resource()));
+    no_txn_ = (get_txn() == nullptr);
     return true;
 }
 
@@ -60,6 +61,14 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
 
     storage::HeapTable::TupleMeta meta;
     while (iterator_->next_meta(meta)) {
+        if (no_txn_) {
+            if (meta.xmax == 0) {
+                out_tuple = std::move(meta.tuple);
+                return true;
+            }
+            continue;
+        }
+
         /* MVCC Visibility Check */
         bool visible = true;
         const Transaction* const txn = get_txn();
@@ -76,14 +85,42 @@ bool SeqScanOperator::next(Tuple& out_tuple) {
                 (meta.xmax == 0) || (meta.xmax != my_id && !snapshot.is_visible(meta.xmax));
 
             visible = xmin_visible && xmax_visible;
-        } else {
-            /* No transaction context: only show active tuples */
-            visible = (meta.xmax == 0);
         }
 
         if (visible) {
             out_tuple = std::move(meta.tuple);
             return true;
+        }
+    }
+
+    set_state(ExecState::Done);
+    return false;
+}
+
+bool SeqScanOperator::next_view(storage::HeapTable::TupleView& out_view) {
+    if (!iterator_ || iterator_->is_done()) {
+        set_state(ExecState::Done);
+        return false;
+    }
+
+    while (iterator_->next_view(out_view)) {
+        if (no_txn_) {
+            if (out_view.xmax == 0) return true;
+            continue;
+        }
+
+        /* MVCC Visibility Check */
+        const Transaction* const txn = get_txn();
+        if (txn != nullptr) {
+            const auto& snapshot = txn->get_snapshot();
+            const uint64_t my_id = txn->get_id();
+
+            const bool xmin_visible = (out_view.xmin == my_id) || (out_view.xmin == 0) ||
+                                      snapshot.is_visible(out_view.xmin);
+            const bool xmax_visible = (out_view.xmax == 0) || (out_view.xmax != my_id &&
+                                                               !snapshot.is_visible(out_view.xmax));
+
+            if (xmin_visible && xmax_visible) return true;
         }
     }
 
@@ -298,7 +335,47 @@ ProjectOperator::ProjectOperator(std::unique_ptr<Operator> child,
 }
 
 bool ProjectOperator::init() {
-    return child_->init();
+    if (!child_->init()) return false;
+
+    is_simple_projection_ = true;
+    column_mapping_.clear();
+    auto& child_schema = child_->output_schema();
+
+    // Check if we have a single "*" column and expand it
+    bool has_star = false;
+    if (columns_.size() == 1 && columns_[0]->type() == parser::ExprType::Column) {
+        const auto* c_expr = static_cast<const parser::ColumnExpr*>(columns_[0].get());
+        if (c_expr->name() == "*") {
+            has_star = true;
+            for (size_t i = 0; i < child_schema.columns().size(); ++i) {
+                column_mapping_.push_back(i);
+            }
+            schema_ = child_schema;
+        }
+    }
+
+    if (!has_star) {
+        for (const auto& expr : columns_) {
+            if (expr->type() == parser::ExprType::Column) {
+                const auto* c_expr = static_cast<const parser::ColumnExpr*>(expr.get());
+                size_t idx = child_schema.find_column(c_expr->to_string());
+                if (idx == static_cast<size_t>(-1)) idx = child_schema.find_column(c_expr->name());
+
+                if (idx != static_cast<size_t>(-1)) {
+                    column_mapping_.push_back(idx);
+                } else {
+                    is_simple_projection_ = false;
+                    break;
+                }
+            } else {
+                is_simple_projection_ = false;
+                break;
+            }
+        }
+    }
+
+    set_state(ExecState::Init);
+    return true;
 }
 
 bool ProjectOperator::open() {
@@ -883,4 +960,56 @@ void LimitOperator::set_params(const std::vector<common::Value>* params) {
     if (child_) child_->set_params(params);
 }
 
+bool ProjectOperator::next_view(storage::HeapTable::TupleView& out_view) {
+    // The zero-allocation path is only valid for simple column projections.
+    // Return false immediately (without consuming any child rows) when the
+    // projection includes computed expressions — callers must use next() instead.
+    if (!child_ || !is_simple_projection_) return false;
+
+    if (child_->next_view(out_view)) {
+        out_view.column_mapping = &column_mapping_;
+        out_view.schema = &schema_;
+        return true;
+    }
+    return false;
+}
+
+bool FilterOperator::next_view(storage::HeapTable::TupleView& out_view) {
+    if (!child_) return false;
+    Schema& child_schema = child_->output_schema();
+    while (child_->next_view(out_view)) {
+        if (!condition_) return true;
+        // Evaluate condition against the view.
+        // For performance, we materialize into a thread-local or arena-based Tuple
+        // if we wanted to avoid allocation per row, but for now we use the operator memory
+        // resource.
+        executor::Tuple t = out_view.materialize(get_memory_resource());
+        if (condition_->evaluate(&t, &child_schema, get_params()).as_bool()) {
+            return true;
+        }
+    }
+    set_state(ExecState::Done);
+    return false;
+}
+
+bool LimitOperator::next_view(storage::HeapTable::TupleView& out_view) {
+    if (!child_) return false;
+    while (current_offset_ < static_cast<uint64_t>(offset_)) {
+        if (!child_->next_view(out_view)) {
+            set_state(ExecState::Done);
+            return false;
+        }
+        current_offset_++;
+    }
+    if (limit_ >= 0 && count_ >= static_cast<uint64_t>(limit_)) {
+        set_state(ExecState::Done);
+        return false;
+    }
+    if (child_->next_view(out_view)) {
+        count_++;
+        return true;
+    }
+    set_state(ExecState::Done);
+    return false;
+}
 }  // namespace cloudsql::executor

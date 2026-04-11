@@ -163,8 +163,8 @@ static void BM_SQLite_Insert(benchmark::State& state) {
 }
 BENCHMARK(BM_SQLite_Insert);
 
-// --- Benchmark 3: cloudSQL Sequential Scan ---
-static void BM_CloudSQL_Scan(benchmark::State& state) {
+// --- Benchmark 3: cloudSQL Sequential Scan (Materialized Tuple) ---
+static void BM_CloudSQL_ScanMaterialized(benchmark::State& state) {
     const int num_rows = state.range(0);
     CloudSQLContext ctx("./bench_cloudsql_scan_" + std::to_string(state.thread_index()));
     
@@ -203,7 +203,70 @@ static void BM_CloudSQL_Scan(benchmark::State& state) {
     }
     state.SetItemsProcessed(state.iterations() * num_rows);
 }
-BENCHMARK(BM_CloudSQL_Scan)->Arg(1000)->Arg(10000);
+BENCHMARK(BM_CloudSQL_ScanMaterialized)->Arg(1000)->Arg(10000);
+// --- Benchmark 3.5: cloudSQL Sequential Scan (Zero-Allocation TupleView) ---
+static void BM_CloudSQL_ScanView(benchmark::State& state) {
+    const int num_rows = state.range(0);
+    CloudSQLContext ctx("./bench_cloudsql_scanview_" + std::to_string(state.thread_index()));
+    
+    for (int i = 0; i < num_rows; ++i) {
+        ctx.executor->execute(*ParseSQL(
+            "INSERT INTO bench_table VALUES (" + std::to_string(i) + ", 1.1, 'data');"));
+    }
+
+    auto parsed_base = ParseSQL("SELECT * FROM bench_table");
+    if (!parsed_base || parsed_base->type() != parser::StmtType::Select) {
+        state.SkipWithError("Failed to parse SELECT statement");
+        return;
+    }
+    auto select_stmt = std::unique_ptr<parser::SelectStatement>(
+        static_cast<parser::SelectStatement*>(parsed_base.release()));
+
+    auto root = ctx.executor->build_plan(*select_stmt, nullptr);
+    if (!root) {
+        state.SkipWithError("Failed to build execution plan");
+        return;
+    }
+    root->set_memory_resource(&ctx.executor->arena());
+
+    for (auto _ : state) {
+        if (!root->init() || !root->open()) {
+            state.SkipWithError("Failed to open plan");
+            return;
+        }
+        cloudsql::storage::HeapTable::TupleView view;
+        size_t count = 0;
+        bool verified = false;
+        while (root->next_view(view)) {
+            if (!verified && count == 0) {
+                state.PauseTiming();
+                // Sanity check: ensure we can read the first column
+                auto val = view.get_value(0);
+                if (val.is_null()) {
+                   state.SkipWithError("TupleView returned NULL for non-null column");
+                   state.ResumeTiming();
+                   break;
+                }
+                verified = true;
+                state.ResumeTiming();
+            }
+            benchmark::DoNotOptimize(view);
+            count++;
+        }
+        if (count != num_rows) {
+            std::string msg = "Row count mismatch in ScanView: expected " + std::to_string(num_rows) + ", got " + std::to_string(count);
+            // Print it for debugging
+            std::cerr << msg << std::endl;
+            state.SkipWithError(msg.c_str());
+            return;
+        }
+        root->close();
+        ctx.executor->arena().reset();
+    }
+    state.SetItemsProcessed(state.iterations() * num_rows);
+}
+BENCHMARK(BM_CloudSQL_ScanView)->Arg(1000)->Arg(10000);
+
 
 // --- Benchmark 4: SQLite Sequential Scan ---
 static void BM_SQLite_Scan(benchmark::State& state) {
