@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "common/config.hpp"
+#include "common/bloom_filter.hpp"
 #include "executor/types.hpp"
 
 namespace cloudsql::raft {
@@ -210,7 +211,88 @@ class ClusterManager {
         return data;
     }
 
+    /**
+     * @brief Store a bloom filter for a shuffle context
+     */
+    void set_bloom_filter(const std::string& context_id, const std::string& build_table,
+                          const std::string& probe_table, const std::string& probe_key_col,
+                          std::vector<uint8_t> filter_data, size_t expected_elements,
+                          size_t num_hashes) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto& entry = bloom_filters_[context_id];
+        entry.build_table = build_table;
+        entry.probe_table = probe_table;
+        entry.probe_key_col = probe_key_col;
+        entry.filter_data = std::move(filter_data);
+        entry.expected_elements = expected_elements;
+        entry.num_hashes = num_hashes;
+    }
+
+    /**
+     * @brief Check if a bloom filter exists for a context
+     */
+    [[nodiscard]] bool has_bloom_filter(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        return bloom_filters_.count(context_id) != 0U;
+    }
+
+    /**
+     * @brief Get bloom filter for a context (reconstructs BloomFilter object)
+     */
+    [[nodiscard]] common::BloomFilter get_bloom_filter(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = bloom_filters_.find(context_id);
+        if (it != bloom_filters_.end() && !it->second.filter_data.empty()) {
+            return common::BloomFilter(it->second.filter_data.data(), it->second.filter_data.size());
+        }
+        return common::BloomFilter(1);  // Empty filter
+    }
+
+    /**
+     * @brief Get probe table name for a context
+     */
+    [[nodiscard]] std::string get_probe_table(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = bloom_filters_.find(context_id);
+        if (it != bloom_filters_.end()) {
+            return it->second.probe_table;
+        }
+        return "";
+    }
+
+    /**
+     * @brief Get probe key column for a context
+     */
+    [[nodiscard]] std::string get_probe_key_col(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = bloom_filters_.find(context_id);
+        if (it != bloom_filters_.end()) {
+            return it->second.probe_key_col;
+        }
+        return "";
+    }
+
+    /**
+     * @brief Clear bloom filter for a context
+     */
+    void clear_bloom_filter(const std::string& context_id) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        bloom_filters_.erase(context_id);
+    }
+
    private:
+    /**
+     * @brief Stored bloom filter data for a context
+     */
+    struct BloomFilterEntry {
+        std::string build_table;
+        std::string probe_table;
+        std::string probe_key_col;  // Join key column on probe side
+        std::vector<uint8_t> filter_data;
+        size_t expected_elements = 0;
+        size_t num_hashes = 0;
+    };
+
     const config::Config* config_;
     raft::RaftManager* raft_manager_;
     NodeInfo self_node_;
@@ -220,6 +302,8 @@ class ClusterManager {
     /* context_id -> table_name -> rows */
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
         shuffle_buffers_;
+    /* context_id -> bloom filter data */
+    std::unordered_map<std::string, BloomFilterEntry> bloom_filters_;
     mutable std::mutex mutex_;
 };
 
