@@ -449,8 +449,8 @@ struct BloomFilterArgs {
     std::string probe_table;
     std::string probe_key_col;  // Join key column on probe side for filtering
     std::vector<uint8_t> filter_data;
-    size_t expected_elements;
-    size_t num_hashes;
+    size_t expected_elements = 0;
+    size_t num_hashes = 0;
 
     [[nodiscard]] std::vector<uint8_t> serialize() const {
         std::vector<uint8_t> out;
@@ -466,11 +466,13 @@ struct BloomFilterArgs {
         std::memcpy(out.data() + off, &filter_len, Serializer::VAL_SIZE_32);
         out.insert(out.end(), filter_data.begin(), filter_data.end());
 
-        // Serialize metadata
+        // Serialize metadata using fixed-width temporaries
+        uint64_t tmp_expected = static_cast<uint64_t>(expected_elements);
+        uint8_t tmp_hashes = static_cast<uint8_t>(num_hashes);
         const size_t off2 = out.size();
-        out.resize(off2 + Serializer::VAL_SIZE_32);
-        std::memcpy(out.data() + off2, &expected_elements, Serializer::VAL_SIZE_32);
-        out.push_back(static_cast<uint8_t>(num_hashes));
+        out.resize(off2 + 9);  // 8 bytes for expected_elements + 1 for num_hashes
+        std::memcpy(out.data() + off2, &tmp_expected, 8);
+        out[off2 + 8] = tmp_hashes;
         return out;
     }
 
@@ -493,12 +495,13 @@ struct BloomFilterArgs {
             offset += filter_len;
         }
 
-        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
-            std::memcpy(&args.expected_elements, in.data() + offset, Serializer::VAL_SIZE_32);
-            offset += Serializer::VAL_SIZE_32;
-        }
-        if (offset < in.size()) {
-            args.num_hashes = in[offset];
+        // Deserialize metadata using fixed-width temporaries
+        if (offset + 9 <= in.size()) {
+            uint64_t tmp_expected = 0;
+            std::memcpy(&tmp_expected, in.data() + offset, 8);
+            args.expected_elements = static_cast<size_t>(tmp_expected);
+            offset += 8;
+            args.num_hashes = static_cast<size_t>(in[offset]);
         }
         return args;
     }
