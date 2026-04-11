@@ -85,9 +85,9 @@ BloomFilter::BloomFilter(const uint8_t* data, size_t size) {
     offset += sizeof(uint64_t);
 
     // Validate header fields before using them
-    constexpr size_t MAX_BITS = (1ULL << 40);   // ~1TB max, reasonable upper bound
-    constexpr size_t MAX_HASHES = 64;           // reasonable upper bound
-    constexpr size_t MAX_EXPECTED = (1ULL << 30); // ~1B elements max
+    constexpr size_t MAX_BITS = (1ULL << 40);      // ~1TB max, reasonable upper bound
+    constexpr size_t MAX_HASHES = 64;              // reasonable upper bound
+    constexpr size_t MAX_EXPECTED = (1ULL << 30);  // ~1B elements max
 
     if (num_bits_ == 0 || num_bits_ > MAX_BITS) {
         num_bits_ = 0;

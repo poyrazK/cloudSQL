@@ -578,10 +578,12 @@ int main(int argc, char* argv[]) {
 
                             if (cluster_manager->has_bloom_filter(args.context_id)) {
                                 bloom = cluster_manager->get_bloom_filter(args.context_id);
-                                std::string probe_key_col = cluster_manager->get_probe_key_col(args.context_id);
+                                std::string probe_key_col =
+                                    cluster_manager->get_probe_key_col(args.context_id);
 
                                 if (!probe_key_col.empty()) {
-                                    auto table_meta_opt = catalog->get_table_by_name(args.table_name);
+                                    auto table_meta_opt =
+                                        catalog->get_table_by_name(args.table_name);
                                     if (table_meta_opt.has_value()) {
                                         const auto* table_meta = table_meta_opt.value();
                                         for (size_t i = 0; i < table_meta->columns.size(); ++i) {
@@ -614,7 +616,8 @@ int main(int argc, char* argv[]) {
                                     }
 
                                     // Apply bloom filter on sender side before sending
-                                    std::vector<cloudsql::executor::Tuple> rows_to_send = std::move(rows);
+                                    std::vector<cloudsql::executor::Tuple> rows_to_send =
+                                        std::move(rows);
                                     if (have_bloom) {
                                         std::vector<cloudsql::executor::Tuple> filtered;
                                         filtered.reserve(rows_to_send.size());
