@@ -56,19 +56,34 @@ HeapTable::~HeapTable() {
 /* --- Iterator Implementation --- */
 
 common::Value HeapTable::TupleView::get_value(size_t col_index) const {
-    if (!schema || col_index >= schema->column_count()) {
-        return common::Value::make_null();
-    }
+    if (!schema) return common::Value::make_null();
 
-    // We must walk the serialized payload from the beginning to reach col_index
+    // When a column_mapping is present its size determines the number of
+    // accessible logical columns (it may differ from schema->column_count()
+    // for SELECT * queries where the projected schema is built before the star
+    // is expanded into concrete column entries).
+    const size_t logical_count =
+        (column_mapping && !column_mapping->empty()) ? column_mapping->size()
+                                                     : schema->column_count();
+    if (col_index >= logical_count) return common::Value::make_null();
+
+    // Resolve the physical column index through the mapping when present.
+    // col_index is a logical index into the (possibly projected) schema; the
+    // serialized payload is always laid out in physical table column order.
+    const size_t physical_idx =
+        (column_mapping && col_index < column_mapping->size())
+            ? (*column_mapping)[col_index]
+            : col_index;
+
+    // Walk the serialized payload from the beginning to reach physical_idx.
     size_t cursor = 0;
-    for (size_t i = 0; i <= col_index; ++i) {
+    for (size_t i = 0; i <= physical_idx; ++i) {
         if (cursor >= payload_len) return common::Value::make_null();
 
         auto type = static_cast<common::ValueType>(payload_data[cursor++]);
 
         if (type == common::ValueType::TYPE_NULL) {
-            if (i == col_index) return common::Value::make_null();
+            if (i == physical_idx) return common::Value::make_null();
             continue;
         }
 
@@ -78,7 +93,7 @@ common::Value HeapTable::TupleView::get_value(size_t col_index) const {
             type == common::ValueType::TYPE_FLOAT64) {
             if (cursor + 8 > payload_len) return common::Value::make_null();
 
-            if (i == col_index) {
+            if (i == physical_idx) {
                 if (type == common::ValueType::TYPE_FLOAT32 ||
                     type == common::ValueType::TYPE_FLOAT64) {
                     double v;
@@ -103,7 +118,7 @@ common::Value HeapTable::TupleView::get_value(size_t col_index) const {
 
             if (cursor + len > payload_len) return common::Value::make_null();
 
-            if (i == col_index) {
+            if (i == physical_idx) {
                 std::string s(reinterpret_cast<const char*>(payload_data + cursor), len);
                 return common::Value::make_text(s);
             }
@@ -811,7 +826,9 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
                 std::memcpy(&out_view.xmin, data + 2, 8);
                 std::memcpy(&out_view.xmax, data + 10, 8);
 
+                out_view.table_schema = &table_.schema_;
                 out_view.schema = &table_.schema_;
+                out_view.column_mapping = nullptr;
                 out_view.payload_data = data + 18;
                 out_view.payload_len = record_len - 18;
 
@@ -835,7 +852,12 @@ bool HeapTable::Iterator::next_view(TupleView& out_view) {
 
 executor::Tuple HeapTable::TupleView::materialize(std::pmr::memory_resource* mr) const {
     if (!mr) mr = std::pmr::get_default_resource();
-    size_t num_cols = schema->columns().size();
+    // Use the same logical_count logic as get_value so that SELECT * views
+    // (which have column_mapping with more entries than schema->column_count())
+    // are materialized correctly.
+    const size_t num_cols =
+        (column_mapping && !column_mapping->empty()) ? column_mapping->size()
+                                                     : schema->columns().size();
 
     std::pmr::vector<common::Value> values(mr);
     values.reserve(num_cols);

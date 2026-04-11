@@ -110,7 +110,6 @@ bool SeqScanOperator::next_view(storage::HeapTable::TupleView& out_view) {
         }
 
         /* MVCC Visibility Check */
-        bool visible = true;
         const Transaction* const txn = get_txn();
         if (txn != nullptr) {
             const auto& snapshot = txn->get_snapshot();
@@ -121,12 +120,8 @@ bool SeqScanOperator::next_view(storage::HeapTable::TupleView& out_view) {
             const bool xmax_visible = (out_view.xmax == 0) || (out_view.xmax != my_id &&
                                                                !snapshot.is_visible(out_view.xmax));
 
-            visible = xmin_visible && xmax_visible;
-        } else {
-            visible = (out_view.xmax == 0);
+            if (xmin_visible && xmax_visible) return true;
         }
-
-        if (visible) return true;
     }
 
     set_state(ExecState::Done);
@@ -965,19 +960,15 @@ void LimitOperator::set_params(const std::vector<common::Value>* params) {
 }
 
 bool ProjectOperator::next_view(storage::HeapTable::TupleView& out_view) {
-    if (!child_) return false;
+    // The zero-allocation path is only valid for simple column projections.
+    // Return false immediately (without consuming any child rows) when the
+    // projection includes computed expressions — callers must use next() instead.
+    if (!child_ || !is_simple_projection_) return false;
+
     if (child_->next_view(out_view)) {
-        if (is_simple_projection_) {
-            out_view.column_mapping = &column_mapping_;
-            out_view.schema = &schema_;
-            return true;
-        } else {
-            // Fallback: This is not optimal but satisfies the semantics.
-            // Future work: Batch materialization or local buffer.
-            // For now, we dont return true for computed stuff in next_view
-            // to avoid exposing raw data incorrectly.
-            return false;
-        }
+        out_view.column_mapping = &column_mapping_;
+        out_view.schema = &schema_;
+        return true;
     }
     return false;
 }
