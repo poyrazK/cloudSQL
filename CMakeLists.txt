@@ -137,6 +137,7 @@ if(BUILD_TESTS)
     add_cloudsql_test(storage_manager_tests tests/storage_manager_tests.cpp)
     add_cloudsql_test(rpc_server_tests tests/rpc_server_tests.cpp)
     add_cloudsql_test(operator_tests tests/operator_tests.cpp)
+    add_cloudsql_test(query_executor_tests tests/query_executor_tests.cpp)
 
     add_custom_target(run-tests
         COMMAND ${CMAKE_CTEST_COMMAND}
