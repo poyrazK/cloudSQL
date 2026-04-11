@@ -13,8 +13,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/config.hpp"
 #include "common/bloom_filter.hpp"
+#include "common/config.hpp"
 #include "executor/types.hpp"
 
 namespace cloudsql::raft {
@@ -243,7 +243,8 @@ class ClusterManager {
         const std::scoped_lock<std::mutex> lock(mutex_);
         auto it = bloom_filters_.find(context_id);
         if (it != bloom_filters_.end() && !it->second.filter_data.empty()) {
-            return common::BloomFilter(it->second.filter_data.data(), it->second.filter_data.size());
+            return common::BloomFilter(it->second.filter_data.data(),
+                                       it->second.filter_data.size());
         }
         return common::BloomFilter(1);  // Empty filter
     }

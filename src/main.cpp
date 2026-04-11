@@ -475,7 +475,8 @@ int main(int argc, char* argv[]) {
                             // Apply bloom filter if available for this context
                             if (cluster_manager->has_bloom_filter(args.context_id)) {
                                 auto bloom = cluster_manager->get_bloom_filter(args.context_id);
-                                std::string probe_key_col = cluster_manager->get_probe_key_col(args.context_id);
+                                std::string probe_key_col =
+                                    cluster_manager->get_probe_key_col(args.context_id);
 
                                 // Get probe table schema to find key column index
                                 auto table_meta_opt = catalog->get_table_by_name(args.table_name);
@@ -498,21 +499,22 @@ int main(int argc, char* argv[]) {
                                                 filtered_rows.push_back(std::move(row));
                                             }
                                         }
-                                        cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
-                                                                             std::move(filtered_rows));
+                                        cluster_manager->buffer_shuffle_data(
+                                            args.context_id, args.table_name,
+                                            std::move(filtered_rows));
                                     } else {
                                         // Key column not found, buffer as-is
-                                        cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
-                                                                             std::move(args.rows));
+                                        cluster_manager->buffer_shuffle_data(
+                                            args.context_id, args.table_name, std::move(args.rows));
                                     }
                                 } else {
                                     // No metadata, buffer as-is
-                                    cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
-                                                                         std::move(args.rows));
+                                    cluster_manager->buffer_shuffle_data(
+                                        args.context_id, args.table_name, std::move(args.rows));
                                 }
                             } else {
-                                cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
-                                                                     std::move(args.rows));
+                                cluster_manager->buffer_shuffle_data(
+                                    args.context_id, args.table_name, std::move(args.rows));
                             }
                         }
 
@@ -536,10 +538,10 @@ int main(int argc, char* argv[]) {
                         (void)h;
                         auto args = cloudsql::network::BloomFilterArgs::deserialize(p);
                         if (cluster_manager != nullptr) {
-                            cluster_manager->set_bloom_filter(args.context_id, args.build_table,
-                                                               args.probe_table, args.probe_key_col,
-                                                               args.filter_data, args.expected_elements,
-                                                               args.num_hashes);
+                            cluster_manager->set_bloom_filter(
+                                args.context_id, args.build_table, args.probe_table,
+                                args.probe_key_col, args.filter_data, args.expected_elements,
+                                args.num_hashes);
                         }
                         cloudsql::network::QueryResultsReply reply;
                         reply.success = true;

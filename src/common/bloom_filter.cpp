@@ -86,8 +86,7 @@ size_t BloomFilter::get_bit_position(size_t hash, size_t i) const {
     // Double hashing technique: h(i) = h1 + i * h2
     // Use two different hash seeds
     size_t h1 = hash;
-    size_t h2 = murmur3_hash(reinterpret_cast<const uint8_t*>("salt"),
-                             4, 0xcafebabe);
+    size_t h2 = murmur3_hash(reinterpret_cast<const uint8_t*>("salt"), 4, 0xcafebabe);
 
     return (h1 + i * h2) % num_bits_;
 }

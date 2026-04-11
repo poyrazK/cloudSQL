@@ -3,11 +3,12 @@
  * @brief Unit tests for BloomFilter implementation
  */
 
+#include "common/bloom_filter.hpp"
+
 #include <gtest/gtest.h>
 
 #include <vector>
 
-#include "common/bloom_filter.hpp"
 #include "common/cluster_manager.hpp"
 #include "common/value.hpp"
 #include "executor/types.hpp"
@@ -202,8 +203,8 @@ TEST(BloomFilterTests, ClusterManagerBloomFilterStorage) {
     auto filter_data = original.serialize();
 
     // Test set_bloom_filter and has_bloom_filter
-    cm.set_bloom_filter("ctx1", "table_build", "table_probe", "key_col",
-                        filter_data, original.expected_elements(), original.num_hashes());
+    cm.set_bloom_filter("ctx1", "table_build", "table_probe", "key_col", filter_data,
+                        original.expected_elements(), original.num_hashes());
     EXPECT_TRUE(cm.has_bloom_filter("ctx1"));
 
     // Test get_bloom_filter reconstructs correctly
@@ -240,10 +241,14 @@ TEST(BloomFilterTests, BloomFilterApplicationLogic) {
 
     // Simulate tuple filtering (as done in PushData handler)
     std::vector<cloudsql::executor::Tuple> tuples;
-    tuples.push_back(cloudsql::executor::Tuple(std::initializer_list<Value>{Value::make_int64(10)}));  // match
-    tuples.push_back(cloudsql::executor::Tuple(std::initializer_list<Value>{Value::make_int64(15)}));  // no match
-    tuples.push_back(cloudsql::executor::Tuple(std::initializer_list<Value>{Value::make_int64(20)}));  // match
-    tuples.push_back(cloudsql::executor::Tuple(std::initializer_list<Value>{Value::make_int64(99)}));  // no match
+    tuples.push_back(
+        cloudsql::executor::Tuple(std::initializer_list<Value>{Value::make_int64(10)}));  // match
+    tuples.push_back(cloudsql::executor::Tuple(
+        std::initializer_list<Value>{Value::make_int64(15)}));  // no match
+    tuples.push_back(
+        cloudsql::executor::Tuple(std::initializer_list<Value>{Value::make_int64(20)}));  // match
+    tuples.push_back(cloudsql::executor::Tuple(
+        std::initializer_list<Value>{Value::make_int64(99)}));  // no match
 
     std::vector<cloudsql::executor::Tuple> filtered;
     for (auto& row : tuples) {
