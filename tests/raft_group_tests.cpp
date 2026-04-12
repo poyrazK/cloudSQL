@@ -24,7 +24,7 @@ using namespace cloudsql::network;
 namespace {
 
 class RaftGroupTests : public ::testing::Test {
- protected:
+   protected:
     void SetUp() override {
         config_.mode = config::RunMode::Coordinator;
         constexpr uint16_t TEST_PORT = 6200;
