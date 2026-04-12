@@ -18,9 +18,9 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
-#include <optional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
