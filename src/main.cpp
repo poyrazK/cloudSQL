@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <optional>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -572,12 +573,12 @@ int main(int argc, char* argv[]) {
                             std::string delivery_errors;
 
                             // Hoist bloom filter and key resolution out of per-destination loop
-                            cloudsql::common::BloomFilter bloom;
+                            std::optional<cloudsql::common::BloomFilter> bloom;
                             bool have_bloom = false;
-                            size_t key_idx = static_cast<size_t>(-1);
+                            size_t bloom_key_idx = static_cast<size_t>(-1);
 
                             if (cluster_manager->has_bloom_filter(args.context_id)) {
-                                bloom = cluster_manager->get_bloom_filter(args.context_id);
+                                bloom.emplace(cluster_manager->get_bloom_filter(args.context_id));
                                 std::string probe_key_col =
                                     cluster_manager->get_probe_key_col(args.context_id);
 
@@ -588,13 +589,13 @@ int main(int argc, char* argv[]) {
                                         const auto* table_meta = table_meta_opt.value();
                                         for (size_t i = 0; i < table_meta->columns.size(); ++i) {
                                             if (table_meta->columns[i].name == probe_key_col) {
-                                                key_idx = i;
+                                                bloom_key_idx = i;
                                                 break;
                                             }
                                         }
                                     }
                                 }
-                                have_bloom = (key_idx != static_cast<size_t>(-1));
+                                have_bloom = (bloom_key_idx != static_cast<size_t>(-1));
                             }
 
                             for (auto& [node_id, rows] : partitions) {
@@ -618,11 +619,11 @@ int main(int argc, char* argv[]) {
                                     // Apply bloom filter on sender side before sending
                                     std::vector<cloudsql::executor::Tuple> rows_to_send =
                                         std::move(rows);
-                                    if (have_bloom) {
+                                    if (have_bloom && bloom.has_value()) {
                                         std::vector<cloudsql::executor::Tuple> filtered;
                                         filtered.reserve(rows_to_send.size());
                                         for (auto& row : rows_to_send) {
-                                            if (bloom.might_contain(row.get(key_idx))) {
+                                            if (bloom->might_contain(row.get(bloom_key_idx))) {
                                                 filtered.push_back(std::move(row));
                                             }
                                         }
