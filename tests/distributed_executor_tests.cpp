@@ -214,8 +214,8 @@ TEST_F(DistributedExecutorTests, ExecuteROLLBACKWithoutNodes) {
 }
 
 // SELECT without FROM clause - parser error
-TEST_F(DistributedExecutorTests, ExecuteUnknownStatementType) {
-    // SELECT 1 without FROM is not valid SQL in this parser
+TEST_F(DistributedExecutorTests, ParseRejectsSelectWithoutFrom) {
+    // SELECT * without FROM is not valid SQL in this parser
     auto lexer = std::make_unique<Lexer>("SELECT *");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
@@ -239,12 +239,19 @@ TEST_F(ShardingKeyExtractionTests, ExtractShardingKeySimpleEq) {
 
     auto* select_stmt = dynamic_cast<const SelectStatement*>(stmt.get());
     ASSERT_NE(select_stmt, nullptr);
-    ASSERT_NE(select_stmt->where(), nullptr);
+    auto* where_expr = dynamic_cast<const BinaryExpr*>(select_stmt->where());
+    ASSERT_NE(where_expr, nullptr);
 
-    Value extracted;
-    // This tests the helper function in distributed_executor.cpp
-    // We can't call it directly, but we can test the behavior through execute
-    EXPECT_NE(select_stmt->where(), nullptr);
+    // Verify it's: id = 42
+    auto* left_col = dynamic_cast<const ColumnExpr*>(&where_expr->left());
+    ASSERT_NE(left_col, nullptr);
+    EXPECT_EQ(left_col->name(), "id");
+
+    auto* right_const = dynamic_cast<const ConstantExpr*>(&where_expr->right());
+    ASSERT_NE(right_const, nullptr);
+    EXPECT_EQ(right_const->value(), Value::make_int64(42));
+
+    EXPECT_EQ(where_expr->op(), TokenType::Eq);
 }
 
 TEST_F(ShardingKeyExtractionTests, NoWHEREClause) {
@@ -259,6 +266,7 @@ TEST_F(ShardingKeyExtractionTests, NoWHEREClause) {
 }
 
 TEST_F(ShardingKeyExtractionTests, NonEqCondition) {
+    // WHERE id > 42 uses Greater operator, not equality - no valid sharding key
     auto lexer = std::make_unique<Lexer>("SELECT * FROM test WHERE id > 42");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
@@ -266,7 +274,16 @@ TEST_F(ShardingKeyExtractionTests, NonEqCondition) {
 
     auto* select_stmt = dynamic_cast<const SelectStatement*>(stmt.get());
     ASSERT_NE(select_stmt, nullptr);
-    EXPECT_NE(select_stmt->where(), nullptr);
+    auto* where_expr = dynamic_cast<const BinaryExpr*>(select_stmt->where());
+    ASSERT_NE(where_expr, nullptr);
+
+    // Verify it's: id > 42 (Greater, not Eq)
+    auto* left_col = dynamic_cast<const ColumnExpr*>(&where_expr->left());
+    ASSERT_NE(left_col, nullptr);
+    EXPECT_EQ(left_col->name(), "id");
+
+    // op should be Gt, not Eq - cannot extract sharding key from inequality
+    EXPECT_EQ(where_expr->op(), TokenType::Gt);
 }
 
 // ============= Helper Function Tests =============
@@ -304,7 +321,6 @@ TEST(HelperTests, ComputeShardStringKey) {
 
     // Should be in range [0, 8)
     EXPECT_LT(shard, 8);
-    EXPECT_GE(shard, 0);
 }
 
 // ============= Null Safety Tests =============
@@ -331,10 +347,9 @@ TEST(NullSafetyTests, ExecuteWithEmptyCluster) {
         auto lexer = std::make_unique<Lexer>(sql);
         Parser parser(std::move(lexer));
         auto stmt = parser.parse_statement();
-        if (stmt) {
-            auto res = exec.execute(*stmt, sql);
-            EXPECT_EQ(res.success(), expected_success) << "Failed for: " << sql;
-        }
+        ASSERT_TRUE(stmt) << "Parse failed for: " << sql;
+        auto res = exec.execute(*stmt, sql);
+        EXPECT_EQ(res.success(), expected_success) << "Failed for: " << sql;
     }
 }
 
