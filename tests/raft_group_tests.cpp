@@ -46,8 +46,10 @@ class RaftGroupTests : public ::testing::Test {
         if (rpc_) {
             rpc_->stop();
         }
-        // Cleanup state files
+        // Cleanup state files for all possible group IDs
         std::remove("raft_group_1.state");
+        std::remove("raft_group_2.state");
+        std::remove("raft_group_3.state");
     }
 
     config::Config config_;
@@ -127,8 +129,13 @@ TEST_F(RaftGroupTests, AppendEntriesArgsStructure) {
     args.prev_log_term = 1;
     args.leader_commit = 3;
 
-    // Empty entries vector should be valid
-    EXPECT_TRUE(true);  // Structure is valid
+    // Verify all fields are set correctly
+    EXPECT_EQ(args.term, 1);
+    EXPECT_EQ(args.leader_id, "leader1");
+    EXPECT_EQ(args.prev_log_index, 5);
+    EXPECT_EQ(args.prev_log_term, 1);
+    EXPECT_EQ(args.leader_commit, 3);
+    EXPECT_TRUE(args.entries.empty());
 }
 
 // ============= Log Entry Tests =============
