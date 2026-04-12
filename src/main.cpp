@@ -583,17 +583,7 @@ int main(int argc, char* argv[]) {
                                     cluster_manager->get_probe_key_col(args.context_id);
 
                                 if (!probe_key_col.empty()) {
-                                    auto table_meta_opt =
-                                        catalog->get_table_by_name(args.table_name);
-                                    if (table_meta_opt.has_value()) {
-                                        const auto* table_meta = table_meta_opt.value();
-                                        for (size_t i = 0; i < table_meta->columns.size(); ++i) {
-                                            if (table_meta->columns[i].name == probe_key_col) {
-                                                bloom_key_idx = i;
-                                                break;
-                                            }
-                                        }
-                                    }
+                                    bloom_key_idx = schema.find_column(probe_key_col);
                                 }
                                 have_bloom = (bloom_key_idx != static_cast<size_t>(-1));
                             }
