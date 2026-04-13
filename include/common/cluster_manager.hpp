@@ -230,10 +230,16 @@ class ClusterManager {
 
     /**
      * @brief Check if a bloom filter exists for a context
+     * @note Returns false if filter_data is empty, so bloom filtering is skipped
      */
     [[nodiscard]] bool has_bloom_filter(const std::string& context_id) const {
         const std::scoped_lock<std::mutex> lock(mutex_);
-        return bloom_filters_.count(context_id) != 0U;
+        auto it = bloom_filters_.find(context_id);
+        if (it == bloom_filters_.end()) {
+            return false;
+        }
+        // Only consider bloom filter valid if it has actual filter data
+        return !it->second.filter_data.empty();
     }
 
     /**
