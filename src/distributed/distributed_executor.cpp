@@ -242,23 +242,43 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     return res;
                 }
 
-                // After Phase 1, each node will have received left table data.
-                // Now broadcast bloom filter built from that data to all nodes for Phase 2
-                // filtering. The filter is sent as a separate RPC that data nodes will store and
-                // apply to their right table shuffle. For now, we send a simple metadata-only
-                // filter that signals "filtering enabled" - the actual filter building happens on
-                // each data node during Phase 1 and they stash it for use during Phase 2.
-                //
-                // In production, we'd collect and OR all local bloom filters, but for POC
-                // we just signal that bloom filtering is enabled for this context.
+                // After Phase 1, collect bloom filter bits from each data node and aggregate
+                // via bitwise OR to create the combined bloom filter
+                std::vector<uint8_t> aggregated_bits;
+                size_t total_expected = 0;
+                size_t max_hashes = 0;
+
+                for (const auto& node : data_nodes) {
+                    network::RpcClient client(node.address, node.cluster_port);
+                    if (!client.connect()) {
+                        continue;
+                    }
+                    network::BloomFilterBitsArgs bits_args;
+                    bits_args.context_id = context_id;
+                    std::vector<uint8_t> resp;
+                    if (client.call(network::RpcType::BloomFilterBits, bits_args.serialize(), resp)) {
+                        auto reply = network::BloomFilterBitsArgs::deserialize(resp);
+                        if (reply.filter_data.size() > aggregated_bits.size()) {
+                            aggregated_bits.resize(reply.filter_data.size(), 0);
+                        }
+                        // Bitwise OR aggregation
+                        for (size_t i = 0; i < reply.filter_data.size(); i++) {
+                            aggregated_bits[i] |= reply.filter_data[i];
+                        }
+                        total_expected += reply.expected_elements;
+                        max_hashes = std::max(max_hashes, reply.num_hashes);
+                    }
+                }
+
+                // Broadcast the aggregated bloom filter to all nodes for Phase 2 filtering
                 network::BloomFilterArgs bf_args;
                 bf_args.context_id = context_id;
                 bf_args.build_table = left_table;
                 bf_args.probe_table = right_table;
                 bf_args.probe_key_col = right_key;  // Tell probe side which column to filter on
-                bf_args.filter_data.clear();        // Empty = filter built distributed
-                bf_args.expected_elements = data_nodes.size() * 1000;  // Estimate
-                bf_args.num_hashes = 4;
+                bf_args.filter_data = aggregated_bits;
+                bf_args.expected_elements = total_expected;
+                bf_args.num_hashes = max_hashes > 0 ? max_hashes : 4;
                 auto bf_payload = bf_args.serialize();
 
                 for (const auto& node : data_nodes) {
