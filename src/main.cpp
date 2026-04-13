@@ -526,8 +526,10 @@ int main(int argc, char* argv[]) {
                         auto args = cloudsql::network::BloomFilterBitsArgs::deserialize(p);
                         cloudsql::network::BloomFilterBitsArgs reply_args;
                         reply_args.context_id = args.context_id;
-                        reply_args.filter_data = cluster_manager->get_local_bloom_bits(args.context_id);
-                        reply_args.expected_elements = cluster_manager->get_local_expected_elements();
+                        reply_args.filter_data =
+                            cluster_manager->get_local_bloom_bits(args.context_id);
+                        reply_args.expected_elements =
+                            cluster_manager->get_local_expected_elements();
                         reply_args.num_hashes = cluster_manager->get_local_num_hashes();
 
                         auto resp_p = reply_args.serialize();
@@ -582,7 +584,8 @@ int main(int argc, char* argv[]) {
                             }
 
                             // Estimate expected elements for bloom filter
-                            // For now, estimate based on table size (will be refined with actual count)
+                            // For now, estimate based on table size (will be refined with actual
+                            // count)
                             size_t estimated_count = 1000;
                             cloudsql::common::BloomFilter local_bloom(estimated_count);
 
@@ -604,10 +607,9 @@ int main(int argc, char* argv[]) {
                             // Store local bloom filter bits for coordinator to collect
                             // The coordinator will aggregate these during Phase 1
                             auto bloom_bits = local_bloom.serialize();
-                            cluster_manager->set_local_bloom_bits(
-                                args.context_id, bloom_bits,
-                                local_bloom.expected_elements(),
-                                local_bloom.num_hashes());
+                            cluster_manager->set_local_bloom_bits(args.context_id, bloom_bits,
+                                                                  local_bloom.expected_elements(),
+                                                                  local_bloom.num_hashes());
 
                             bool overall_success = true;
                             std::string delivery_errors;

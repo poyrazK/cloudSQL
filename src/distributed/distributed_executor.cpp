@@ -256,7 +256,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     network::BloomFilterBitsArgs bits_args;
                     bits_args.context_id = context_id;
                     std::vector<uint8_t> resp;
-                    if (client.call(network::RpcType::BloomFilterBits, bits_args.serialize(), resp)) {
+                    if (client.call(network::RpcType::BloomFilterBits, bits_args.serialize(),
+                                    resp)) {
                         auto reply = network::BloomFilterBitsArgs::deserialize(resp);
                         if (reply.filter_data.size() > aggregated_bits.size()) {
                             aggregated_bits.resize(reply.filter_data.size(), 0);
