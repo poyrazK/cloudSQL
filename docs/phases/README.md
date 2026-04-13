@@ -41,6 +41,7 @@ This directory contains the technical documentation for the lifecycle of the clo
 - Context-aware Shuffle infrastructure in `ClusterManager`.
 - Implementation of `ShuffleFragment` and `PushData` RPC protocols.
 - Two-phase Shuffle Join orchestration in `DistributedExecutor`.
+- **Bloom Filter Optimization**: Probabilistic tuple filtering to reduce network traffic in shuffle joins.
 
 ### [Phase 7: Replication & High Availability](./PHASE_7_REPLICATION_HA.md)
 **Focus**: Fault Tolerance & Data Redundancy.

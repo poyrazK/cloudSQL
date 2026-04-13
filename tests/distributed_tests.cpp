@@ -303,6 +303,7 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
     std::atomic<int> shuffle_calls{0};
     std::atomic<int> push_calls{0};
     std::atomic<int> fragment_calls{0};
+    std::atomic<int> bloom_filter_calls{0};
 
     auto handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
         (void)p;
@@ -315,6 +316,8 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
             push_calls++;
         } else if (h.type == RpcType::ExecuteFragment) {
             fragment_calls++;
+        } else if (h.type == RpcType::BloomFilterPush) {
+            bloom_filter_calls++;
         }
 
         auto resp_p = reply.serialize();
@@ -330,9 +333,11 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
     node1.set_handler(RpcType::ShuffleFragment, handler);
     node1.set_handler(RpcType::PushData, handler);
     node1.set_handler(RpcType::ExecuteFragment, handler);
+    node1.set_handler(RpcType::BloomFilterPush, handler);
     node2.set_handler(RpcType::ShuffleFragment, handler);
     node2.set_handler(RpcType::PushData, handler);
     node2.set_handler(RpcType::ExecuteFragment, handler);
+    node2.set_handler(RpcType::BloomFilterPush, handler);
 
     ASSERT_TRUE(node1.start());
     ASSERT_TRUE(node2.start());

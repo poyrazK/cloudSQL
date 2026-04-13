@@ -20,6 +20,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -472,10 +473,36 @@ int main(int argc, char* argv[]) {
                         (void)h;
                         auto args = cloudsql::network::PushDataArgs::deserialize(p);
                         if (cluster_manager != nullptr) {
+                            // Receiver-side: buffer data as-is (bloom filtering done on sender)
                             cluster_manager->buffer_shuffle_data(args.context_id, args.table_name,
                                                                  std::move(args.rows));
                         }
 
+                        cloudsql::network::QueryResultsReply reply;
+                        reply.success = true;
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[cloudsql::network::RpcHeader::HEADER_SIZE];
+                        resp_h.encode(h_buf);
+                        static_cast<void>(
+                            send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
+                        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+                    });
+
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::BloomFilterPush,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::BloomFilterArgs::deserialize(p);
+                        if (cluster_manager != nullptr) {
+                            cluster_manager->set_bloom_filter(
+                                args.context_id, args.build_table, args.probe_table,
+                                args.probe_key_col, std::move(args.filter_data),
+                                args.expected_elements, args.num_hashes);
+                        }
                         cloudsql::network::QueryResultsReply reply;
                         reply.success = true;
                         auto resp_p = reply.serialize();
@@ -545,6 +572,22 @@ int main(int argc, char* argv[]) {
                             bool overall_success = true;
                             std::string delivery_errors;
 
+                            // Hoist bloom filter and key resolution out of per-destination loop
+                            std::optional<cloudsql::common::BloomFilter> bloom;
+                            bool have_bloom = false;
+                            size_t bloom_key_idx = static_cast<size_t>(-1);
+
+                            if (cluster_manager->has_bloom_filter(args.context_id)) {
+                                bloom.emplace(cluster_manager->get_bloom_filter(args.context_id));
+                                std::string probe_key_col =
+                                    cluster_manager->get_probe_key_col(args.context_id);
+
+                                if (!probe_key_col.empty()) {
+                                    bloom_key_idx = schema.find_column(probe_key_col);
+                                }
+                                have_bloom = (bloom_key_idx != static_cast<size_t>(-1));
+                            }
+
                             for (auto& [node_id, rows] : partitions) {
                                 const cloudsql::cluster::NodeInfo* target_node = nullptr;
                                 for (const auto& n : data_nodes) {
@@ -563,10 +606,24 @@ int main(int argc, char* argv[]) {
                                         continue;
                                     }
 
+                                    // Apply bloom filter on sender side before sending
+                                    std::vector<cloudsql::executor::Tuple> rows_to_send =
+                                        std::move(rows);
+                                    if (have_bloom && bloom.has_value()) {
+                                        std::vector<cloudsql::executor::Tuple> filtered;
+                                        filtered.reserve(rows_to_send.size());
+                                        for (auto& row : rows_to_send) {
+                                            if (bloom->might_contain(row.get(bloom_key_idx))) {
+                                                filtered.push_back(std::move(row));
+                                            }
+                                        }
+                                        rows_to_send = std::move(filtered);
+                                    }
+
                                     cloudsql::network::PushDataArgs push_args;
                                     push_args.context_id = args.context_id;
                                     push_args.table_name = args.table_name;
-                                    push_args.rows = std::move(rows);
+                                    push_args.rows = std::move(rows_to_send);
                                     std::vector<uint8_t> resp;
                                     if (!client.call(cloudsql::network::RpcType::PushData,
                                                      push_args.serialize(), resp)) {
