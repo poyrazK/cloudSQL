@@ -48,35 +48,64 @@ Distributed shuffle joins send **all tuples** across the network to partitioned 
 Implemented bloom filters to filter tuples at the source before network transmission:
 - **One-sided bloom filter**: Built from the left/build table, applied to filter the right/probe table
 - **Distributed construction**: Each data node constructs its local bloom during the left/build scan phase
-- **Coordinator coordination**: `BloomFilterPush` RPC broadcasts filter metadata to all nodes before the right/probe shuffle
+- **Bitwise OR aggregation**: Coordinator collects bloom bits from all nodes and aggregates via OR
+- **Sender-side filtering**: Filter is applied before sending tuples, reducing network traffic
 
 ### Architecture
 ```
-[Phase 1: Shuffle Left]     [Phase 2: Shuffle Right]
-     |                             |
-     v                             v
-Build local bloom           Apply bloom filter
-from join keys              before buffering
-     |                             |
-     +---- BloomFilterPush ----->---+
-     (filter metadata)              |
-                                    v
-                         Filtered tuples buffered
+[Phase 1: Shuffle Left]                    [Phase 2: Shuffle Right]
+      |                                          |
+      v                                          v
+Scan left table                           Apply bloom filter
+      |                                          |
+      +---------------+------------------------+
+      |               |                        |
+      v               v                        v
+Build local    BloomFilterBits RPC    Filter tuples before
+bloom filter   (send bits to coord)    sending via PushData
+                         |
+                         v
+            Coordinator OR-aggregates bits
+                         |
+                         +---- BloomFilterPush ----->---+
+                         | (aggregated filter)           |
+                                                      v
+                                            Filtered tuples buffered
 ```
+
+### Implementation Details
+**Phase 1 - Build & Collect:**
+1. Data node scans local left table during ShuffleFragment handling
+2. Builds local bloom filter from all visible join key values
+3. Stores local bits via `ClusterManager::set_local_bloom_bits()`
+4. Coordinator sends BloomFilterBits RPC to collect bits from each node
+
+**Aggregation:**
+1. Coordinator receives bloom bits from all data nodes
+2. Aggregates via bitwise OR into combined filter
+3. Tracks total expected elements and hash count for consistency
+
+**Phase 2 - Filter & Shuffle:**
+1. Coordinator broadcasts aggregated bloom filter via BloomFilterPush
+2. Each data node stores filter and probe key column
+3. During right table shuffle, bloom filter is applied BEFORE sending
+4. Only tuples where `might_contain(join_key)` returns true are transmitted
 
 ### Key Components
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `BloomFilter` class | `include/common/bloom_filter.hpp` | MurmurHash3-based bloom filter |
-| `BloomFilterArgs` RPC | `include/network/rpc_message.hpp` | Serialization for network transfer |
-| `ClusterManager` storage | `include/common/cluster_manager.hpp` | Stores bloom filter per context |
-| `PushData` handler | `src/main.cpp` | Receives and buffers filtered tuples |
-| `ShuffleFragment` handler | `src/main.cpp` | Applies bloom filter before sending |
-| Coordinator | `src/distributed/distributed_executor.cpp` | Broadcasts filter after Phase 1 |
+| `BloomFilter` class | `include/common/bloom_filter.hpp` | MurmurHash3-based bloom filter with insert/might_contain |
+| `BloomFilterArgs` RPC | `include/network/rpc_message.hpp` | BloomFilterPush payload for broadcasting |
+| `BloomFilterBitsArgs` RPC | `include/network/rpc_message.hpp` | BloomFilterBits payload for collection |
+| `ClusterManager` storage | `include/common/cluster_manager.hpp` | Stores bloom filter and local bits per context |
+| `ShuffleFragment` handler | `src/main.cpp` | Builds local bloom during scan, applies filter before send |
+| `BloomFilterBits` handler | `src/main.cpp` | Returns local bloom bits to coordinator |
+| Coordinator | `src/distributed/distributed_executor.cpp` | Collects bits, OR-aggregates, broadcasts filter |
 
 ### Test Coverage
 - 10 unit tests covering: BloomFilter class, BloomFilterArgs serialization, ClusterManager storage, filter application logic
 - Tests located in `tests/bloom_filter_test.cpp`
+- Distributed tests: `DistributedExecutorTests.ShuffleJoinOrchestration` validates BloomFilterBits collection and BloomFilterPush broadcast
 
 ## 7. Future Roadmap
 With the scan gap closed, our focus shifts to higher-level analytical throughput:
