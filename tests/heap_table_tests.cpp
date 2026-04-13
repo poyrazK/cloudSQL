@@ -312,7 +312,7 @@ TEST_F(HeapTableTests, TupleIdToString) {
 // ============= TupleHeader Tests =============
 
 TEST_F(HeapTableTests, TupleHeaderDefaults) {
-    HeapTable::TupleHeader header;
+    HeapTable::TupleHeader header{};
     EXPECT_EQ(header.xmin, 0U);
     EXPECT_EQ(header.xmax, 0U);
 }
@@ -328,7 +328,7 @@ TEST_F(HeapTableTests, TupleHeaderWithValues) {
 // ============= PageHeader Tests =============
 
 TEST_F(HeapTableTests, PageHeaderDefaults) {
-    HeapTable::PageHeader header;
+    HeapTable::PageHeader header{};
     EXPECT_EQ(header.next_page, 0U);
     EXPECT_EQ(header.num_slots, 0U);
     EXPECT_EQ(header.free_space_offset, 0U);
