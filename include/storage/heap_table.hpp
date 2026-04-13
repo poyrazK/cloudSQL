@@ -37,11 +37,11 @@ class HeapTable {
         uint32_t page_num; /**< Physical page index in the file */
         uint16_t slot_num; /**< Logical slot index within the page */
 
-        TupleId() : page_num(0), slot_num(0) {}
+        TupleId() : page_num(UINT32_MAX), slot_num(0) {}
         TupleId(uint32_t page, uint16_t slot) : page_num(page), slot_num(slot) {}
 
         /** @return true if the ID represents a null/invalid record */
-        [[nodiscard]] bool is_null() const { return page_num == 0 && slot_num == 0; }
+        [[nodiscard]] bool is_null() const { return page_num == UINT32_MAX && slot_num == 0; }
 
         /** @return Human-readable string representation */
         [[nodiscard]] std::string to_string() const {

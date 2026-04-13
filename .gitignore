@@ -10,6 +10,7 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.cmake
+_deps/
 
 # Compiled binaries
 sqlEngine

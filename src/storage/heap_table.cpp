@@ -543,6 +543,12 @@ bool HeapTable::get_meta(const TupleId& tuple_id, TupleMeta& out_meta) const {
         std::memcpy(&out_meta.xmin, data + 2, 8);
         std::memcpy(&out_meta.xmax, data + 10, 8);
 
+        /* Skip tuples that have been logically deleted */
+        if (out_meta.xmax != 0) {
+            bpm_.unpin_page_by_id(file_id_, tuple_id.page_num, false);
+            return false;
+        }
+
         size_t cursor = 18;
         std::vector<common::Value> values;
         values.reserve(schema_.column_count());
