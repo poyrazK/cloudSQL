@@ -26,12 +26,12 @@ using cloudsql::config::Config;
 namespace {
 
 class HeapTableTests : public ::testing::Test {
- protected:
+   protected:
     void SetUp() override {
         disk_manager_ = std::make_unique<StorageManager>("./test_data");
         disk_manager_->create_dir_if_not_exists();
-        bpm_ = std::make_unique<BufferPoolManager>(Config::DEFAULT_BUFFER_POOL_SIZE,
-                                                    *disk_manager_);
+        bpm_ =
+            std::make_unique<BufferPoolManager>(Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager_);
 
         // Create schema for test table
         schema_ = std::make_unique<Schema>();
@@ -210,7 +210,7 @@ TEST_F(HeapTableTests, ScanEmptyTable) {
     EXPECT_FALSE(it.is_done());  // Iterator not done before trying to read
     Tuple tuple;
     EXPECT_FALSE(it.next(tuple));  // No tuples to read
-    EXPECT_TRUE(it.is_done());  // Now at end
+    EXPECT_TRUE(it.is_done());     // Now at end
 }
 
 TEST_F(HeapTableTests, ScanAllRows) {
