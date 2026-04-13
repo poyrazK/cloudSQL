@@ -516,6 +516,31 @@ int main(int argc, char* argv[]) {
                         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
                     });
 
+                // Handler for collecting local bloom filter bits from data nodes
+                // Coordinator calls this after Phase 1 to aggregate bloom filters
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::BloomFilterBits,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::BloomFilterBitsArgs::deserialize(p);
+                        cloudsql::network::BloomFilterBitsArgs reply_args;
+                        reply_args.context_id = args.context_id;
+                        reply_args.filter_data = cluster_manager->get_local_bloom_bits(args.context_id);
+                        reply_args.expected_elements = cluster_manager->get_local_expected_elements();
+                        reply_args.num_hashes = cluster_manager->get_local_num_hashes();
+
+                        auto resp_p = reply_args.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[cloudsql::network::RpcHeader::HEADER_SIZE];
+                        resp_h.encode(h_buf);
+                        static_cast<void>(
+                            send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
+                        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+                    });
+
                 rpc_server->set_handler(
                     cloudsql::network::RpcType::ShuffleFragment,
                     [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
@@ -556,11 +581,18 @@ int main(int argc, char* argv[]) {
                                 partitions[node.id] = {};
                             }
 
+                            // Estimate expected elements for bloom filter
+                            // For now, estimate based on table size (will be refined with actual count)
+                            size_t estimated_count = 1000;
+                            cloudsql::common::BloomFilter local_bloom(estimated_count);
+
                             auto iter = table.scan();
                             cloudsql::storage::HeapTable::TupleMeta t_meta;
                             while (iter.next_meta(t_meta)) {
                                 if (t_meta.xmax == 0) {  // Visible
                                     const auto& key_val = t_meta.tuple.get(key_idx);
+                                    // Build bloom filter from join key values
+                                    local_bloom.insert(key_val);
                                     uint32_t node_idx =
                                         cloudsql::cluster::ShardManager::compute_shard(
                                             key_val, static_cast<uint32_t>(data_nodes.size()));
@@ -568,6 +600,14 @@ int main(int argc, char* argv[]) {
                                         std::move(t_meta.tuple));
                                 }
                             }
+
+                            // Store local bloom filter bits for coordinator to collect
+                            // The coordinator will aggregate these during Phase 1
+                            auto bloom_bits = local_bloom.serialize();
+                            cluster_manager->set_local_bloom_bits(
+                                args.context_id, bloom_bits,
+                                local_bloom.expected_elements(),
+                                local_bloom.num_hashes());
 
                             bool overall_success = true;
                             std::string delivery_errors;

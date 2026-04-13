@@ -330,14 +330,36 @@ TEST(DistributedExecutorTests, ShuffleJoinOrchestration) {
         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
     };
 
+    auto bloom_bits_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = BloomFilterBitsArgs::deserialize(p);
+        BloomFilterBitsArgs reply_args;
+        reply_args.context_id = args.context_id;
+        // Return empty bloom filter bits for mock - real implementation would return actual bits
+        reply_args.filter_data = {};
+        reply_args.expected_elements = 0;
+        reply_args.num_hashes = 4;
+
+        auto resp_p = reply_args.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
     node1.set_handler(RpcType::ShuffleFragment, handler);
     node1.set_handler(RpcType::PushData, handler);
     node1.set_handler(RpcType::ExecuteFragment, handler);
     node1.set_handler(RpcType::BloomFilterPush, handler);
+    node1.set_handler(RpcType::BloomFilterBits, bloom_bits_handler);
     node2.set_handler(RpcType::ShuffleFragment, handler);
     node2.set_handler(RpcType::PushData, handler);
     node2.set_handler(RpcType::ExecuteFragment, handler);
     node2.set_handler(RpcType::BloomFilterPush, handler);
+    node2.set_handler(RpcType::BloomFilterBits, bloom_bits_handler);
 
     ASSERT_TRUE(node1.start());
     ASSERT_TRUE(node2.start());

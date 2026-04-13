@@ -280,6 +280,45 @@ class ClusterManager {
     }
 
     /**
+     * @brief Store local bloom filter bits from this node (called on data nodes)
+     */
+    void set_local_bloom_bits(const std::string& context_id, std::vector<uint8_t> bits,
+                              size_t expected_elements, size_t num_hashes) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        local_bloom_bits_[context_id] = std::move(bits);
+        local_expected_elements_ = expected_elements;
+        local_num_hashes_ = num_hashes;
+    }
+
+    /**
+     * @brief Get stored local bloom filter bits for a context
+     */
+    [[nodiscard]] std::vector<uint8_t> get_local_bloom_bits(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = local_bloom_bits_.find(context_id);
+        if (it != local_bloom_bits_.end()) {
+            return it->second;
+        }
+        return {};
+    }
+
+    /**
+     * @brief Get expected_elements for local bloom filter
+     */
+    [[nodiscard]] size_t get_local_expected_elements() const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        return local_expected_elements_;
+    }
+
+    /**
+     * @brief Get num_hashes for local bloom filter
+     */
+    [[nodiscard]] size_t get_local_num_hashes() const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        return local_num_hashes_;
+    }
+
+    /**
      * @brief Clear bloom filter for a context
      */
     void clear_bloom_filter(const std::string& context_id) {
@@ -311,6 +350,10 @@ class ClusterManager {
         shuffle_buffers_;
     /* context_id -> bloom filter data */
     std::unordered_map<std::string, BloomFilterEntry> bloom_filters_;
+    /* context_id -> local bloom filter bits (for aggregation during distributed build) */
+    std::unordered_map<std::string, std::vector<uint8_t>> local_bloom_bits_;
+    size_t local_expected_elements_ = 0;
+    size_t local_num_hashes_ = 0;
     mutable std::mutex mutex_;
 };
 

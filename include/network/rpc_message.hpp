@@ -34,6 +34,7 @@ enum class RpcType : uint8_t {
     PushData = 9,
     ShuffleFragment = 10,
     BloomFilterPush = 11,
+    BloomFilterBits = 12,
     Error = 255
 };
 
@@ -496,6 +497,64 @@ struct BloomFilterArgs {
         }
 
         // Deserialize metadata using fixed-width temporaries
+        if (offset + 9 <= in.size()) {
+            uint64_t tmp_expected = 0;
+            std::memcpy(&tmp_expected, in.data() + offset, 8);
+            args.expected_elements = static_cast<size_t>(tmp_expected);
+            offset += 8;
+            args.num_hashes = static_cast<size_t>(in[offset]);
+        }
+        return args;
+    }
+};
+
+/**
+ * @brief Arguments for sending local bloom filter bits from data node to coordinator
+ *         Used during Phase 1 to collect and aggregate bloom filters from all nodes
+ */
+struct BloomFilterBitsArgs {
+    std::string context_id;
+    std::vector<uint8_t> filter_data;
+    size_t expected_elements = 0;
+    size_t num_hashes = 0;
+
+    [[nodiscard]] std::vector<uint8_t> serialize() const {
+        std::vector<uint8_t> out;
+        Serializer::serialize_string(context_id, out);
+
+        // Serialize filter data (blob)
+        const uint32_t filter_len = static_cast<uint32_t>(filter_data.size());
+        const size_t off = out.size();
+        out.resize(off + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + off, &filter_len, Serializer::VAL_SIZE_32);
+        out.insert(out.end(), filter_data.begin(), filter_data.end());
+
+        // Serialize metadata
+        uint64_t tmp_expected = static_cast<uint64_t>(expected_elements);
+        uint8_t tmp_hashes = static_cast<uint8_t>(num_hashes);
+        const size_t off2 = out.size();
+        out.resize(off2 + 9);  // 8 bytes for expected_elements + 1 for num_hashes
+        std::memcpy(out.data() + off2, &tmp_expected, 8);
+        out[off2 + 8] = tmp_hashes;
+        return out;
+    }
+
+    static BloomFilterBitsArgs deserialize(const std::vector<uint8_t>& in) {
+        BloomFilterBitsArgs args;
+        size_t offset = 0;
+        args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+
+        uint32_t filter_len = 0;
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&filter_len, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
+        }
+        if (offset + filter_len <= in.size()) {
+            args.filter_data.resize(filter_len);
+            std::memcpy(args.filter_data.data(), in.data() + offset, filter_len);
+            offset += filter_len;
+        }
+
         if (offset + 9 <= in.size()) {
             uint64_t tmp_expected = 0;
             std::memcpy(&tmp_expected, in.data() + offset, 8);
