@@ -193,10 +193,18 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     QueryResult res;
                     std::string join_type_name;
                     switch (join.type) {
-                        case parser::SelectStatement::JoinType::Left: join_type_name = "LEFT"; break;
-                        case parser::SelectStatement::JoinType::Right: join_type_name = "RIGHT"; break;
-                        case parser::SelectStatement::JoinType::Full: join_type_name = "FULL"; break;
-                        default: join_type_name = "OUTER"; break;
+                        case parser::SelectStatement::JoinType::Left:
+                            join_type_name = "LEFT";
+                            break;
+                        case parser::SelectStatement::JoinType::Right:
+                            join_type_name = "RIGHT";
+                            break;
+                        case parser::SelectStatement::JoinType::Full:
+                            join_type_name = "FULL";
+                            break;
+                        default:
+                            join_type_name = "OUTER";
+                            break;
                     }
                     res.set_error("Distributed Shuffle Join only supports INNER joins. " +
                                   join_type_name +

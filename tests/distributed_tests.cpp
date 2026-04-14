@@ -459,7 +459,8 @@ TEST(DistributedExecutorTests, RightJoinRejection) {
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
 
-    auto res = exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    auto res =
+        exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
 
     // Should fail because distributed shuffle join only supports INNER joins
     EXPECT_FALSE(res.success());
@@ -479,7 +480,8 @@ TEST(DistributedExecutorTests, FullJoinRejection) {
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
 
-    auto res = exec.execute(*stmt, "SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
+    auto res =
+        exec.execute(*stmt, "SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
 
     // Should fail because distributed shuffle join only supports INNER joins
     EXPECT_FALSE(res.success());
