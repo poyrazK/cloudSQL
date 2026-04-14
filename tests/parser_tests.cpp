@@ -798,8 +798,7 @@ TEST(ParserTests, ComplexUpdate) {
 }
 
 TEST(ParserTests, ComplexDelete) {
-    auto stmt = parse(
-        "DELETE FROM users WHERE status = 'inactive' AND last_login < '2024-01-01'");
+    auto stmt = parse("DELETE FROM users WHERE status = 'inactive' AND last_login < '2024-01-01'");
     ASSERT_NE(stmt, nullptr);
 
     auto* delete_stmt = as<DeleteStatement>(stmt);
