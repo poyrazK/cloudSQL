@@ -188,6 +188,22 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                 const std::string left_table = select_stmt->from()->to_string();
                 const std::string right_table = join.table->to_string();
 
+                // Check join type - shuffle join only supports INNER joins
+                if (join.type != parser::SelectStatement::JoinType::Inner) {
+                    QueryResult res;
+                    std::string join_type_name;
+                    switch (join.type) {
+                        case parser::SelectStatement::JoinType::Left: join_type_name = "LEFT"; break;
+                        case parser::SelectStatement::JoinType::Right: join_type_name = "RIGHT"; break;
+                        case parser::SelectStatement::JoinType::Full: join_type_name = "FULL"; break;
+                        default: join_type_name = "OUTER"; break;
+                    }
+                    res.set_error("Distributed Shuffle Join only supports INNER joins. " +
+                                  join_type_name +
+                                  " joins are not yet supported in distributed mode.");
+                    return res;
+                }
+
                 // Assume join key is in the condition
                 std::string left_key;
                 std::string right_key;

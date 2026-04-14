@@ -447,4 +447,44 @@ TEST(DistributedExecutorTests, NonEqualityJoinRejection) {
     EXPECT_THAT(res.error(), testing::HasSubstr("equality join condition"));
 }
 
+TEST(DistributedExecutorTests, RightJoinRejection) {
+    auto catalog = Catalog::create();
+    const config::Config config;
+    ClusterManager cm(&config);
+    cm.register_node("n1", "127.0.0.1", 7800, config::RunMode::Data);
+    DistributedExecutor exec(*catalog, cm);
+
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+
+    // Should fail because distributed shuffle join only supports INNER joins
+    EXPECT_FALSE(res.success());
+    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER joins"));
+    EXPECT_THAT(res.error(), testing::HasSubstr("RIGHT"));
+}
+
+TEST(DistributedExecutorTests, FullJoinRejection) {
+    auto catalog = Catalog::create();
+    const config::Config config;
+    ClusterManager cm(&config);
+    cm.register_node("n1", "127.0.0.1", 7800, config::RunMode::Data);
+    DistributedExecutor exec(*catalog, cm);
+
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
+
+    // Should fail because distributed shuffle join only supports INNER joins
+    EXPECT_FALSE(res.success());
+    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER joins"));
+    EXPECT_THAT(res.error(), testing::HasSubstr("FULL"));
+}
+
 }  // namespace
