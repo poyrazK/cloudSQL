@@ -604,14 +604,12 @@ TEST(ParserTests, ParseArithmeticPrecedence) {
     EXPECT_EQ(right_bin->op(), TokenType::Star);
 
     // Right's left is ConstantExpr with value 2
-    auto* right_left =
-        dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&right_bin->left()));
+    auto* right_left = dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&right_bin->left()));
     ASSERT_NE(right_left, nullptr);
     EXPECT_EQ(right_left->value().as_int64(), 2);
 
     // Right's right is ConstantExpr with value 3
-    auto* right_right =
-        dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&right_bin->right()));
+    auto* right_right = dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&right_bin->right()));
     ASSERT_NE(right_right, nullptr);
     EXPECT_EQ(right_right->value().as_int64(), 3);
 }
