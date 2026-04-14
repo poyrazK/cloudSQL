@@ -462,9 +462,9 @@ TEST(DistributedExecutorTests, RightJoinRejection) {
     auto res =
         exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
 
-    // Should fail because distributed shuffle join only supports INNER joins
+    // Should fail because distributed shuffle join only supports INNER and LEFT joins
     EXPECT_FALSE(res.success());
-    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER joins"));
+    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER and LEFT joins"));
     EXPECT_THAT(res.error(), testing::HasSubstr("RIGHT"));
 }
 
@@ -483,9 +483,9 @@ TEST(DistributedExecutorTests, FullJoinRejection) {
     auto res =
         exec.execute(*stmt, "SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
 
-    // Should fail because distributed shuffle join only supports INNER joins
+    // Should fail because distributed shuffle join only supports INNER and LEFT joins
     EXPECT_FALSE(res.success());
-    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER joins"));
+    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER and LEFT joins"));
     EXPECT_THAT(res.error(), testing::HasSubstr("FULL"));
 }
 
