@@ -18,7 +18,9 @@ using namespace cloudsql::parser;
 namespace {
 
 // Helper to create a simple lexer
-static Lexer make_lexer(const std::string& input) { return Lexer(input); }
+static Lexer make_lexer(const std::string& input) {
+    return Lexer(input);
+}
 
 // Helper to get all tokens from a lexer
 static std::vector<Token> tokenize(const std::string& input) {
@@ -468,7 +470,8 @@ TEST(LexerTests, JoinStatement) {
 }
 
 TEST(LexerTests, GroupByHaving) {
-    auto tokens = tokenize("SELECT department FROM employees GROUP BY department HAVING COUNT(*) > 5");
+    auto tokens =
+        tokenize("SELECT department FROM employees GROUP BY department HAVING COUNT(*) > 5");
     // Verify GROUP BY and HAVING are present
     bool has_group = false, has_by = false, has_having = false;
     for (const auto& t : tokens) {
