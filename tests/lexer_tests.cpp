@@ -26,10 +26,18 @@ static Lexer make_lexer(const std::string& input) {
 static std::vector<Token> tokenize(const std::string& input) {
     Lexer lexer(input);
     std::vector<Token> tokens;
-    while (!lexer.is_at_end()) {
-        tokens.push_back(lexer.next_token());
+    while (true) {
+        Token token = lexer.next_token();
+        tokens.push_back(token);
+        if (token.type() == TokenType::End) {
+            break;
+        }
+        if (lexer.is_at_end()) {
+            // Input exhausted but last token wasn't End - add End token
+            tokens.push_back(lexer.next_token());
+            break;
+        }
     }
-    tokens.push_back(lexer.next_token());  // Get End token
     return tokens;
 }
 
@@ -84,7 +92,7 @@ TEST(LexerTests, KeywordsCaseInsensitive) {
 
 TEST(LexerTests, KeywordsVariety) {
     auto tokens = tokenize("SELECT DISTINCT id, name FROM users WHERE age > 18 ORDER BY name ASC");
-    ASSERT_GE(tokens.size(), 12);
+    ASSERT_GE(tokens.size(), 15);
 
     EXPECT_EQ(tokens[0].type(), TokenType::Select);
     EXPECT_EQ(tokens[1].type(), TokenType::Distinct);
@@ -174,11 +182,15 @@ TEST(LexerTests, EmptyString) {
 }
 
 TEST(LexerTests, StringWithEscapedQuote) {
-    // Note: Lexer doesn't handle SQL-style '' escaping
-    // 'it''s' is parsed as 'it' (Error?) then 's cool'
+    // Note: Lexer does NOT handle SQL-style '' escaping
+    // 'it''s cool' is parsed as two strings: 'it' and 's cool'
     auto tokens = tokenize("'it''s cool'");
-    // Multiple strings because '' is two separate quote chars
-    ASSERT_GE(tokens.size(), 2);
+    // First token is the string 'it' (lexer stops at second ')
+    ASSERT_EQ(tokens.size(), 3);  // 'it', 's cool', End
+    EXPECT_EQ(tokens[0].type(), TokenType::String);
+    EXPECT_EQ(tokens[0].as_string(), "it");
+    EXPECT_EQ(tokens[1].type(), TokenType::String);
+    EXPECT_EQ(tokens[1].as_string(), "s cool");
 }
 
 // ============= Operator Tests =============
