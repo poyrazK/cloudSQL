@@ -287,10 +287,14 @@ std::unique_ptr<Statement> Parser::parse_create_table() {
     }
 
     /* IF NOT EXISTS */
-    if (consume(TokenType::Not)) {
+    if (consume(TokenType::If)) {
+        if (!consume(TokenType::Not)) {
+            return nullptr;
+        }
         if (!consume(TokenType::Exists)) {
             return nullptr;
         }
+        stmt->set_if_not_exists(true);
     }
 
     const Token name = next_token();

@@ -221,6 +221,7 @@ class CreateTableStatement : public Statement {
    private:
     std::string table_name_;
     std::vector<ColumnDef> columns_;
+    bool if_not_exists_ = false;
 
    public:
     CreateTableStatement() = default;
@@ -232,6 +233,8 @@ class CreateTableStatement : public Statement {
         columns_.push_back({std::move(name), std::move(type), false, false, false, nullptr});
     }
     [[nodiscard]] ColumnDef& get_last_column() { return columns_.back(); }
+    void set_if_not_exists(bool v) { if_not_exists_ = v; }
+    [[nodiscard]] bool if_not_exists() const { return if_not_exists_; }
 
     [[nodiscard]] const std::string& table_name() const { return table_name_; }
     [[nodiscard]] const std::vector<ColumnDef>& columns() const { return columns_; }
