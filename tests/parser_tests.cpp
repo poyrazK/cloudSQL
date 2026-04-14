@@ -225,7 +225,7 @@ TEST(ParserTests, SelectWithMultipleJoins) {
 }
 
 TEST(ParserTests, SelectWithJoinNoCondition) {
-    // JOIN without ON condition - parsed but condition is nullptr
+    // JOIN without ON condition is accepted with nullptr condition
     auto stmt = parse("SELECT * FROM users JOIN orders");
     ASSERT_NE(stmt, nullptr);
 
@@ -255,6 +255,7 @@ TEST(ParserTests, CreateTableIfNotExists) {
     auto* create = as<CreateTableStatement>(stmt);
     ASSERT_NE(create, nullptr);
     EXPECT_EQ(create->table_name(), "users");
+    EXPECT_TRUE(create->if_not_exists());
 }
 
 TEST(ParserTests, CreateTableWithPrimaryKey) {
@@ -508,14 +509,34 @@ TEST(ParserTests, ParseStringConstant) {
 }
 
 TEST(ParserTests, ParseBooleanConstants) {
+    // TRUE and FALSE are parsed as identifiers/function calls (not as constants)
+    // because the lexer recognizes TRUE/FALSE as keywords but parse_primary
+    // only handles NULL specially, not TRUE/FALSE
     auto stmt1 = parse("SELECT TRUE FROM t");
     ASSERT_NE(stmt1, nullptr);
+    auto* select1 = as<SelectStatement>(stmt1);
+    ASSERT_NE(select1, nullptr);
+    ASSERT_GE(select1->columns().size(), 1U);
+    // TRUE is parsed as a column expression (identifier)
+    EXPECT_EQ(select1->columns()[0]->type(), ExprType::Column);
 
     auto stmt2 = parse("SELECT FALSE FROM t");
     ASSERT_NE(stmt2, nullptr);
+    auto* select2 = as<SelectStatement>(stmt2);
+    ASSERT_NE(select2, nullptr);
+    ASSERT_GE(select2->columns().size(), 1U);
+    EXPECT_EQ(select2->columns()[0]->type(), ExprType::Column);
 
+    // NULL is parsed as ConstantExpr with null value
     auto stmt3 = parse("SELECT NULL FROM t");
     ASSERT_NE(stmt3, nullptr);
+    auto* select3 = as<SelectStatement>(stmt3);
+    ASSERT_NE(select3, nullptr);
+    ASSERT_GE(select3->columns().size(), 1U);
+    EXPECT_EQ(select3->columns()[0]->type(), ExprType::Constant);
+    auto* const3 = dynamic_cast<ConstantExpr*>(select3->columns()[0].get());
+    ASSERT_NE(const3, nullptr);
+    EXPECT_TRUE(const3->value().is_null());
 }
 
 TEST(ParserTests, ParseColumnReference) {
@@ -566,8 +587,33 @@ TEST(ParserTests, ParseArithmeticPrecedence) {
     auto* select = as<SelectStatement>(stmt);
     ASSERT_NE(select, nullptr);
     ASSERT_GE(select->columns().size(), 1U);
+
     // Top level is BinaryExpr with + operator
-    // Left is 1, Right is BinaryExpr with * operator
+    auto* top_bin = dynamic_cast<BinaryExpr*>(select->columns()[0].get());
+    ASSERT_NE(top_bin, nullptr);
+    EXPECT_EQ(top_bin->op(), TokenType::Plus);
+
+    // Left child is ConstantExpr with value 1
+    auto* left = dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&top_bin->left()));
+    ASSERT_NE(left, nullptr);
+    EXPECT_EQ(left->value().as_int64(), 1);
+
+    // Right child is BinaryExpr with * operator
+    auto* right_bin = dynamic_cast<BinaryExpr*>(const_cast<Expression*>(&top_bin->right()));
+    ASSERT_NE(right_bin, nullptr);
+    EXPECT_EQ(right_bin->op(), TokenType::Star);
+
+    // Right's left is ConstantExpr with value 2
+    auto* right_left =
+        dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&right_bin->left()));
+    ASSERT_NE(right_left, nullptr);
+    EXPECT_EQ(right_left->value().as_int64(), 2);
+
+    // Right's right is ConstantExpr with value 3
+    auto* right_right =
+        dynamic_cast<ConstantExpr*>(const_cast<Expression*>(&right_bin->right()));
+    ASSERT_NE(right_right, nullptr);
+    EXPECT_EQ(right_right->value().as_int64(), 3);
 }
 
 TEST(ParserTests, ParseLogicalAnd) {

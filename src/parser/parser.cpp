@@ -294,6 +294,7 @@ std::unique_ptr<Statement> Parser::parse_create_table() {
         if (!consume(TokenType::Exists)) {
             return nullptr;
         }
+        stmt->set_if_not_exists(true);
     }
 
     const Token name = next_token();
