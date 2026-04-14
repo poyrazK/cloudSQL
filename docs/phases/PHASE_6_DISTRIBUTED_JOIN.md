@@ -28,8 +28,9 @@ Seamlessly integrated shuffle buffers into the Volcano execution model.
 ### 5. Bloom Filter Optimization (`common/bloom_filter.hpp`)
 Added probabilistic filtering to reduce network traffic in shuffle joins.
 - **MurmurHash3-based BloomFilter**: Configurable false positive rate (default 1%) with optimal bit count and hash function calculation.
-- **Filter Construction**: Built during Phase 1 scan, stored in `ClusterManager` per context.
-- **Filter Application**: `PushData` handler checks `might_contain()` before buffering, skipping tuples that will definitely not match.
+- **Distributed Construction**: Each data node builds a local bloom filter from its left/build table partition during Phase 1 scan.
+- **Bit Aggregation**: Coordinator collects local bloom bits from all data nodes via `BloomFilterBits` RPC and OR-aggregates them into a single filter.
+- **Sender-Side Filtering**: Aggregated filter is broadcast via `BloomFilterPush` before Phase 2; `ShuffleFragment` handler applies `might_contain()` before sending `PushData`, skipping tuples that will definitely not match.
 
 ## Lessons Learned
 - Shuffle joins significantly reduce network traffic compared to broadcast joins for large-to-large table joins.
