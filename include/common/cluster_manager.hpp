@@ -286,8 +286,8 @@ class ClusterManager {
                               size_t expected_elements, size_t num_hashes) {
         const std::scoped_lock<std::mutex> lock(mutex_);
         local_bloom_bits_[context_id] = std::move(bits);
-        local_expected_elements_ = expected_elements;
-        local_num_hashes_ = num_hashes;
+        local_expected_elements_map_[context_id] = expected_elements;
+        local_num_hashes_map_[context_id] = num_hashes;
     }
 
     /**
@@ -305,17 +305,25 @@ class ClusterManager {
     /**
      * @brief Get expected_elements for local bloom filter
      */
-    [[nodiscard]] size_t get_local_expected_elements() const {
+    [[nodiscard]] size_t get_local_expected_elements(const std::string& context_id) const {
         const std::scoped_lock<std::mutex> lock(mutex_);
-        return local_expected_elements_;
+        auto it = local_expected_elements_map_.find(context_id);
+        if (it != local_expected_elements_map_.end()) {
+            return it->second;
+        }
+        return 0;
     }
 
     /**
      * @brief Get num_hashes for local bloom filter
      */
-    [[nodiscard]] size_t get_local_num_hashes() const {
+    [[nodiscard]] size_t get_local_num_hashes(const std::string& context_id) const {
         const std::scoped_lock<std::mutex> lock(mutex_);
-        return local_num_hashes_;
+        auto it = local_num_hashes_map_.find(context_id);
+        if (it != local_num_hashes_map_.end()) {
+            return it->second;
+        }
+        return 0;
     }
 
     /**
@@ -324,6 +332,9 @@ class ClusterManager {
     void clear_bloom_filter(const std::string& context_id) {
         const std::scoped_lock<std::mutex> lock(mutex_);
         bloom_filters_.erase(context_id);
+        local_bloom_bits_.erase(context_id);
+        local_expected_elements_map_.erase(context_id);
+        local_num_hashes_map_.erase(context_id);
     }
 
    private:
@@ -352,8 +363,8 @@ class ClusterManager {
     std::unordered_map<std::string, BloomFilterEntry> bloom_filters_;
     /* context_id -> local bloom filter bits (for aggregation during distributed build) */
     std::unordered_map<std::string, std::vector<uint8_t>> local_bloom_bits_;
-    size_t local_expected_elements_ = 0;
-    size_t local_num_hashes_ = 0;
+    std::unordered_map<std::string, size_t> local_expected_elements_map_;
+    std::unordered_map<std::string, size_t> local_num_hashes_map_;
     mutable std::mutex mutex_;
 };
 

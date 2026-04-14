@@ -529,8 +529,8 @@ int main(int argc, char* argv[]) {
                         reply_args.filter_data =
                             cluster_manager->get_local_bloom_bits(args.context_id);
                         reply_args.expected_elements =
-                            cluster_manager->get_local_expected_elements();
-                        reply_args.num_hashes = cluster_manager->get_local_num_hashes();
+                            cluster_manager->get_local_expected_elements(args.context_id);
+                        reply_args.num_hashes = cluster_manager->get_local_num_hashes(args.context_id);
 
                         auto resp_p = reply_args.serialize();
                         cloudsql::network::RpcHeader resp_h;
