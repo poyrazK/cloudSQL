@@ -13,8 +13,8 @@
 
 #include "common/config.hpp"
 #include "common/value.hpp"
-#include "storage/buffer_pool_manager.hpp"
 #include "storage/btree_index.hpp"
+#include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
 
@@ -29,8 +29,8 @@ class BTreeIndexTests : public ::testing::Test {
     void SetUp() override {
         disk_manager_ = std::make_unique<StorageManager>("./test_idx_data");
         disk_manager_->create_dir_if_not_exists();
-        bpm_ = std::make_unique<BufferPoolManager>(Config::DEFAULT_BUFFER_POOL_SIZE,
-                                                    *disk_manager_);
+        bpm_ =
+            std::make_unique<BufferPoolManager>(Config::DEFAULT_BUFFER_POOL_SIZE, *disk_manager_);
 
         index_ = std::make_unique<BTreeIndex>("test_index", *bpm_, ValueType::TYPE_INT64);
     }
