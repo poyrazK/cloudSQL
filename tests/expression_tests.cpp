@@ -492,9 +492,9 @@ TEST(ExpressionTests, IsNotNullExprToString) {
 
 TEST(ExpressionTests, ComplexArithmeticExpression) {
     // (5 + 3) * 2 = 16
-    auto left = std::make_unique<BinaryExpr>(
-        std::make_unique<ConstantExpr>(Value::make_int64(5)), TokenType::Plus,
-        std::make_unique<ConstantExpr>(Value::make_int64(3)));
+    auto left = std::make_unique<BinaryExpr>(std::make_unique<ConstantExpr>(Value::make_int64(5)),
+                                             TokenType::Plus,
+                                             std::make_unique<ConstantExpr>(Value::make_int64(3)));
     auto right = std::make_unique<ConstantExpr>(Value::make_int64(2));
     BinaryExpr expr(std::move(left), TokenType::Star, std::move(right));
 
@@ -504,9 +504,9 @@ TEST(ExpressionTests, ComplexArithmeticExpression) {
 
 TEST(ExpressionTests, ComplexLogicalExpression) {
     // (5 > 3) AND (2 < 10)
-    auto left = std::make_unique<BinaryExpr>(
-        std::make_unique<ConstantExpr>(Value::make_int64(5)), TokenType::Gt,
-        std::make_unique<ConstantExpr>(Value::make_int64(3)));
+    auto left = std::make_unique<BinaryExpr>(std::make_unique<ConstantExpr>(Value::make_int64(5)),
+                                             TokenType::Gt,
+                                             std::make_unique<ConstantExpr>(Value::make_int64(3)));
     auto right = std::make_unique<BinaryExpr>(
         std::make_unique<ConstantExpr>(Value::make_int64(2)), TokenType::Lt,
         std::make_unique<ConstantExpr>(Value::make_int64(10)));
