@@ -233,4 +233,181 @@ TEST_F(StorageManagerTests, WriteAndReadDifferentPages) {
     EXPECT_EQ(std::memcmp(page5, read_buf, StorageManager::PAGE_SIZE), 0);
 }
 
+// ============= New Tests =============
+
+/**
+ * @brief Verifies PAGE_SIZE constant value
+ */
+TEST_F(StorageManagerTests, PageSizeConstant) {
+    EXPECT_EQ(StorageManager::PAGE_SIZE, 4096U);
+}
+
+/**
+ * @brief Verifies read_page auto-opens file if not already open
+ */
+TEST_F(StorageManagerTests, ReadNonOpenedFileAutoOpens) {
+    const std::string filename = "non_opened_read.db";
+    cleanup_file("./test_data", filename);
+
+    // Capture open-file count before operation
+    auto before = sm_->get_stats().files_opened.load();
+    ASSERT_FALSE(sm_->file_exists(filename));
+
+    // StorageManager auto-opens files, so read should succeed
+    char buf[StorageManager::PAGE_SIZE];
+    EXPECT_TRUE(sm_->read_page(filename, 0, buf));
+
+    // Verify file was created and open-file count increased
+    EXPECT_TRUE(sm_->file_exists(filename));
+    EXPECT_EQ(sm_->get_stats().files_opened.load(), before + 1);
+}
+
+/**
+ * @brief Verifies write_page auto-opens file if not already open
+ */
+TEST_F(StorageManagerTests, WriteNonOpenedFileAutoOpens) {
+    const std::string filename = "non_opened_write.db";
+    cleanup_file("./test_data", filename);
+
+    // Capture open-file count before operation
+    auto before = sm_->get_stats().files_opened.load();
+    ASSERT_FALSE(sm_->file_exists(filename));
+
+    char buf[StorageManager::PAGE_SIZE];
+    std::memset(buf, 0xAB, StorageManager::PAGE_SIZE);
+    // StorageManager auto-opens files, so write should succeed
+    EXPECT_TRUE(sm_->write_page(filename, 0, buf));
+
+    // Verify file was created and open-file count increased
+    EXPECT_TRUE(sm_->file_exists(filename));
+    EXPECT_EQ(sm_->get_stats().files_opened.load(), before + 1);
+}
+
+/**
+ * @brief Verifies data persists across file open/close cycle
+ */
+TEST_F(StorageManagerTests, DataPersistenceAcrossOpenClose) {
+    const std::string filename = "persist_test.db";
+    cleanup_file("./test_data", filename);
+
+    // Write data to page 0
+    ASSERT_TRUE(sm_->open_file(filename));
+    char write_buf[StorageManager::PAGE_SIZE];
+    for (int i = 0; i < StorageManager::PAGE_SIZE; ++i) {
+        write_buf[i] = static_cast<char>(i & 0xFF);
+    }
+    ASSERT_TRUE(sm_->write_page(filename, 0, write_buf));
+    ASSERT_TRUE(sm_->close_file(filename));
+
+    // Reopen and read - data should persist
+    ASSERT_TRUE(sm_->open_file(filename));
+    char read_buf[StorageManager::PAGE_SIZE];
+    ASSERT_TRUE(sm_->read_page(filename, 0, read_buf));
+    EXPECT_EQ(std::memcmp(write_buf, read_buf, StorageManager::PAGE_SIZE), 0);
+    ASSERT_TRUE(sm_->close_file(filename));
+}
+
+/**
+ * @brief Verifies stats track bytes_read and bytes_written accurately
+ */
+TEST_F(StorageManagerTests, StatsBytesAccurate) {
+    const std::string filename = "stats_bytes_test.db";
+    cleanup_file("./test_data", filename);
+
+    const auto& stats = sm_->get_stats();
+    auto initial_bytes_read = stats.bytes_read.load();
+    auto initial_bytes_written = stats.bytes_written.load();
+
+    ASSERT_TRUE(sm_->open_file(filename));
+
+    char buf[StorageManager::PAGE_SIZE];
+    std::memset(buf, 0xAB, StorageManager::PAGE_SIZE);
+    ASSERT_TRUE(sm_->write_page(filename, 0, buf));
+    ASSERT_TRUE(sm_->read_page(filename, 0, buf));
+
+    EXPECT_EQ(stats.bytes_written.load(), initial_bytes_written + StorageManager::PAGE_SIZE);
+    EXPECT_EQ(stats.bytes_read.load(), initial_bytes_read + StorageManager::PAGE_SIZE);
+}
+
+/**
+ * @brief Verifies data isolation between multiple files
+ */
+TEST_F(StorageManagerTests, MultipleFilesDataIsolation) {
+    const std::string file1 = "isolate1.db";
+    const std::string file2 = "isolate2.db";
+    cleanup_file("./test_data", file1);
+    cleanup_file("./test_data", file2);
+
+    ASSERT_TRUE(sm_->open_file(file1));
+    ASSERT_TRUE(sm_->open_file(file2));
+
+    char buf1[StorageManager::PAGE_SIZE];
+    char buf2[StorageManager::PAGE_SIZE];
+    char read_buf[StorageManager::PAGE_SIZE];
+
+    std::memset(buf1, 0x11, StorageManager::PAGE_SIZE);
+    std::memset(buf2, 0x22, StorageManager::PAGE_SIZE);
+
+    ASSERT_TRUE(sm_->write_page(file1, 0, buf1));
+    ASSERT_TRUE(sm_->write_page(file2, 0, buf2));
+
+    // Read from file1 - should have file1's data
+    ASSERT_TRUE(sm_->read_page(file1, 0, read_buf));
+    EXPECT_EQ(std::memcmp(buf1, read_buf, StorageManager::PAGE_SIZE), 0);
+
+    // Read from file2 - should have file2's data
+    ASSERT_TRUE(sm_->read_page(file2, 0, read_buf));
+    EXPECT_EQ(std::memcmp(buf2, read_buf, StorageManager::PAGE_SIZE), 0);
+}
+
+/**
+ * @brief Verifies deallocate_page stub doesn't crash
+ */
+TEST_F(StorageManagerTests, DeallocatePageStub) {
+    const std::string filename = "dealloc_test.db";
+    cleanup_file("./test_data", filename);
+
+    // deallocate_page is a stub but shouldn't crash
+    EXPECT_NO_THROW(StorageManager::deallocate_page(filename, 0));
+}
+
+/**
+ * @brief Verifies complex byte patterns persist correctly
+ */
+TEST_F(StorageManagerTests, ReadAfterWriteDifferentPatterns) {
+    const std::string filename = "patterns_test.db";
+    cleanup_file("./test_data", filename);
+
+    ASSERT_TRUE(sm_->open_file(filename));
+
+    // Write alternating pattern
+    char page[StorageManager::PAGE_SIZE];
+    for (size_t i = 0; i < StorageManager::PAGE_SIZE; ++i) {
+        page[i] = (i % 2 == 0) ? 0xAA : 0x55;
+    }
+    ASSERT_TRUE(sm_->write_page(filename, 0, page));
+
+    char read_buf[StorageManager::PAGE_SIZE];
+    ASSERT_TRUE(sm_->read_page(filename, 0, read_buf));
+    EXPECT_EQ(std::memcmp(page, read_buf, StorageManager::PAGE_SIZE), 0);
+}
+
+/**
+ * @brief Verifies files_opened stat increments correctly
+ */
+TEST_F(StorageManagerTests, FilesOpenedStatAccurate) {
+    const std::string file1 = "stat_file1.db";
+    const std::string file2 = "stat_file2.db";
+    cleanup_file("./test_data", file1);
+    cleanup_file("./test_data", file2);
+
+    const auto& stats = sm_->get_stats();
+    auto initial_files_opened = stats.files_opened.load();
+
+    ASSERT_TRUE(sm_->open_file(file1));
+    ASSERT_TRUE(sm_->open_file(file2));
+
+    EXPECT_EQ(stats.files_opened.load(), initial_files_opened + 2);
+}
+
 }  // namespace
