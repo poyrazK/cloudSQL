@@ -35,6 +35,9 @@ enum class RpcType : uint8_t {
     ShuffleFragment = 10,
     BloomFilterPush = 11,
     BloomFilterBits = 12,
+    UnmatchedRowsReport = 13,  // Data node reports unmatched right rows for outer join
+    UnmatchedRowsPush = 14,   // Coordinator sends unmatched rows for NULL-padding
+    FetchUnmatchedRows = 15,  // Coordinator fetches stored unmatched rows from data node
     Error = 255
 };
 
@@ -562,6 +565,136 @@ struct BloomFilterBitsArgs {
             offset += 8;
             args.num_hashes = static_cast<size_t>(in[offset]);
         }
+        return args;
+    }
+};
+
+/**
+ * @brief Arguments for UnmatchedRowsReport RPC
+ * @note Data node reports unmatched right row keys to coordinator after local join
+ */
+struct UnmatchedRowsReportArgs {
+    std::string context_id;
+    std::string right_table;
+    std::string join_key_col;  // Which column was the join key
+    std::vector<std::string> unmatched_keys;  // Key values that had no match
+    uint32_t left_column_count = 0;  // Number of left table columns for NULL-padding
+
+    [[nodiscard]] std::vector<uint8_t> serialize() const {
+        std::vector<uint8_t> out;
+        Serializer::serialize_string(context_id, out);
+        Serializer::serialize_string(right_table, out);
+        Serializer::serialize_string(join_key_col, out);
+
+        // Serialize left column count
+        const uint32_t left_count = left_column_count;
+        const size_t lc_off = out.size();
+        out.resize(lc_off + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + lc_off, &left_count, Serializer::VAL_SIZE_32);
+
+        // Serialize unmatched keys count
+        const uint32_t count = static_cast<uint32_t>(unmatched_keys.size());
+        const size_t off = out.size();
+        out.resize(off + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + off, &count, Serializer::VAL_SIZE_32);
+
+        // Serialize each key
+        for (const auto& key : unmatched_keys) {
+            Serializer::serialize_string(key, out);
+        }
+        return out;
+    }
+
+    static UnmatchedRowsReportArgs deserialize(const std::vector<uint8_t>& in) {
+        UnmatchedRowsReportArgs args;
+        size_t offset = 0;
+        args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+        args.right_table = Serializer::deserialize_string(in.data(), offset, in.size());
+        args.join_key_col = Serializer::deserialize_string(in.data(), offset, in.size());
+
+        // Deserialize left column count
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&args.left_column_count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
+        }
+
+        uint32_t count = 0;
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
+        }
+
+        for (uint32_t i = 0; i < count; ++i) {
+            args.unmatched_keys.push_back(
+                Serializer::deserialize_string(in.data(), offset, in.size()));
+        }
+        return args;
+    }
+};
+
+/**
+ * @brief Arguments for UnmatchedRowsPush RPC
+ * @note Coordinator sends unmatched rows to data nodes for NULL-padding
+ */
+struct UnmatchedRowsPushArgs {
+    std::string context_id;
+    std::vector<executor::Tuple> unmatched_rows;  // Right rows needing NULL padding
+
+    [[nodiscard]] std::vector<uint8_t> serialize() const {
+        std::vector<uint8_t> out;
+        Serializer::serialize_string(context_id, out);
+
+        // Serialize row count
+        const uint32_t count = static_cast<uint32_t>(unmatched_rows.size());
+        const size_t off = out.size();
+        out.resize(off + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + off, &count, Serializer::VAL_SIZE_32);
+
+        // Serialize each row
+        for (const auto& row : unmatched_rows) {
+            Serializer::serialize_tuple(row, out);
+        }
+        return out;
+    }
+
+    static UnmatchedRowsPushArgs deserialize(const std::vector<uint8_t>& in) {
+        UnmatchedRowsPushArgs args;
+        size_t offset = 0;
+        args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+
+        uint32_t count = 0;
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
+        }
+
+        for (uint32_t i = 0; i < count; ++i) {
+            args.unmatched_rows.push_back(Serializer::deserialize_tuple(in.data(), offset, in.size()));
+        }
+        return args;
+    }
+};
+
+/**
+ * @brief Arguments for FetchUnmatchedRows RPC
+ * @note Coordinator fetches stored unmatched rows from a data node
+ */
+struct FetchUnmatchedRowsArgs {
+    std::string context_id;
+    std::string table_name;
+
+    [[nodiscard]] std::vector<uint8_t> serialize() const {
+        std::vector<uint8_t> out;
+        Serializer::serialize_string(context_id, out);
+        Serializer::serialize_string(table_name, out);
+        return out;
+    }
+
+    static FetchUnmatchedRowsArgs deserialize(const std::vector<uint8_t>& in) {
+        FetchUnmatchedRowsArgs args;
+        size_t offset = 0;
+        args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+        args.table_name = Serializer::deserialize_string(in.data(), offset, in.size());
         return args;
     }
 };

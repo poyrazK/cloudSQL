@@ -890,6 +890,28 @@ void HashJoinOperator::set_params(const std::vector<common::Value>* params) {
     if (right_) right_->set_params(params);
 }
 
+std::vector<Tuple> HashJoinOperator::get_unmatched_right_rows() const {
+    std::vector<Tuple> unmatched;
+    auto right_schema = right_->output_schema();
+    for (const auto& [key_str, build_tuple] : hash_table_) {
+        if (!build_tuple.matched) {
+            unmatched.push_back(build_tuple.tuple);
+        }
+    }
+    return unmatched;
+}
+
+std::vector<std::string> HashJoinOperator::get_unmatched_right_keys() const {
+    std::vector<std::string> keys;
+    auto right_schema = right_->output_schema();
+    for (const auto& [key_str, build_tuple] : hash_table_) {
+        if (!build_tuple.matched) {
+            keys.push_back(key_str);
+        }
+    }
+    return keys;
+}
+
 /* --- LimitOperator --- */
 
 LimitOperator::LimitOperator(std::unique_ptr<Operator> child, int64_t limit, int64_t offset)

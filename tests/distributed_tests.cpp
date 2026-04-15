@@ -15,8 +15,10 @@
 
 #include "catalog/catalog.hpp"
 #include "common/cluster_manager.hpp"
+#include "common/value.hpp"
 #include "distributed/distributed_executor.hpp"
 #include "distributed/shard_manager.hpp"
+#include "executor/types.hpp"
 #include "network/rpc_client.hpp"
 #include "network/rpc_message.hpp"
 #include "network/rpc_server.hpp"
@@ -24,6 +26,7 @@
 #include "parser/parser.hpp"
 
 using namespace cloudsql;
+using namespace cloudsql::common;
 using namespace cloudsql::executor;
 using namespace cloudsql::cluster;
 using namespace cloudsql::parser;
@@ -447,46 +450,313 @@ TEST(DistributedExecutorTests, NonEqualityJoinRejection) {
     EXPECT_THAT(res.error(), testing::HasSubstr("equality join condition"));
 }
 
-TEST(DistributedExecutorTests, RightJoinRejection) {
+TEST(DistributedExecutorTests, BloomFilterSkipForOuterJoin) {
+    // Test that bloom filter is NOT sent for RIGHT JOIN
+    // (INNER join behavior is tested in ShuffleJoinOrchestration)
+
+    RpcServer node1(7860);
+    RpcServer node2(7861);
+
+    std::atomic<int> bloom_push_calls{0};
+    std::atomic<int> shuffle_calls{0};
+    std::atomic<int> push_calls{0};
+    std::atomic<int> fragment_calls{0};
+    std::atomic<int> unmatched_report_calls{0};
+    std::atomic<int> fetch_unmatched_calls{0};
+
+    // Handler for regular RPCs
+    auto handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)p;
+        QueryResultsReply reply;
+        reply.success = true;
+
+        if (h.type == RpcType::BloomFilterPush) {
+            bloom_push_calls++;
+        } else if (h.type == RpcType::ShuffleFragment) {
+            shuffle_calls++;
+        } else if (h.type == RpcType::PushData) {
+            push_calls++;
+        } else if (h.type == RpcType::ExecuteFragment) {
+            fragment_calls++;
+        } else if (h.type == RpcType::UnmatchedRowsReport) {
+            unmatched_report_calls++;
+        } else if (h.type == RpcType::FetchUnmatchedRows) {
+            fetch_unmatched_calls++;
+        }
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Handler for BloomFilterBits - returns non-empty filter data to properly test bloom filter
+    auto bloom_bits_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = BloomFilterBitsArgs::deserialize(p);
+        BloomFilterBitsArgs reply_args;
+        reply_args.context_id = args.context_id;
+        reply_args.filter_data = {0xFF, 0xFF, 0xFF, 0xFF};  // Non-empty bloom filter
+        reply_args.expected_elements = 100;
+        reply_args.num_hashes = 4;
+
+        auto resp_p = reply_args.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Handler for UnmatchedRowsReport - returns proper response type
+    auto unmatched_report_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = UnmatchedRowsReportArgs::deserialize(p);
+        UnmatchedRowsReportArgs reply;
+        reply.context_id = args.context_id;
+        reply.right_table = args.right_table;
+        // Empty unmatched_keys = all rows matched (for test simplicity)
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Handler for FetchUnmatchedRows - returns proper response type
+    auto fetch_unmatched_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = FetchUnmatchedRowsArgs::deserialize(p);
+        UnmatchedRowsPushArgs reply;
+        reply.context_id = args.context_id;
+        reply.unmatched_rows = {};  // Empty for test simplicity
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    node1.set_handler(RpcType::BloomFilterPush, handler);
+    node1.set_handler(RpcType::ShuffleFragment, handler);
+    node1.set_handler(RpcType::PushData, handler);
+    node1.set_handler(RpcType::ExecuteFragment, handler);
+    node1.set_handler(RpcType::BloomFilterBits, bloom_bits_handler);
+    node1.set_handler(RpcType::UnmatchedRowsReport, unmatched_report_handler);
+    node1.set_handler(RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
+    node2.set_handler(RpcType::BloomFilterPush, handler);
+    node2.set_handler(RpcType::ShuffleFragment, handler);
+    node2.set_handler(RpcType::PushData, handler);
+    node2.set_handler(RpcType::ExecuteFragment, handler);
+    node2.set_handler(RpcType::BloomFilterBits, bloom_bits_handler);
+    node2.set_handler(RpcType::UnmatchedRowsReport, unmatched_report_handler);
+    node2.set_handler(RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
+
+    ASSERT_TRUE(node1.start());
+    ASSERT_TRUE(node2.start());
+
     auto catalog = Catalog::create();
     const config::Config config;
     ClusterManager cm(&config);
-    cm.register_node("n1", "127.0.0.1", 7800, config::RunMode::Data);
+    cm.register_node("n1", "127.0.0.1", 7860, config::RunMode::Data);
+    cm.register_node("n2", "127.0.0.1", 7861, config::RunMode::Data);
     DistributedExecutor exec(*catalog, cm);
 
-    auto lexer =
-        std::make_unique<Lexer>("SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    // Execute RIGHT join - bloom filter should NOT be sent
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
 
-    auto res =
-        exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    // For RIGHT join, bloom filter is skipped (should be 0)
+    // Even though we returned valid bloom bits, the coordinator should not push for outer joins
+    EXPECT_EQ(bloom_push_calls.load(), 0);
+    // Verify the query succeeded
+    EXPECT_TRUE(res.success());
 
-    // Should fail because distributed shuffle join only supports INNER and LEFT joins
-    EXPECT_FALSE(res.success());
-    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER and LEFT joins"));
-    EXPECT_THAT(res.error(), testing::HasSubstr("RIGHT"));
+    node1.stop();
+    node2.stop();
 }
 
-TEST(DistributedExecutorTests, FullJoinRejection) {
+TEST(DistributedExecutorTests, Phase3SkippedForRightJoin) {
+    // Test that Phase 3 (UnmatchedRowsReport) is NOT called for RIGHT JOIN
+    // because the local executor on each data node already handles unmatched right rows.
+    // Phase 3-5 is only needed for FULL JOIN to collect unmatched LEFT rows.
+
+    RpcServer node1(7870);
+    RpcServer node2(7871);
+
+    std::atomic<int> unmatched_report_calls{0};
+    std::atomic<int> fetch_unmatched_calls{0};
+
+    // Handler for ExecuteFragment that returns proper schema and rows
+    auto execute_fragment_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = ExecuteFragmentArgs::deserialize(p);
+        QueryResultsReply reply;
+        reply.success = true;
+
+        // Build schema for joined result: table1(id, val), table2(id, val)
+        Schema schema;
+        schema.add_column("id", common::ValueType::TYPE_INT64);
+        schema.add_column("val", common::ValueType::TYPE_INT64);
+        schema.add_column("id", common::ValueType::TYPE_INT64);  // table2.id (ambiguous but matches)
+        schema.add_column("val", common::ValueType::TYPE_INT64);  // table2.val
+        reply.schema = schema;
+
+        // Return some matched rows (e.g., rows where table2.id = 1 and 2 matched)
+        // Format: {table1.id, table1.val, table2.id, table2.val}
+        reply.rows = {
+            Tuple{Value::make_int64(100), Value::make_int64(10), Value::make_int64(1), Value::make_int64(100)},
+            Tuple{Value::make_int64(200), Value::make_int64(20), Value::make_int64(2), Value::make_int64(200)},
+        };
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Handler for UnmatchedRowsReport - tracks calls (should be 0 for RIGHT JOIN)
+    auto unmatched_report_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = UnmatchedRowsReportArgs::deserialize(p);
+        unmatched_report_calls++;
+
+        UnmatchedRowsReportArgs reply;
+        reply.context_id = args.context_id;
+        reply.right_table = args.right_table;
+        reply.unmatched_keys = {"3"};
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Handler for FetchUnmatchedRows - tracks calls (should be 0 for RIGHT JOIN)
+    auto fetch_unmatched_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = FetchUnmatchedRowsArgs::deserialize(p);
+        fetch_unmatched_calls++;
+
+        UnmatchedRowsPushArgs reply;
+        reply.context_id = args.context_id;
+        reply.unmatched_rows = {
+            Tuple{Value::make_null(), Value::make_null(), Value::make_int64(3), Value::make_int64(30)}};
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Regular handler for other RPCs
+    auto basic_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)p;
+        QueryResultsReply reply;
+        reply.success = true;
+
+        auto resp_p = reply.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // BloomFilterBits handler
+    auto bloom_bits_handler = [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+        (void)h;
+        auto args = BloomFilterBitsArgs::deserialize(p);
+        BloomFilterBitsArgs reply_args;
+        reply_args.context_id = args.context_id;
+        reply_args.filter_data = {0xFF, 0xFF};
+        reply_args.expected_elements = 100;
+        reply_args.num_hashes = 4;
+
+        auto resp_p = reply_args.serialize();
+        RpcHeader resp_h;
+        resp_h.type = RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        static_cast<void>(send(fd, h_buf, RpcHeader::HEADER_SIZE, 0));
+        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+    };
+
+    // Set up handlers for node1
+    node1.set_handler(RpcType::ExecuteFragment, execute_fragment_handler);
+    node1.set_handler(RpcType::ShuffleFragment, basic_handler);
+    node1.set_handler(RpcType::PushData, basic_handler);
+    node1.set_handler(RpcType::BloomFilterPush, basic_handler);
+    node1.set_handler(RpcType::BloomFilterBits, bloom_bits_handler);
+    node1.set_handler(RpcType::UnmatchedRowsReport, unmatched_report_handler);
+    node1.set_handler(RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
+
+    // Set up handlers for node2
+    node2.set_handler(RpcType::ExecuteFragment, execute_fragment_handler);
+    node2.set_handler(RpcType::ShuffleFragment, basic_handler);
+    node2.set_handler(RpcType::PushData, basic_handler);
+    node2.set_handler(RpcType::BloomFilterPush, basic_handler);
+    node2.set_handler(RpcType::BloomFilterBits, bloom_bits_handler);
+    node2.set_handler(RpcType::UnmatchedRowsReport, unmatched_report_handler);
+    node2.set_handler(RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
+
+    ASSERT_TRUE(node1.start());
+    ASSERT_TRUE(node2.start());
+
     auto catalog = Catalog::create();
     const config::Config config;
     ClusterManager cm(&config);
-    cm.register_node("n1", "127.0.0.1", 7800, config::RunMode::Data);
+    cm.register_node("n1", "127.0.0.1", 7870, config::RunMode::Data);
+    cm.register_node("n2", "127.0.0.1", 7871, config::RunMode::Data);
     DistributedExecutor exec(*catalog, cm);
 
-    auto lexer =
-        std::make_unique<Lexer>("SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
+    // Execute RIGHT join
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
+    auto res = exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
 
-    auto res =
-        exec.execute(*stmt, "SELECT * FROM table1 FULL JOIN table2 ON table1.id = table2.id");
+    // Verify Phase 3-4 RPCs were NOT called for RIGHT JOIN
+    // (local executor handles unmatched right rows correctly)
+    EXPECT_EQ(unmatched_report_calls.load(), 0);  // NOT called for RIGHT JOIN
+    EXPECT_EQ(fetch_unmatched_calls.load(), 0);    // NOT called for RIGHT JOIN
+    EXPECT_TRUE(res.success());
 
-    // Should fail because distributed shuffle join only supports INNER and LEFT joins
-    EXPECT_FALSE(res.success());
-    EXPECT_THAT(res.error(), testing::HasSubstr("only supports INNER and LEFT joins"));
-    EXPECT_THAT(res.error(), testing::HasSubstr("FULL"));
+    node1.stop();
+    node2.stop();
 }
 
 }  // namespace

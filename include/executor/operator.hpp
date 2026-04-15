@@ -358,6 +358,18 @@ class HashJoinOperator : public Operator {
 
     void set_memory_resource(std::pmr::memory_resource* mr) override;
     void set_params(const std::vector<common::Value>* params) override;
+
+    /**
+     * @brief Get unmatched right rows after join execution
+     * @return Vector of tuples - the right-side rows that had no match
+     */
+    [[nodiscard]] std::vector<Tuple> get_unmatched_right_rows() const;
+
+    /**
+     * @brief Get join key values of unmatched right rows
+     * @return Vector of strings - the join key values for unmatched right rows
+     */
+    [[nodiscard]] std::vector<std::string> get_unmatched_right_keys() const;
 };
 
 /**
