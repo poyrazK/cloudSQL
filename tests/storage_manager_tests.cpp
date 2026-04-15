@@ -249,9 +249,17 @@ TEST_F(StorageManagerTests, ReadNonOpenedFileAutoOpens) {
     const std::string filename = "non_opened_read.db";
     cleanup_file("./test_data", filename);
 
+    // Capture open-file count before operation
+    auto before = sm_->get_stats().files_opened.load();
+    ASSERT_FALSE(sm_->file_exists(filename));
+
     // StorageManager auto-opens files, so read should succeed
     char buf[StorageManager::PAGE_SIZE];
     EXPECT_TRUE(sm_->read_page(filename, 0, buf));
+
+    // Verify file was created and open-file count increased
+    EXPECT_TRUE(sm_->file_exists(filename));
+    EXPECT_EQ(sm_->get_stats().files_opened.load(), before + 1);
 }
 
 /**
@@ -261,10 +269,18 @@ TEST_F(StorageManagerTests, WriteNonOpenedFileAutoOpens) {
     const std::string filename = "non_opened_write.db";
     cleanup_file("./test_data", filename);
 
+    // Capture open-file count before operation
+    auto before = sm_->get_stats().files_opened.load();
+    ASSERT_FALSE(sm_->file_exists(filename));
+
     char buf[StorageManager::PAGE_SIZE];
     std::memset(buf, 0xAB, StorageManager::PAGE_SIZE);
     // StorageManager auto-opens files, so write should succeed
     EXPECT_TRUE(sm_->write_page(filename, 0, buf));
+
+    // Verify file was created and open-file count increased
+    EXPECT_TRUE(sm_->file_exists(filename));
+    EXPECT_EQ(sm_->get_stats().files_opened.load(), before + 1);
 }
 
 /**
