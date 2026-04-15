@@ -343,6 +343,10 @@ class HashJoinOperator : public Operator {
     /* Final phase for RIGHT/FULL joins */
     std::optional<std::unordered_multimap<std::string, BuildTuple>::iterator> right_idx_iter_;
 
+    /* Storage for unmatched LEFT tuples (for FULL JOIN distributed collection) */
+    std::vector<Tuple> unmatched_left_rows_;
+    std::vector<std::string> unmatched_left_keys_;
+
    public:
     HashJoinOperator(std::unique_ptr<Operator> left, std::unique_ptr<Operator> right,
                      std::unique_ptr<parser::Expression> left_key,
@@ -370,6 +374,18 @@ class HashJoinOperator : public Operator {
      * @return Vector of strings - the join key values for unmatched right rows
      */
     [[nodiscard]] std::vector<std::string> get_unmatched_right_keys() const;
+
+    /**
+     * @brief Get unmatched left rows after join execution
+     * @return Vector of tuples - the left-side rows that had no match
+     */
+    [[nodiscard]] std::vector<Tuple> get_unmatched_left_rows() const;
+
+    /**
+     * @brief Get join key values of unmatched left rows
+     * @return Vector of strings - the join key values for unmatched left rows
+     */
+    [[nodiscard]] std::vector<std::string> get_unmatched_left_keys() const;
 };
 
 /**
