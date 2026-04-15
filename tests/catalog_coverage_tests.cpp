@@ -155,4 +155,125 @@ TEST(CatalogCoverageTests, RaftApply) {
     catalog->apply(entry);
 }
 
+// ============= New Tests =============
+
+/**
+ * @brief Tests basic table creation and retrieval by ID
+ */
+TEST(CatalogCoverageTests, CreateAndGetTable) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {
+        {"id", common::ValueType::TYPE_INT64, 0},
+        {"name", common::ValueType::TYPE_TEXT, 1}
+    };
+
+    oid_t tid = catalog->create_table("users", cols);
+    ASSERT_NE(tid, 0);
+
+    // Retrieve by ID
+    auto table_opt = catalog->get_table(tid);
+    ASSERT_TRUE(table_opt.has_value());
+    EXPECT_EQ((*table_opt)->name, "users");
+    EXPECT_EQ((*table_opt)->num_columns(), 2);
+}
+
+/**
+ * @brief Tests table creation and retrieval by name
+ */
+TEST(CatalogCoverageTests, CreateAndGetTableByName) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+
+    oid_t tid = catalog->create_table("products", cols);
+    ASSERT_NE(tid, 0);
+
+    // Retrieve by name
+    auto table_opt = catalog->get_table_by_name("products");
+    ASSERT_TRUE(table_opt.has_value());
+    EXPECT_EQ((*table_opt)->table_id, tid);
+}
+
+/**
+ * @brief Tests get_all_tables returns created tables
+ */
+TEST(CatalogCoverageTests, GetAllTables) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+
+    catalog->create_table("table1", cols);
+    catalog->create_table("table2", cols);
+    catalog->create_table("table3", cols);
+
+    auto tables = catalog->get_all_tables();
+    EXPECT_EQ(tables.size(), 3);
+}
+
+/**
+ * @brief Tests get_table_indexes returns created indexes
+ */
+TEST(CatalogCoverageTests, GetTableIndexes) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+
+    oid_t tid = catalog->create_table("indexed_table", cols);
+    ASSERT_NE(tid, 0);
+
+    catalog->create_index("idx1", tid, {0}, IndexType::BTree, false);
+    catalog->create_index("idx2", tid, {0}, IndexType::Hash, true);
+
+    auto indexes = catalog->get_table_indexes(tid);
+    EXPECT_EQ(indexes.size(), 2);
+}
+
+/**
+ * @brief Tests catalog save and load functionality
+ *
+ * Note: save() and load() are stubs that don't fully persist table data.
+ * save() writes a header comment but no table data.
+ * load() reads but doesn't parse table entries.
+ */
+TEST(CatalogCoverageTests, SaveAndLoad) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+    catalog->create_table("persisted_table", cols);
+
+    // Save catalog - should succeed
+    ASSERT_TRUE(catalog->save("/tmp/test_catalog.bin"));
+
+    // Create new catalog and load - should succeed (returns true)
+    auto loaded_catalog = Catalog::create();
+    ASSERT_TRUE(loaded_catalog->load("/tmp/test_catalog.bin"));
+
+    // Note: Due to stub implementation, loaded catalog won't have the table
+    // This test verifies the save/load cycle works without crashing
+
+    // Cleanup
+    std::remove("/tmp/test_catalog.bin");
+}
+
+/**
+ * @brief Tests version increments after catalog operations
+ */
+TEST(CatalogCoverageTests, VersionIncrement) {
+    auto catalog = Catalog::create();
+    uint64_t initial_version = catalog->get_version();
+
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+    catalog->create_table("versioned_table", cols);
+
+    EXPECT_GT(catalog->get_version(), initial_version);
+}
+
+/**
+ * @brief Tests that print() doesn't crash
+ */
+TEST(CatalogCoverageTests, PrintDoesNotCrash) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+    catalog->create_table("printed_table", cols);
+
+    // Should not throw or crash
+    EXPECT_NO_THROW(catalog->print());
+}
+
 }  // namespace
