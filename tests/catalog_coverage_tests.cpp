@@ -162,10 +162,8 @@ TEST(CatalogCoverageTests, RaftApply) {
  */
 TEST(CatalogCoverageTests, CreateAndGetTable) {
     auto catalog = Catalog::create();
-    std::vector<ColumnInfo> cols = {
-        {"id", common::ValueType::TYPE_INT64, 0},
-        {"name", common::ValueType::TYPE_TEXT, 1}
-    };
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0},
+                                    {"name", common::ValueType::TYPE_TEXT, 1}};
 
     oid_t tid = catalog->create_table("users", cols);
     ASSERT_NE(tid, 0);
