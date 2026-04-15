@@ -202,7 +202,9 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     join.type != parser::SelectStatement::JoinType::Right &&
                     join.type != parser::SelectStatement::JoinType::Full) {
                     QueryResult res;
-                    res.set_error("Distributed Shuffle Join only supports INNER, LEFT, RIGHT, and FULL joins");
+                    res.set_error(
+                        "Distributed Shuffle Join only supports INNER, LEFT, RIGHT, and FULL "
+                        "joins");
                     return res;
                 }
 
@@ -654,33 +656,31 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
         std::vector<std::future<std::pair<bool, network::UnmatchedRowsReportArgs>>> report_futures;
 
         for (const auto& node : data_nodes) {
-            report_futures.push_back(std::async(std::launch::async, [node, context_id,
-                                                                    outer_join_right_table,
-                                                                    outer_join_right_key,
-                                                                    matched_keys,
-                                                                    left_column_count]() {
-                network::RpcClient client(node.address, node.cluster_port);
-                network::UnmatchedRowsReportArgs reply;
-                reply.context_id = context_id;
-                if (client.connect()) {
-                    network::UnmatchedRowsReportArgs report_args;
-                    report_args.context_id = context_id;
-                    report_args.right_table = outer_join_right_table;
-                    report_args.join_key_col = outer_join_right_key;
-                    // Attach matched keys so node knows what was matched
-                    report_args.unmatched_keys = matched_keys;
-                    // Attach left column count for NULL-padding
-                    report_args.left_column_count = left_column_count;
+            report_futures.push_back(std::async(
+                std::launch::async, [node, context_id, outer_join_right_table, outer_join_right_key,
+                                     matched_keys, left_column_count]() {
+                    network::RpcClient client(node.address, node.cluster_port);
+                    network::UnmatchedRowsReportArgs reply;
+                    reply.context_id = context_id;
+                    if (client.connect()) {
+                        network::UnmatchedRowsReportArgs report_args;
+                        report_args.context_id = context_id;
+                        report_args.right_table = outer_join_right_table;
+                        report_args.join_key_col = outer_join_right_key;
+                        // Attach matched keys so node knows what was matched
+                        report_args.unmatched_keys = matched_keys;
+                        // Attach left column count for NULL-padding
+                        report_args.left_column_count = left_column_count;
 
-                    std::vector<uint8_t> resp;
-                    if (client.call(network::RpcType::UnmatchedRowsReport,
-                                    report_args.serialize(), resp)) {
-                        reply = network::UnmatchedRowsReportArgs::deserialize(resp);
-                        return std::make_pair(true, reply);
+                        std::vector<uint8_t> resp;
+                        if (client.call(network::RpcType::UnmatchedRowsReport,
+                                        report_args.serialize(), resp)) {
+                            reply = network::UnmatchedRowsReportArgs::deserialize(resp);
+                            return std::make_pair(true, reply);
+                        }
                     }
-                }
-                return std::make_pair(false, reply);
-            }));
+                    return std::make_pair(false, reply);
+                }));
         }
 
         // Wait for all report futures to complete
@@ -692,25 +692,25 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
         std::vector<std::future<std::pair<bool, std::vector<executor::Tuple>>>> fetch_futures;
 
         for (const auto& node : data_nodes) {
-            fetch_futures.push_back(std::async(std::launch::async, [node, context_id,
-                                                                    outer_join_right_table]() {
-                network::RpcClient client(node.address, node.cluster_port);
-                std::vector<executor::Tuple> rows;
-                if (client.connect()) {
-                    network::FetchUnmatchedRowsArgs fetch_args;
-                    fetch_args.context_id = context_id;
-                    fetch_args.table_name = outer_join_right_table;
+            fetch_futures.push_back(
+                std::async(std::launch::async, [node, context_id, outer_join_right_table]() {
+                    network::RpcClient client(node.address, node.cluster_port);
+                    std::vector<executor::Tuple> rows;
+                    if (client.connect()) {
+                        network::FetchUnmatchedRowsArgs fetch_args;
+                        fetch_args.context_id = context_id;
+                        fetch_args.table_name = outer_join_right_table;
 
-                    std::vector<uint8_t> resp;
-                    if (client.call(network::RpcType::FetchUnmatchedRows,
-                                    fetch_args.serialize(), resp)) {
-                        auto reply = network::UnmatchedRowsPushArgs::deserialize(resp);
-                        rows = std::move(reply.unmatched_rows);
-                        return std::make_pair(true, std::move(rows));
+                        std::vector<uint8_t> resp;
+                        if (client.call(network::RpcType::FetchUnmatchedRows,
+                                        fetch_args.serialize(), resp)) {
+                            auto reply = network::UnmatchedRowsPushArgs::deserialize(resp);
+                            rows = std::move(reply.unmatched_rows);
+                            return std::make_pair(true, std::move(rows));
+                        }
                     }
-                }
-                return std::make_pair(false, std::move(rows));
-            }));
+                    return std::make_pair(false, std::move(rows));
+                }));
         }
 
         // Aggregate all unmatched rows from all nodes

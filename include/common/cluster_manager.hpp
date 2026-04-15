@@ -375,7 +375,7 @@ class ClusterManager {
      * @brief Store unmatched rows for a context (used by outer join processing)
      */
     void set_unmatched_rows(const std::string& context_id, const std::string& table_name,
-                           std::vector<executor::Tuple> rows) {
+                            std::vector<executor::Tuple> rows) {
         const std::scoped_lock<std::mutex> lock(mutex_);
         unmatched_rows_[context_id][table_name] = std::move(rows);
     }

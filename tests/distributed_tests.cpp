@@ -577,11 +577,12 @@ TEST(DistributedExecutorTests, BloomFilterSkipForOuterJoin) {
     DistributedExecutor exec(*catalog, cm);
 
     // Execute RIGHT join - bloom filter should NOT be sent
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
-    auto res = exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    auto res =
+        exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
 
     // For RIGHT join, bloom filter is skipped (should be 0)
     // Even though we returned valid bloom bits, the coordinator should not push for outer joins
@@ -615,15 +616,18 @@ TEST(DistributedExecutorTests, Phase3SkippedForRightJoin) {
         Schema schema;
         schema.add_column("id", common::ValueType::TYPE_INT64);
         schema.add_column("val", common::ValueType::TYPE_INT64);
-        schema.add_column("id", common::ValueType::TYPE_INT64);  // table2.id (ambiguous but matches)
+        schema.add_column("id",
+                          common::ValueType::TYPE_INT64);  // table2.id (ambiguous but matches)
         schema.add_column("val", common::ValueType::TYPE_INT64);  // table2.val
         reply.schema = schema;
 
         // Return some matched rows (e.g., rows where table2.id = 1 and 2 matched)
         // Format: {table1.id, table1.val, table2.id, table2.val}
         reply.rows = {
-            Tuple{Value::make_int64(100), Value::make_int64(10), Value::make_int64(1), Value::make_int64(100)},
-            Tuple{Value::make_int64(200), Value::make_int64(20), Value::make_int64(2), Value::make_int64(200)},
+            Tuple{Value::make_int64(100), Value::make_int64(10), Value::make_int64(1),
+                  Value::make_int64(100)},
+            Tuple{Value::make_int64(200), Value::make_int64(20), Value::make_int64(2),
+                  Value::make_int64(200)},
         };
 
         auto resp_p = reply.serialize();
@@ -665,8 +669,8 @@ TEST(DistributedExecutorTests, Phase3SkippedForRightJoin) {
 
         UnmatchedRowsPushArgs reply;
         reply.context_id = args.context_id;
-        reply.unmatched_rows = {
-            Tuple{Value::make_null(), Value::make_null(), Value::make_int64(3), Value::make_int64(30)}};
+        reply.unmatched_rows = {Tuple{Value::make_null(), Value::make_null(), Value::make_int64(3),
+                                      Value::make_int64(30)}};
 
         auto resp_p = reply.serialize();
         RpcHeader resp_h;
@@ -743,16 +747,17 @@ TEST(DistributedExecutorTests, Phase3SkippedForRightJoin) {
     DistributedExecutor exec(*catalog, cm);
 
     // Execute RIGHT join
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    auto lexer =
+        std::make_unique<Lexer>("SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
-    auto res = exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
+    auto res =
+        exec.execute(*stmt, "SELECT * FROM table1 RIGHT JOIN table2 ON table1.id = table2.id");
 
     // Verify Phase 3-4 RPCs were NOT called for RIGHT JOIN
     // (local executor handles unmatched right rows correctly)
     EXPECT_EQ(unmatched_report_calls.load(), 0);  // NOT called for RIGHT JOIN
-    EXPECT_EQ(fetch_unmatched_calls.load(), 0);    // NOT called for RIGHT JOIN
+    EXPECT_EQ(fetch_unmatched_calls.load(), 0);   // NOT called for RIGHT JOIN
     EXPECT_TRUE(res.success());
 
     node1.stop();

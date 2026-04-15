@@ -745,28 +745,35 @@ int main(int argc, char* argv[]) {
                                             const auto& key_val = t_meta.tuple.get(key_idx);
                                             std::string key_str = key_val.to_string();
                                             // Only include if NOT in matched keys
-                                            if (matched_keys_set.find(key_str) == matched_keys_set.end()) {
+                                            if (matched_keys_set.find(key_str) ==
+                                                matched_keys_set.end()) {
                                                 reply.unmatched_keys.push_back(key_str);
-                                                // Pad with NULLs for left columns and append right row
+                                                // Pad with NULLs for left columns and append right
+                                                // row
                                                 std::vector<cloudsql::common::Value> padded_values;
-                                                padded_values.reserve(args.left_column_count + t_meta.tuple.size());
+                                                padded_values.reserve(args.left_column_count +
+                                                                      t_meta.tuple.size());
                                                 // Prepend NULLs for left table columns
-                                                for (uint32_t i = 0; i < args.left_column_count; ++i) {
-                                                    padded_values.push_back(cloudsql::common::Value::make_null());
+                                                for (uint32_t i = 0; i < args.left_column_count;
+                                                     ++i) {
+                                                    padded_values.push_back(
+                                                        cloudsql::common::Value::make_null());
                                                 }
                                                 // Append right table column values
                                                 for (size_t j = 0; j < t_meta.tuple.size(); ++j) {
                                                     padded_values.push_back(t_meta.tuple.get(j));
                                                 }
-                                                unmatched_tuples.emplace_back(std::move(padded_values));
+                                                unmatched_tuples.emplace_back(
+                                                    std::move(padded_values));
                                             }
                                         }
                                     }
-                                    // Store properly padded tuples in ClusterManager for coordinator to collect
+                                    // Store properly padded tuples in ClusterManager for
+                                    // coordinator to collect
                                     if (cluster_manager != nullptr && !unmatched_tuples.empty()) {
-                                        cluster_manager->set_unmatched_rows(args.context_id,
-                                                                          args.right_table,
-                                                                          std::move(unmatched_tuples));
+                                        cluster_manager->set_unmatched_rows(
+                                            args.context_id, args.right_table,
+                                            std::move(unmatched_tuples));
                                     }
                                 }
                             }
@@ -786,7 +793,8 @@ int main(int argc, char* argv[]) {
                     });
 
                 // Handler for receiving unmatched rows from coordinator for NULL-padding emission
-                // Coordinator broadcasts unmatched right rows to all nodes for final result assembly
+                // Coordinator broadcasts unmatched right rows to all nodes for final result
+                // assembly
                 rpc_server->set_handler(
                     cloudsql::network::RpcType::UnmatchedRowsPush,
                     [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
@@ -796,8 +804,8 @@ int main(int argc, char* argv[]) {
 
                         if (cluster_manager != nullptr && !args.unmatched_rows.empty()) {
                             cluster_manager->buffer_shuffle_data(args.context_id,
-                                                                    "_unmatched_right_rows",
-                                                                    std::move(args.unmatched_rows));
+                                                                 "_unmatched_right_rows",
+                                                                 std::move(args.unmatched_rows));
                         }
 
                         cloudsql::network::QueryResultsReply reply;

@@ -36,8 +36,8 @@ enum class RpcType : uint8_t {
     BloomFilterPush = 11,
     BloomFilterBits = 12,
     UnmatchedRowsReport = 13,  // Data node reports unmatched right rows for outer join
-    UnmatchedRowsPush = 14,   // Coordinator sends unmatched rows for NULL-padding
-    FetchUnmatchedRows = 15,  // Coordinator fetches stored unmatched rows from data node
+    UnmatchedRowsPush = 14,    // Coordinator sends unmatched rows for NULL-padding
+    FetchUnmatchedRows = 15,   // Coordinator fetches stored unmatched rows from data node
     Error = 255
 };
 
@@ -576,9 +576,9 @@ struct BloomFilterBitsArgs {
 struct UnmatchedRowsReportArgs {
     std::string context_id;
     std::string right_table;
-    std::string join_key_col;  // Which column was the join key
+    std::string join_key_col;                 // Which column was the join key
     std::vector<std::string> unmatched_keys;  // Key values that had no match
-    uint32_t left_column_count = 0;  // Number of left table columns for NULL-padding
+    uint32_t left_column_count = 0;           // Number of left table columns for NULL-padding
 
     [[nodiscard]] std::vector<uint8_t> serialize() const {
         std::vector<uint8_t> out;
@@ -669,7 +669,8 @@ struct UnmatchedRowsPushArgs {
         }
 
         for (uint32_t i = 0; i < count; ++i) {
-            args.unmatched_rows.push_back(Serializer::deserialize_tuple(in.data(), offset, in.size()));
+            args.unmatched_rows.push_back(
+                Serializer::deserialize_tuple(in.data(), offset, in.size()));
         }
         return args;
     }
