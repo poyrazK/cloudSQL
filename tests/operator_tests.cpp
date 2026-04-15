@@ -516,6 +516,93 @@ TEST_F(OperatorTests, HashJoinLeft) {
     join->close();
 }
 
+TEST_F(OperatorTests, HashJoinLeftUnmatchedCollection) {
+    // Test that get_unmatched_left_rows/keys correctly tracks unmatched left tuples
+    // Left table: values 1, 2, 3 (only 2 has a match)
+    Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> left_data;
+    left_data.push_back(make_tuple({common::Value::make_int64(1)}));  // no match
+    left_data.push_back(make_tuple({common::Value::make_int64(2)}));  // matches
+    left_data.push_back(make_tuple({common::Value::make_int64(3)}));  // no match
+
+    // Right table: values 2, 4
+    Schema right_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> right_data;
+    right_data.push_back(make_tuple({common::Value::make_int64(2)}));
+    right_data.push_back(make_tuple({common::Value::make_int64(4)}));
+
+    auto left_scan = make_buffer_scan("left_table", left_data, left_schema);
+    auto right_scan = make_buffer_scan("right_table", right_data, right_schema);
+
+    auto join = make_hash_join(std::move(left_scan), std::move(right_scan), col_expr("id"),
+                               col_expr("id"), JoinType::Left);
+
+    ASSERT_TRUE(join->init());
+    ASSERT_TRUE(join->open());
+
+    // Consume all join results
+    Tuple tuple;
+    while (join->next(tuple)) {
+    }
+
+    // After join completes, verify unmatched left tracking
+    auto unmatched_rows = join->get_unmatched_left_rows();
+    auto unmatched_keys = join->get_unmatched_left_keys();
+
+    // We expect 2 unmatched left tuples: id=1 and id=3
+    EXPECT_EQ(unmatched_rows.size(), 2U);
+    EXPECT_EQ(unmatched_keys.size(), 2U);
+
+    // Keys should be "1" and "3" (to_string of int64)
+    EXPECT_EQ(unmatched_keys[0], "1");
+    EXPECT_EQ(unmatched_keys[1], "3");
+
+    // Check the actual tuple values
+    EXPECT_EQ(unmatched_rows[0].get(0).to_int64(), 1);
+    EXPECT_EQ(unmatched_rows[1].get(0).to_int64(), 3);
+
+    join->close();
+}
+
+TEST_F(OperatorTests, HashJoinFullUnmatchedLeftCollection) {
+    // Test LEFT unmatched collection for FULL join
+    // Similar to LEFT join but tests the FULL join path
+    Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> left_data;
+    left_data.push_back(make_tuple({common::Value::make_int64(1)}));  // no match
+    left_data.push_back(make_tuple({common::Value::make_int64(2)}));  // matches
+
+    Schema right_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> right_data;
+    right_data.push_back(make_tuple({common::Value::make_int64(2)}));
+    right_data.push_back(make_tuple({common::Value::make_int64(3)}));  // no match
+
+    auto left_scan = make_buffer_scan("left_table", left_data, left_schema);
+    auto right_scan = make_buffer_scan("right_table", right_data, right_schema);
+
+    auto join = make_hash_join(std::move(left_scan), std::move(right_scan), col_expr("id"),
+                               col_expr("id"), JoinType::Full);
+
+    ASSERT_TRUE(join->init());
+    ASSERT_TRUE(join->open());
+
+    // Consume all join results
+    Tuple tuple;
+    while (join->next(tuple)) {
+    }
+
+    // For FULL join, we should track unmatched LEFT tuples
+    // Note: RIGHT unmatched tuples are emitted during right scan phase and marked matched,
+    // so get_unmatched_right_keys() won't include them (they're already "accounted for")
+    auto unmatched_left_keys = join->get_unmatched_left_keys();
+
+    // Left unmatched: id=1
+    EXPECT_EQ(unmatched_left_keys.size(), 1U);
+    EXPECT_EQ(unmatched_left_keys[0], "1");
+
+    join->close();
+}
+
 TEST_F(OperatorTests, HashJoinEmpty) {
     // Left has data
     Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});

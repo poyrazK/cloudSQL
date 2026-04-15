@@ -759,6 +759,7 @@ bool HashJoinOperator::open() {
 bool HashJoinOperator::next(Tuple& out_tuple) {
     auto left_schema = left_->output_schema();
     auto right_schema = right_->output_schema();
+    std::string current_left_key_str;
 
     while (true) {
         if (match_iter_.has_value()) {
@@ -784,6 +785,10 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
             match_iter_ = std::nullopt;
             if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
                 !left_had_match_) {
+                /* Store unmatched left tuple and key for Phase 3-5 collection (FULL JOIN) */
+                unmatched_left_keys_.push_back(current_left_key_str);
+                unmatched_left_rows_.push_back(Tuple(*left_tuple_));
+
                 std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
                                                               left_tuple_->values().end(),
                                                               get_memory_resource());
@@ -802,15 +807,22 @@ bool HashJoinOperator::next(Tuple& out_tuple) {
         if (left_->next(next_left)) {
             left_tuple_ = std::move(next_left);
             left_had_match_ = false;
+        }
+
+        if (left_tuple_.has_value()) {
             const common::Value key =
                 left_key_->evaluate(&(left_tuple_.value()), &left_schema, get_params());
+            current_left_key_str = key.to_string();
+            auto range = hash_table_.equal_range(current_left_key_str);
 
-            /* Look up in hash table */
-            auto range = hash_table_.equal_range(key.to_string());
             if (range.first != range.second) {
                 match_iter_ = {range.first, range.second};
             } else if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
                 /* No match found immediately, emit NULLs if Left/Full join */
+                /* Store unmatched left tuple and key for Phase 3-5 collection (FULL JOIN) */
+                unmatched_left_keys_.push_back(current_left_key_str);
+                unmatched_left_rows_.push_back(Tuple(*left_tuple_));
+
                 std::pmr::vector<common::Value> joined_values(left_tuple_->values().begin(),
                                                               left_tuple_->values().end(),
                                                               get_memory_resource());
@@ -862,6 +874,8 @@ void HashJoinOperator::close() {
     hash_table_.clear();
     match_iter_ = std::nullopt;
     left_tuple_ = std::nullopt;
+    unmatched_left_rows_.clear();
+    unmatched_left_keys_.clear();
     set_state(ExecState::Done);
 }
 
@@ -910,6 +924,14 @@ std::vector<std::string> HashJoinOperator::get_unmatched_right_keys() const {
         }
     }
     return keys;
+}
+
+std::vector<Tuple> HashJoinOperator::get_unmatched_left_rows() const {
+    return unmatched_left_rows_;
+}
+
+std::vector<std::string> HashJoinOperator::get_unmatched_left_keys() const {
+    return unmatched_left_keys_;
 }
 
 /* --- LimitOperator --- */
