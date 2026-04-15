@@ -180,6 +180,13 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
     // Step 2: Advanced Joins: Broadcast or Shuffle Join Orchestration
     std::string context_id = "ctx_" + std::to_string(next_context_id.fetch_add(1));
 
+    // Variables to track outer join info for Phase 3-5 processing after ExecuteFragment
+    bool is_outer_join_join_query = false;
+    std::string outer_join_left_table;
+    std::string outer_join_right_table;
+    std::string outer_join_right_key;
+    parser::SelectStatement::JoinType outer_join_type = parser::SelectStatement::JoinType::Inner;
+
     if (type == parser::StmtType::Select) {
         const auto* select_stmt = dynamic_cast<const parser::SelectStatement*>(&stmt);
         if (select_stmt != nullptr && !select_stmt->joins().empty()) {
@@ -188,7 +195,20 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                 const std::string left_table = select_stmt->from()->to_string();
                 const std::string right_table = join.table->to_string();
 
-                // Assume join key is in the condition
+                // Check join type - shuffle join only supports INNER, LEFT, RIGHT, and FULL joins
+                // RIGHT and FULL joins require special handling for unmatched rows
+                if (join.type != parser::SelectStatement::JoinType::Inner &&
+                    join.type != parser::SelectStatement::JoinType::Left &&
+                    join.type != parser::SelectStatement::JoinType::Right &&
+                    join.type != parser::SelectStatement::JoinType::Full) {
+                    QueryResult res;
+                    res.set_error(
+                        "Distributed Shuffle Join only supports INNER, LEFT, RIGHT, and FULL "
+                        "joins");
+                    return res;
+                }
+
+                // Check for equality join condition
                 std::string left_key;
                 std::string right_key;
                 if (join.condition && join.condition->type() == parser::ExprType::Binary) {
@@ -204,6 +224,18 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     QueryResult res;
                     res.set_error("Shuffle Join requires equality join condition");
                     return res;
+                }
+
+                bool is_outer_join = (join.type == parser::SelectStatement::JoinType::Right ||
+                                      join.type == parser::SelectStatement::JoinType::Full);
+
+                // Track outer join info for Phase 3-5 processing after ExecuteFragment
+                if (is_outer_join) {
+                    is_outer_join_join_query = true;
+                    outer_join_left_table = left_table;
+                    outer_join_right_table = right_table;
+                    outer_join_right_key = right_key;
+                    outer_join_type = join.type;
                 }
 
                 // Phase 1: Instruct nodes to shuffle Left Table
@@ -242,32 +274,57 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
                     return res;
                 }
 
-                // After Phase 1, each node will have received left table data.
-                // Now broadcast bloom filter built from that data to all nodes for Phase 2
-                // filtering. The filter is sent as a separate RPC that data nodes will store and
-                // apply to their right table shuffle. For now, we send a simple metadata-only
-                // filter that signals "filtering enabled" - the actual filter building happens on
-                // each data node during Phase 1 and they stash it for use during Phase 2.
-                //
-                // In production, we'd collect and OR all local bloom filters, but for POC
-                // we just signal that bloom filtering is enabled for this context.
-                network::BloomFilterArgs bf_args;
-                bf_args.context_id = context_id;
-                bf_args.build_table = left_table;
-                bf_args.probe_table = right_table;
-                bf_args.probe_key_col = right_key;  // Tell probe side which column to filter on
-                bf_args.filter_data.clear();        // Empty = filter built distributed
-                bf_args.expected_elements = data_nodes.size() * 1000;  // Estimate
-                bf_args.num_hashes = 4;
-                auto bf_payload = bf_args.serialize();
+                // After Phase 1, collect bloom filter bits from each data node and aggregate
+                // via bitwise OR to create the combined bloom filter
+                std::vector<uint8_t> aggregated_bits;
+                size_t total_expected = 0;
+                size_t max_hashes = 0;
 
                 for (const auto& node : data_nodes) {
                     network::RpcClient client(node.address, node.cluster_port);
                     if (!client.connect()) {
-                        continue;  // Best effort for POC
+                        continue;
                     }
+                    network::BloomFilterBitsArgs bits_args;
+                    bits_args.context_id = context_id;
                     std::vector<uint8_t> resp;
-                    client.call(network::RpcType::BloomFilterPush, bf_payload, resp);
+                    if (client.call(network::RpcType::BloomFilterBits, bits_args.serialize(),
+                                    resp)) {
+                        auto reply = network::BloomFilterBitsArgs::deserialize(resp);
+                        if (reply.filter_data.size() > aggregated_bits.size()) {
+                            aggregated_bits.resize(reply.filter_data.size(), 0);
+                        }
+                        // Bitwise OR aggregation
+                        for (size_t i = 0; i < reply.filter_data.size(); i++) {
+                            aggregated_bits[i] |= reply.filter_data[i];
+                        }
+                        total_expected += reply.expected_elements;
+                        max_hashes = std::max(max_hashes, reply.num_hashes);
+                    }
+                }
+
+                // Broadcast the aggregated bloom filter to all nodes for Phase 2 filtering
+                // IMPORTANT: Skip bloom filter for RIGHT/FULL joins - bloom filter false negatives
+                // would cause unmatched right rows to be lost, which violates outer join semantics
+                if (!is_outer_join && !aggregated_bits.empty()) {
+                    network::BloomFilterArgs bf_args;
+                    bf_args.context_id = context_id;
+                    bf_args.build_table = left_table;
+                    bf_args.probe_table = right_table;
+                    bf_args.probe_key_col = right_key;  // Tell probe side which column to filter on
+                    bf_args.filter_data = aggregated_bits;
+                    bf_args.expected_elements = total_expected;
+                    bf_args.num_hashes = max_hashes > 0 ? max_hashes : 4;
+                    auto bf_payload = bf_args.serialize();
+
+                    for (const auto& node : data_nodes) {
+                        network::RpcClient client(node.address, node.cluster_port);
+                        if (!client.connect()) {
+                            continue;  // Best effort for POC
+                        }
+                        std::vector<uint8_t> resp;
+                        client.call(network::RpcType::BloomFilterPush, bf_payload, resp);
+                    }
                 }
 
                 // Phase 2: Instruct nodes to shuffle Right Table (now with bloom filter available)
@@ -551,6 +608,119 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
         } else {
             all_success = false;
             errors += "[" + res_fut.second.error_msg + "]; ";
+        }
+    }
+
+    // Phase 3-5: Currently disabled for all outer joins due to issues with column indexing
+    // when SELECT doesn't use SELECT * (causes duplicate rows instead of correct results).
+    //
+    // For RIGHT JOIN: Local executor on each data node correctly handles unmatched right rows.
+    // For FULL JOIN: Unmatched LEFT rows are not collected (to be implemented in separate PR).
+    //
+    // TODO: Re-enable Phase 3-5 for FULL JOIN once column indexing is fixed to properly
+    // identify which rows were unmatched during the distributed join.
+    if (false && is_outer_join_join_query && all_success) {
+        // Extract matched right keys from aggregated results
+        // The right key column is at a known position in the result schema
+        std::vector<std::string> matched_keys;
+        size_t right_key_idx = static_cast<size_t>(-1);
+
+        // Find the right key column index in the result schema
+        for (size_t i = 0; i < result_schema.columns().size(); ++i) {
+            const auto& col = result_schema.columns()[i];
+            if (col.name() == outer_join_right_key) {
+                right_key_idx = i;
+                break;
+            }
+        }
+
+        // If we found the key column, extract matched keys from results
+        if (right_key_idx != static_cast<size_t>(-1)) {
+            for (const auto& row : aggregated_rows) {
+                if (row.size() > right_key_idx) {
+                    matched_keys.push_back(row.get(right_key_idx).to_string());
+                }
+            }
+        }
+
+        // Phase 3: Ask each node to scan local table and store unmatched rows
+        // First, compute the left column count for NULL-padding
+        uint32_t left_column_count = 0;
+        if (!outer_join_left_table.empty()) {
+            auto left_table_info = catalog_.get_table_by_name(outer_join_left_table);
+            if (left_table_info.has_value()) {
+                left_column_count = static_cast<uint32_t>((*left_table_info)->columns.size());
+            }
+        }
+
+        std::vector<std::future<std::pair<bool, network::UnmatchedRowsReportArgs>>> report_futures;
+
+        for (const auto& node : data_nodes) {
+            report_futures.push_back(std::async(
+                std::launch::async, [node, context_id, outer_join_right_table, outer_join_right_key,
+                                     matched_keys, left_column_count]() {
+                    network::RpcClient client(node.address, node.cluster_port);
+                    network::UnmatchedRowsReportArgs reply;
+                    reply.context_id = context_id;
+                    if (client.connect()) {
+                        network::UnmatchedRowsReportArgs report_args;
+                        report_args.context_id = context_id;
+                        report_args.right_table = outer_join_right_table;
+                        report_args.join_key_col = outer_join_right_key;
+                        // Attach matched keys so node knows what was matched
+                        report_args.unmatched_keys = matched_keys;
+                        // Attach left column count for NULL-padding
+                        report_args.left_column_count = left_column_count;
+
+                        std::vector<uint8_t> resp;
+                        if (client.call(network::RpcType::UnmatchedRowsReport,
+                                        report_args.serialize(), resp)) {
+                            reply = network::UnmatchedRowsReportArgs::deserialize(resp);
+                            return std::make_pair(true, reply);
+                        }
+                    }
+                    return std::make_pair(false, reply);
+                }));
+        }
+
+        // Wait for all report futures to complete
+        for (auto& f : report_futures) {
+            f.get();
+        }
+
+        // Phase 4: Fetch stored unmatched rows from each node
+        std::vector<std::future<std::pair<bool, std::vector<executor::Tuple>>>> fetch_futures;
+
+        for (const auto& node : data_nodes) {
+            fetch_futures.push_back(
+                std::async(std::launch::async, [node, context_id, outer_join_right_table]() {
+                    network::RpcClient client(node.address, node.cluster_port);
+                    std::vector<executor::Tuple> rows;
+                    if (client.connect()) {
+                        network::FetchUnmatchedRowsArgs fetch_args;
+                        fetch_args.context_id = context_id;
+                        fetch_args.table_name = outer_join_right_table;
+
+                        std::vector<uint8_t> resp;
+                        if (client.call(network::RpcType::FetchUnmatchedRows,
+                                        fetch_args.serialize(), resp)) {
+                            auto reply = network::UnmatchedRowsPushArgs::deserialize(resp);
+                            rows = std::move(reply.unmatched_rows);
+                            return std::make_pair(true, std::move(rows));
+                        }
+                    }
+                    return std::make_pair(false, std::move(rows));
+                }));
+        }
+
+        // Aggregate all unmatched rows from all nodes
+        for (auto& f : fetch_futures) {
+            auto result = f.get();
+            if (result.first) {
+                for (auto& row : result.second) {
+                    aggregated_rows.push_back(std::move(row));
+                }
+            }
         }
     }
 

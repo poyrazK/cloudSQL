@@ -280,11 +280,128 @@ class ClusterManager {
     }
 
     /**
+     * @brief Store local bloom filter bits from this node (called on data nodes)
+     */
+    void set_local_bloom_bits(const std::string& context_id, std::vector<uint8_t> bits,
+                              size_t expected_elements, size_t num_hashes) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        local_bloom_bits_[context_id] = std::move(bits);
+        local_expected_elements_map_[context_id] = expected_elements;
+        local_num_hashes_map_[context_id] = num_hashes;
+    }
+
+    /**
+     * @brief Get stored local bloom filter bits for a context
+     */
+    [[nodiscard]] std::vector<uint8_t> get_local_bloom_bits(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = local_bloom_bits_.find(context_id);
+        if (it != local_bloom_bits_.end()) {
+            return it->second;
+        }
+        return {};
+    }
+
+    /**
+     * @brief Get expected_elements for local bloom filter
+     */
+    [[nodiscard]] size_t get_local_expected_elements(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = local_expected_elements_map_.find(context_id);
+        if (it != local_expected_elements_map_.end()) {
+            return it->second;
+        }
+        return 0;
+    }
+
+    /**
+     * @brief Get num_hashes for local bloom filter
+     */
+    [[nodiscard]] size_t get_local_num_hashes(const std::string& context_id) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto it = local_num_hashes_map_.find(context_id);
+        if (it != local_num_hashes_map_.end()) {
+            return it->second;
+        }
+        return 0;
+    }
+
+    /**
      * @brief Clear bloom filter for a context
      */
     void clear_bloom_filter(const std::string& context_id) {
         const std::scoped_lock<std::mutex> lock(mutex_);
         bloom_filters_.erase(context_id);
+        local_bloom_bits_.erase(context_id);
+        local_expected_elements_map_.erase(context_id);
+        local_num_hashes_map_.erase(context_id);
+    }
+
+    /**
+     * @brief Store local right table rows for outer join processing
+     * Called during Phase 2 shuffle when sending right table rows to other nodes
+     */
+    void set_local_right_rows(const std::string& context_id, const std::string& table_name,
+                              std::vector<executor::Tuple> rows) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        local_right_table_rows_[context_id][table_name] = std::move(rows);
+    }
+
+    /**
+     * @brief Get stored local right table rows
+     */
+    [[nodiscard]] std::vector<executor::Tuple> get_local_right_rows(
+        const std::string& context_id, const std::string& table_name) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto ctx_it = local_right_table_rows_.find(context_id);
+        if (ctx_it != local_right_table_rows_.end()) {
+            auto table_it = ctx_it->second.find(table_name);
+            if (table_it != ctx_it->second.end()) {
+                return table_it->second;
+            }
+        }
+        return {};
+    }
+
+    /**
+     * @brief Clear local right table rows for a context
+     */
+    void clear_local_right_rows(const std::string& context_id) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        local_right_table_rows_.erase(context_id);
+    }
+
+    /**
+     * @brief Store unmatched rows for a context (used by outer join processing)
+     */
+    void set_unmatched_rows(const std::string& context_id, const std::string& table_name,
+                            std::vector<executor::Tuple> rows) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        unmatched_rows_[context_id][table_name] = std::move(rows);
+    }
+
+    /**
+     * @brief Get stored unmatched rows for a context
+     */
+    [[nodiscard]] std::vector<executor::Tuple> get_unmatched_rows(
+        const std::string& context_id, const std::string& table_name) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto ctx_it = unmatched_rows_.find(context_id);
+        if (ctx_it != unmatched_rows_.end()) {
+            auto table_it = ctx_it->second.find(table_name);
+            if (table_it != ctx_it->second.end()) {
+                return table_it->second;
+            }
+        }
+        return {};
+    }
+
+    /**
+     * @brief Clear unmatched rows for a context
+     */
+    void clear_unmatched_rows(const std::string& context_id) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        unmatched_rows_.erase(context_id);
     }
 
    private:
@@ -311,6 +428,16 @@ class ClusterManager {
         shuffle_buffers_;
     /* context_id -> bloom filter data */
     std::unordered_map<std::string, BloomFilterEntry> bloom_filters_;
+    /* context_id -> local bloom filter bits (for aggregation during distributed build) */
+    std::unordered_map<std::string, std::vector<uint8_t>> local_bloom_bits_;
+    std::unordered_map<std::string, size_t> local_expected_elements_map_;
+    std::unordered_map<std::string, size_t> local_num_hashes_map_;
+    /* context_id -> table_name -> local right table rows for outer join tracking */
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
+        local_right_table_rows_;
+    /* context_id -> table_name -> unmatched rows for outer join NULL-padding */
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
+        unmatched_rows_;
     mutable std::mutex mutex_;
 };
 

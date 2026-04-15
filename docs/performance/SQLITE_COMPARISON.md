@@ -45,34 +45,37 @@ We addressed the gaps via the following optimizations:
 Distributed shuffle joins send **all tuples** across the network to partitioned nodes, even when many will never match. This causes unnecessary network traffic and buffer memory usage.
 
 ### Solution: Bloom Filter Integration
-Implemented bloom filters to filter tuples at the source before network transmission:
-- **One-sided bloom filter**: Built from the left/build table, applied to filter the right/probe table
-- **Distributed construction**: Each data node constructs its local bloom during the left/build scan phase
-- **Coordinator coordination**: `BloomFilterPush` RPC broadcasts filter metadata to all nodes before the right/probe shuffle
+Implemented bloom filters to filter tuples at the source before network transmission using a 3-phase approach:
+- **Phase 1 (Local Build)**: Each data node scans its local left/build table partition, extracts join key values, and builds a local bloom filter
+- **Phase 2 (Bit Aggregation)**: Coordinator sends `BloomFilterBits` RPC to each data node; each responds with local bloom bits; coordinator OR-aggregates all bits into a single filter
+- **Phase 3 (Sender-Side Filter)**: Coordinator broadcasts aggregated filter via `BloomFilterPush` RPC; before sending right/probe tuples, `ShuffleFragment` handler checks `might_contain()` and skips tuples that will definitely not match
 
 ### Architecture
 ```
-[Phase 1: Shuffle Left]     [Phase 2: Shuffle Right]
-     |                             |
-     v                             v
-Build local bloom           Apply bloom filter
-from join keys              before buffering
-     |                             |
-     +---- BloomFilterPush ----->---+
-     (filter metadata)              |
-                                    v
-                         Filtered tuples buffered
+Phase 1: Scan Left         Phase 2: Aggregate Bits       Phase 3: Filter Right
+      |                         |                              |
+      v                         v                              v
+Build local bloom    <---> BloomFilterBits RPC <-------- Aggregate & Broadcast
+on each data node          (OR-aggregate bits)           via BloomFilterPush
+      |                         |                              |
+      |                         v                              v
+      +-----------------> BloomFilterPush              might_contain() check
+      (metadata only)           |                   before PushData
+                                 |
+                                 v
+                        Filtered tuples buffered
 ```
 
 ### Key Components
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | `BloomFilter` class | `include/common/bloom_filter.hpp` | MurmurHash3-based bloom filter |
-| `BloomFilterArgs` RPC | `include/network/rpc_message.hpp` | Serialization for network transfer |
-| `ClusterManager` storage | `include/common/cluster_manager.hpp` | Stores bloom filter per context |
-| `PushData` handler | `src/main.cpp` | Receives and buffers filtered tuples |
-| `ShuffleFragment` handler | `src/main.cpp` | Applies bloom filter before sending |
-| Coordinator | `src/distributed/distributed_executor.cpp` | Broadcasts filter after Phase 1 |
+| `BloomFilterBitsArgs` RPC | `include/network/rpc_message.hpp` | Local bloom bits from data nodes |
+| `BloomFilterArgs` RPC | `include/network/rpc_message.hpp` | Aggregated filter broadcast |
+| `ClusterManager` storage | `include/common/cluster_manager.hpp` | Stores local and aggregated bloom filters |
+| `BloomFilterBits` handler | `src/main.cpp` | Returns local bloom bits to coordinator |
+| `ShuffleFragment` handler | `src/main.cpp` | Builds local bloom during Phase 1 scan |
+| Coordinator | `src/distributed/distributed_executor.cpp` | Collects bits, aggregates, broadcasts filter |
 
 ### Test Coverage
 - 10 unit tests covering: BloomFilter class, BloomFilterArgs serialization, ClusterManager storage, filter application logic
