@@ -38,6 +38,9 @@ enum class RpcType : uint8_t {
     UnmatchedRowsReport = 13,  // Data node reports unmatched right rows for outer join
     UnmatchedRowsPush = 14,    // Coordinator sends unmatched rows for NULL-padding
     FetchUnmatchedRows = 15,   // Coordinator fetches stored unmatched rows from data node
+    // LEFT-side counterparts for FULL join
+    UnmatchedLeftRowsReport = 16,  // Data node reports unmatched LEFT rows for FULL join
+    FetchUnmatchedLeftRows = 17,   // Coordinator fetches stored unmatched LEFT rows
     Error = 255
 };
 
@@ -693,6 +696,93 @@ struct FetchUnmatchedRowsArgs {
 
     static FetchUnmatchedRowsArgs deserialize(const std::vector<uint8_t>& in) {
         FetchUnmatchedRowsArgs args;
+        size_t offset = 0;
+        args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+        args.table_name = Serializer::deserialize_string(in.data(), offset, in.size());
+        return args;
+    }
+};
+
+/**
+ * @brief Arguments for UnmatchedLeftRowsReport RPC
+ * @note Data node reports unmatched LEFT row keys to coordinator after local FULL join
+ */
+struct UnmatchedLeftRowsReportArgs {
+    std::string context_id;
+    std::string left_table;
+    std::string join_key_col;                 // Which column was the join key
+    std::vector<std::string> unmatched_keys;  // LEFT key values that had no match
+    uint32_t right_column_count = 0;          // Number of right columns for NULL-padding
+
+    [[nodiscard]] std::vector<uint8_t> serialize() const {
+        std::vector<uint8_t> out;
+        Serializer::serialize_string(context_id, out);
+        Serializer::serialize_string(left_table, out);
+        Serializer::serialize_string(join_key_col, out);
+
+        // Serialize right column count
+        const uint32_t rc_count = right_column_count;
+        const size_t rc_off = out.size();
+        out.resize(rc_off + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + rc_off, &rc_count, Serializer::VAL_SIZE_32);
+
+        // Serialize unmatched keys count
+        const uint32_t count = static_cast<uint32_t>(unmatched_keys.size());
+        const size_t off = out.size();
+        out.resize(off + Serializer::VAL_SIZE_32);
+        std::memcpy(out.data() + off, &count, Serializer::VAL_SIZE_32);
+
+        // Serialize each key
+        for (const auto& key : unmatched_keys) {
+            Serializer::serialize_string(key, out);
+        }
+        return out;
+    }
+
+    static UnmatchedLeftRowsReportArgs deserialize(const std::vector<uint8_t>& in) {
+        UnmatchedLeftRowsReportArgs args;
+        size_t offset = 0;
+        args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
+        args.left_table = Serializer::deserialize_string(in.data(), offset, in.size());
+        args.join_key_col = Serializer::deserialize_string(in.data(), offset, in.size());
+
+        // Deserialize right column count
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&args.right_column_count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
+        }
+
+        uint32_t count = 0;
+        if (offset + Serializer::VAL_SIZE_32 <= in.size()) {
+            std::memcpy(&count, in.data() + offset, Serializer::VAL_SIZE_32);
+            offset += Serializer::VAL_SIZE_32;
+        }
+
+        for (uint32_t i = 0; i < count; ++i) {
+            args.unmatched_keys.push_back(
+                Serializer::deserialize_string(in.data(), offset, in.size()));
+        }
+        return args;
+    }
+};
+
+/**
+ * @brief Arguments for FetchUnmatchedLeftRows RPC
+ * @note Coordinator fetches stored unmatched LEFT rows from a data node
+ */
+struct FetchUnmatchedLeftRowsArgs {
+    std::string context_id;
+    std::string table_name;
+
+    [[nodiscard]] std::vector<uint8_t> serialize() const {
+        std::vector<uint8_t> out;
+        Serializer::serialize_string(context_id, out);
+        Serializer::serialize_string(table_name, out);
+        return out;
+    }
+
+    static FetchUnmatchedLeftRowsArgs deserialize(const std::vector<uint8_t>& in) {
+        FetchUnmatchedLeftRowsArgs args;
         size_t offset = 0;
         args.context_id = Serializer::deserialize_string(in.data(), offset, in.size());
         args.table_name = Serializer::deserialize_string(in.data(), offset, in.size());

@@ -847,6 +847,120 @@ int main(int argc, char* argv[]) {
                             send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
                         static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
                     });
+
+                // Handler for reporting unmatched LEFT rows after join execution
+                // For FULL outer joins, each node identifies rows from its local left table
+                // partition that had no matching right row during the distributed join
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::UnmatchedLeftRowsReport,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::UnmatchedLeftRowsReportArgs::deserialize(p);
+                        cloudsql::network::UnmatchedLeftRowsReportArgs reply;
+                        reply.context_id = args.context_id;
+                        reply.left_table = args.left_table;
+                        reply.join_key_col = args.join_key_col;
+
+                        // args.unmatched_keys contains MATCHED keys from coordinator
+                        // We need to return rows that are NOT in this set
+                        std::unordered_set<std::string> matched_keys_set(
+                            args.unmatched_keys.begin(), args.unmatched_keys.end());
+
+                        try {
+                            // Scan local left table and collect rows that were NOT matched
+                            auto table_meta_opt = catalog->get_table_by_name(args.left_table);
+                            if (table_meta_opt.has_value()) {
+                                const auto* table_meta = table_meta_opt.value();
+                                cloudsql::executor::Schema schema;
+                                for (const auto& col : table_meta->columns) {
+                                    schema.add_column(col.name, col.type);
+                                }
+                                cloudsql::storage::HeapTable table(args.left_table, *bpm, schema);
+
+                                const size_t key_idx = schema.find_column(args.join_key_col);
+                                if (key_idx != static_cast<size_t>(-1)) {
+                                    std::vector<cloudsql::executor::Tuple> unmatched_tuples;
+                                    auto iter = table.scan();
+                                    cloudsql::storage::HeapTable::TupleMeta t_meta;
+                                    while (iter.next_meta(t_meta)) {
+                                        if (t_meta.xmax == 0) {
+                                            const auto& key_val = t_meta.tuple.get(key_idx);
+                                            std::string key_str = key_val.to_string();
+                                            // Only include if NOT in matched keys
+                                            if (matched_keys_set.find(key_str) ==
+                                                matched_keys_set.end()) {
+                                                reply.unmatched_keys.push_back(key_str);
+                                                // Pad with NULLs for right columns and append left
+                                                // row
+                                                std::vector<cloudsql::common::Value> padded_values;
+                                                padded_values.reserve(t_meta.tuple.size() +
+                                                                      args.right_column_count);
+                                                // Append left table column values
+                                                for (size_t j = 0; j < t_meta.tuple.size(); ++j) {
+                                                    padded_values.push_back(t_meta.tuple.get(j));
+                                                }
+                                                // Append NULLs for right table columns
+                                                for (uint32_t i = 0; i < args.right_column_count;
+                                                     ++i) {
+                                                    padded_values.push_back(
+                                                        cloudsql::common::Value::make_null());
+                                                }
+                                                unmatched_tuples.emplace_back(
+                                                    std::move(padded_values));
+                                            }
+                                        }
+                                    }
+                                    // Store properly padded tuples in ClusterManager for
+                                    // coordinator to collect
+                                    if (cluster_manager != nullptr && !unmatched_tuples.empty()) {
+                                        cluster_manager->set_unmatched_left_rows(
+                                            args.context_id, args.left_table,
+                                            std::move(unmatched_tuples));
+                                    }
+                                }
+                            }
+                        } catch (const std::exception& /*e*/) {
+                            // Return empty on error
+                        }
+
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[cloudsql::network::RpcHeader::HEADER_SIZE];
+                        resp_h.encode(h_buf);
+                        static_cast<void>(
+                            send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
+                        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+                    });
+
+                // Handler for fetching stored unmatched LEFT rows from a data node
+                // Coordinator calls this after UnmatchedLeftRowsReport to get full unmatched tuples
+                rpc_server->set_handler(
+                    cloudsql::network::RpcType::FetchUnmatchedLeftRows,
+                    [&](const cloudsql::network::RpcHeader& h, const std::vector<uint8_t>& p,
+                        int fd) {
+                        (void)h;
+                        auto args = cloudsql::network::FetchUnmatchedLeftRowsArgs::deserialize(p);
+                        cloudsql::network::UnmatchedRowsPushArgs reply;
+                        reply.context_id = args.context_id;
+
+                        if (cluster_manager != nullptr) {
+                            reply.unmatched_rows = cluster_manager->get_unmatched_left_rows(
+                                args.context_id, args.table_name);
+                        }
+
+                        auto resp_p = reply.serialize();
+                        cloudsql::network::RpcHeader resp_h;
+                        resp_h.type = cloudsql::network::RpcType::QueryResults;
+                        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+                        char h_buf[cloudsql::network::RpcHeader::HEADER_SIZE];
+                        resp_h.encode(h_buf);
+                        static_cast<void>(
+                            send(fd, h_buf, cloudsql::network::RpcHeader::HEADER_SIZE, 0));
+                        static_cast<void>(send(fd, resp_p.data(), resp_p.size(), 0));
+                    });
             }
 
             std::cout << "Starting internal RPC server on port " << config.cluster_port << "..."
