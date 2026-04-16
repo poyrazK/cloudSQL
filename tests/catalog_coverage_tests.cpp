@@ -3,13 +3,13 @@
  * @brief Targeted unit tests to increase coverage of the Catalog module
  */
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <filesystem>
-#include <unistd.h>
 #include <vector>
 
 #include "catalog/catalog.hpp"
