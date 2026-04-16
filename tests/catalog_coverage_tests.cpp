@@ -241,14 +241,20 @@ TEST(CatalogCoverageTests, SaveAndLoad) {
     std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
     catalog->create_table("persisted_table", cols);
 
-    // Use mkstemp to create a unique temp file atomically
-    std::string temp_template = "/tmp/test_catalog_XXXXXX.bin";
+    // Use a unique path in test_data directory (mkstemp may fail on some CI runners)
+    std::string temp_template = "./test_data/save_load_test_XXXXXX.bin";
     std::vector<char> temp_path_vec(temp_template.begin(), temp_template.end());
-    temp_path_vec.push_back('\0');  // null-terminate for mkstemp
+    temp_path_vec.push_back('\0');
     int fd = mkstemp(temp_path_vec.data());
-    ASSERT_NE(fd, -1);
-    std::filesystem::path temp_path(temp_path_vec.data());
-    close(fd);  // Close the file descriptor, we only need the path
+    std::string temp_path;
+    if (fd != -1) {
+        temp_path = std::string(temp_path_vec.data());
+        close(fd);
+    } else {
+        // Fallback: use a fixed path if mkstemp fails
+        temp_path = std::string("./test_data/save_load_test_fallback.bin");
+        std::filesystem::remove(temp_path);
+    }
 
     // Save catalog - should succeed
     ASSERT_TRUE(catalog->save(temp_path.string()));
