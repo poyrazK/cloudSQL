@@ -790,8 +790,8 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
         std::vector<std::future<std::pair<bool, std::vector<executor::Tuple>>>> left_fetch_futures;
 
         for (const auto& node : data_nodes) {
-            left_fetch_futures.push_back(std::async(
-                std::launch::async, [node, context_id, outer_join_left_table]() {
+            left_fetch_futures.push_back(
+                std::async(std::launch::async, [node, context_id, outer_join_left_table]() {
                     network::RpcClient client(node.address, node.cluster_port);
                     std::vector<executor::Tuple> rows;
                     if (client.connect()) {

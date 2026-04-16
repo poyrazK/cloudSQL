@@ -39,8 +39,8 @@ enum class RpcType : uint8_t {
     UnmatchedRowsPush = 14,    // Coordinator sends unmatched rows for NULL-padding
     FetchUnmatchedRows = 15,   // Coordinator fetches stored unmatched rows from data node
     // LEFT-side counterparts for FULL join
-    UnmatchedLeftRowsReport = 16,   // Data node reports unmatched LEFT rows for FULL join
-    FetchUnmatchedLeftRows = 17,    // Coordinator fetches stored unmatched LEFT rows
+    UnmatchedLeftRowsReport = 16,  // Data node reports unmatched LEFT rows for FULL join
+    FetchUnmatchedLeftRows = 17,   // Coordinator fetches stored unmatched LEFT rows
     Error = 255
 };
 
@@ -710,9 +710,9 @@ struct FetchUnmatchedRowsArgs {
 struct UnmatchedLeftRowsReportArgs {
     std::string context_id;
     std::string left_table;
-    std::string join_key_col;                   // Which column was the join key
-    std::vector<std::string> unmatched_keys;    // LEFT key values that had no match
-    uint32_t right_column_count = 0;           // Number of right columns for NULL-padding
+    std::string join_key_col;                 // Which column was the join key
+    std::vector<std::string> unmatched_keys;  // LEFT key values that had no match
+    uint32_t right_column_count = 0;          // Number of right columns for NULL-padding
 
     [[nodiscard]] std::vector<uint8_t> serialize() const {
         std::vector<uint8_t> out;
