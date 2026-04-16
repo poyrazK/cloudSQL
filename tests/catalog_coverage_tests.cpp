@@ -7,7 +7,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
+#include <unistd.h>
 #include <vector>
 
 #include "catalog/catalog.hpp"
@@ -239,10 +241,14 @@ TEST(CatalogCoverageTests, SaveAndLoad) {
     std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
     catalog->create_table("persisted_table", cols);
 
-    // Use unique temp path to avoid collisions in parallel runs
-    static int test_counter = 0;
-    std::string temp_filename = "/tmp/test_catalog_" + std::to_string(++test_counter) + ".bin";
-    std::filesystem::path temp_path(temp_filename);
+    // Use mkstemp to create a unique temp file atomically
+    std::string temp_template = "/tmp/test_catalog_XXXXXX.bin";
+    std::vector<char> temp_path_vec(temp_template.begin(), temp_template.end());
+    temp_path_vec.push_back('\0');  // null-terminate for mkstemp
+    int fd = mkstemp(temp_path_vec.data());
+    ASSERT_NE(fd, -1);
+    std::filesystem::path temp_path(temp_path_vec.data());
+    close(fd);  // Close the file descriptor, we only need the path
 
     // Save catalog - should succeed
     ASSERT_TRUE(catalog->save(temp_path.string()));
