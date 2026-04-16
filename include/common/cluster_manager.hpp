@@ -404,6 +404,73 @@ class ClusterManager {
         unmatched_rows_.erase(context_id);
     }
 
+    /**
+     * @brief Store local left table rows for outer join processing
+     * Called during Phase 2 shuffle when sending left table rows to other nodes
+     */
+    void set_local_left_rows(const std::string& context_id, const std::string& table_name,
+                             std::vector<executor::Tuple> rows) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        local_left_table_rows_[context_id][table_name] = std::move(rows);
+    }
+
+    /**
+     * @brief Get stored local left table rows
+     */
+    [[nodiscard]] std::vector<executor::Tuple> get_local_left_rows(
+        const std::string& context_id, const std::string& table_name) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto ctx_it = local_left_table_rows_.find(context_id);
+        if (ctx_it != local_left_table_rows_.end()) {
+            auto table_it = ctx_it->second.find(table_name);
+            if (table_it != ctx_it->second.end()) {
+                return table_it->second;
+            }
+        }
+        return {};
+    }
+
+    /**
+     * @brief Clear local left table rows for a context
+     */
+    void clear_local_left_rows(const std::string& context_id) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        local_left_table_rows_.erase(context_id);
+    }
+
+    /**
+     * @brief Store unmatched LEFT rows for a context (used by FULL join NULL-padding)
+     */
+    void set_unmatched_left_rows(const std::string& context_id, const std::string& table_name,
+                                 std::vector<executor::Tuple> rows) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        unmatched_left_rows_[context_id][table_name] = std::move(rows);
+    }
+
+    /**
+     * @brief Get stored unmatched LEFT rows for a context
+     */
+    [[nodiscard]] std::vector<executor::Tuple> get_unmatched_left_rows(
+        const std::string& context_id, const std::string& table_name) const {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        auto ctx_it = unmatched_left_rows_.find(context_id);
+        if (ctx_it != unmatched_left_rows_.end()) {
+            auto table_it = ctx_it->second.find(table_name);
+            if (table_it != ctx_it->second.end()) {
+                return table_it->second;
+            }
+        }
+        return {};
+    }
+
+    /**
+     * @brief Clear unmatched LEFT rows for a context
+     */
+    void clear_unmatched_left_rows(const std::string& context_id) {
+        const std::scoped_lock<std::mutex> lock(mutex_);
+        unmatched_left_rows_.erase(context_id);
+    }
+
    private:
     /**
      * @brief Stored bloom filter data for a context
@@ -438,6 +505,12 @@ class ClusterManager {
     /* context_id -> table_name -> unmatched rows for outer join NULL-padding */
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
         unmatched_rows_;
+    /* context_id -> table_name -> local left table rows for outer join tracking */
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
+        local_left_table_rows_;
+    /* context_id -> table_name -> unmatched LEFT rows for FULL join NULL-padding */
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<executor::Tuple>>>
+        unmatched_left_rows_;
     mutable std::mutex mutex_;
 };
 
