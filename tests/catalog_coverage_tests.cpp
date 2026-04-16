@@ -257,11 +257,11 @@ TEST(CatalogCoverageTests, SaveAndLoad) {
     }
 
     // Save catalog - should succeed
-    ASSERT_TRUE(catalog->save(temp_path.string()));
+    ASSERT_TRUE(catalog->save(temp_path));
 
     // Create new catalog and load - should succeed (returns true)
     auto loaded_catalog = Catalog::create();
-    ASSERT_TRUE(loaded_catalog->load(temp_path.string()));
+    ASSERT_TRUE(loaded_catalog->load(temp_path));
 
     // Note: Due to stub implementation, loaded catalog won't have the table
     // This test verifies the save/load cycle works without crashing
