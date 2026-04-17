@@ -621,27 +621,28 @@ QueryResult DistributedExecutor::execute(const parser::Statement& stmt,
     // (no collection needed - each node emits them locally).
     //
     // This block is only enabled for FULL JOIN.
-    if (outer_join_type == parser::SelectStatement::JoinType::Full && all_success) {
-        // Extract matched right keys from aggregated results
-        // The right key column is at a known position in the result schema
-        std::vector<std::string> matched_keys;
-        size_t right_key_idx = static_cast<size_t>(-1);
+    // We also require that the join key column is present in the result schema.
+    // If the key is not in the SELECT output, we skip Phase 3-5 and rely on
+    // ExecuteFragment results (which already include unmatched rows for FULL JOIN).
+    std::vector<std::string> matched_keys;
+    size_t right_key_idx = static_cast<size_t>(-1);
 
-        // Find the right key column index in the result schema
-        for (size_t i = 0; i < result_schema.columns().size(); ++i) {
-            const auto& col = result_schema.columns()[i];
-            if (col.name() == outer_join_right_key) {
-                right_key_idx = i;
-                break;
-            }
+    // Find the right key column index in the result schema
+    for (size_t i = 0; i < result_schema.columns().size(); ++i) {
+        const auto& col = result_schema.columns()[i];
+        if (col.name() == outer_join_right_key) {
+            right_key_idx = i;
+            break;
         }
+    }
 
-        // If we found the key column, extract matched keys from results
-        if (right_key_idx != static_cast<size_t>(-1)) {
-            for (const auto& row : aggregated_rows) {
-                if (row.size() > right_key_idx) {
-                    matched_keys.push_back(row.get(right_key_idx).to_string());
-                }
+    // Only run Phase 3-5 if key column was found AND is FULL JOIN
+    if (outer_join_type == parser::SelectStatement::JoinType::Full && all_success &&
+        right_key_idx != static_cast<size_t>(-1)) {
+        // Extract matched right keys from aggregated results
+        for (const auto& row : aggregated_rows) {
+            if (row.size() > right_key_idx) {
+                matched_keys.push_back(row.get(right_key_idx).to_string());
             }
         }
 
