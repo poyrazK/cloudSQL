@@ -287,10 +287,8 @@ TEST_F(RpcServerTests, LargePayload) {
     server_->start();
 
     // Set a handler that tracks if it was called
-    server_->set_handler(RpcType::PushData,
-                         [&](const RpcHeader&, const std::vector<uint8_t>&, int) {
-                             handler_called_ = true;
-                         });
+    server_->set_handler(RpcType::PushData, [&](const RpcHeader&, const std::vector<uint8_t>&,
+                                                int) { handler_called_ = true; });
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr{};
