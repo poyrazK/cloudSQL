@@ -695,7 +695,8 @@ TEST_F(OperatorTests, LimitOffsetExceedsTotal) {
 
 TEST_F(OperatorTests, SortStable) {
     // Test stable sort: equal keys preserve input order
-    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}, {"val", common::ValueType::TYPE_INT64}});
+    Schema schema = make_schema(
+        {{"id", common::ValueType::TYPE_INT64}, {"val", common::ValueType::TYPE_INT64}});
     std::vector<Tuple> data;
     // Three tuples with same key (1)
     data.push_back(make_tuple({common::Value::make_int64(1), common::Value::make_int64(100)}));
