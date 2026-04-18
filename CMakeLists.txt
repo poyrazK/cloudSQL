@@ -80,9 +80,15 @@ add_library(sqlEngineCore ${CORE_SOURCES})
 
 # Coverage
 if(BUILD_COVERAGE)
-    # Use LLVM coverage mapping for branch coverage support
-    target_compile_options(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping -O0)
-    target_link_libraries(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Use LLVM coverage mapping for branch coverage support (Clang only)
+        target_compile_options(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping -O0)
+        target_link_libraries(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping)
+    else()
+        # Fallback for GCC - uses traditional gcov format
+        target_compile_options(sqlEngineCore PUBLIC --coverage -O0)
+        target_link_libraries(sqlEngineCore PUBLIC --coverage)
+    endif()
 endif()
 
 # Sanitizers
