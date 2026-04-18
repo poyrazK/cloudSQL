@@ -213,4 +213,63 @@ TEST(ServerTests, InvalidHandshake) {
     static_cast<void>(server->stop());
 }
 
+TEST(ServerTests, DoubleStop) {
+    auto catalog = Catalog::create();
+    StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    config::Config cfg;
+    uint16_t port = 6010;
+
+    auto server = Server::create(port, *catalog, sm, cfg, nullptr);
+    ASSERT_TRUE(server->start());
+    EXPECT_TRUE(server->is_running());
+
+    // First stop
+    EXPECT_TRUE(server->stop());
+    EXPECT_FALSE(server->is_running());
+
+    // Second stop - should be safe (idempotent), is_running stays false
+    server->stop();
+    EXPECT_FALSE(server->is_running());
+}
+
+TEST(ServerTests, StartTwice) {
+    auto catalog = Catalog::create();
+    StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    config::Config cfg;
+    uint16_t port = 6011;
+
+    auto server = Server::create(port, *catalog, sm, cfg, nullptr);
+    ASSERT_TRUE(server->start());
+    EXPECT_TRUE(server->is_running());
+
+    // Second start - should return false or be idempotent
+    server->start();
+    EXPECT_TRUE(server->is_running());
+
+    static_cast<void>(server->stop());
+}
+
+TEST(ServerTests, WaitMethod) {
+    auto catalog = Catalog::create();
+    StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
+    config::Config cfg;
+    uint16_t port = 6012;
+
+    auto server = Server::create(port, *catalog, sm, cfg, nullptr);
+    ASSERT_TRUE(server->start());
+
+    // wait() should block until stop is called
+    std::thread waiter([&]() { server->wait(); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(server->is_running());
+
+    server->stop();
+    waiter.join();
+    EXPECT_FALSE(server->is_running());
+}
+
 }  // namespace
