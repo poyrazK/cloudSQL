@@ -111,11 +111,15 @@ jobs:
         chmod +x build/*_tests || true
 
     - name: Run Unit Tests
+      env:
+        LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
       run: |
         cd build
         ctest --output-on-failure
 
     - name: Run Distributed Tests
+      env:
+        LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
       run: |
         set +e
         ./tests/run_dist_test.sh tests/logic/*.slt
@@ -125,10 +129,20 @@ jobs:
       if: matrix.sanitizer == 'address' && matrix.compiler == 'clang++'
       run: |
         cd build
-        # Merge LLVM profile data
-        llvm-profdata merge *.profraw -output=coverage.profdata 2>/dev/null || true
-        # Export to lcov format (includes branch coverage with LLVM)
-        llvm-cov export -instr-profile=coverage.profdata --format=lcov --object=sqlEngineCore > coverage.info 2>/dev/null || true
+        # Debug: list all coverage files before merge
+        echo "=== Files before merge ==="
+        ls -la *.profraw *.profdata 2>/dev/null || echo "No profraw/profdata files found"
+        echo "=== Profraw file count ==="
+        ls -la *.profraw 2>/dev/null | wc -l
+        echo "=== Merging LLVM profile data ==="
+        llvm-profdata merge *.profraw -output=coverage.profdata 2>&1 || echo "Merge failed or no files"
+        echo "=== Checking profdata ==="
+        ls -la coverage.profdata 2>/dev/null || echo "No profdata created"
+        echo "=== Exporting to lcov format ==="
+        llvm-cov export -instr-profile=coverage.profdata --format=lcov --object=sqlEngineCore > coverage.info 2>&1 || echo "Export failed"
+        echo "=== Coverage info size ==="
+        wc -l coverage.info 2>/dev/null || echo "No coverage.info created"
+        head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
         # Filter and generate HTML
         lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' '*/_deps/*' --output-file filtered_coverage.info --ignore-errors inconsistent,unused 2>/dev/null || true
         genhtml --branch-coverage filtered_coverage.info --output-directory out_coverage --ignore-errors inconsistent 2>/dev/null || true
