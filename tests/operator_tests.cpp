@@ -674,4 +674,75 @@ TEST_F(OperatorTests, OperatorTypeEnum) {
     EXPECT_EQ(OperatorType::BufferScan, OperatorType::BufferScan);
 }
 
+TEST_F(OperatorTests, LimitOffsetExceedsTotal) {
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    for (int i = 0; i < 3; i++) {
+        data.push_back(make_tuple({common::Value::make_int64(i)}));
+    }
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    auto limit = make_limit(std::move(scan), 10, 100);  // offset 100, limit 10
+
+    ASSERT_TRUE(limit->init());
+    ASSERT_TRUE(limit->open());
+
+    // offset exceeds total - should return nothing
+    Tuple tuple;
+    EXPECT_FALSE(limit->next(tuple));
+    limit->close();
+}
+
+TEST_F(OperatorTests, SortStable) {
+    // Test stable sort: equal keys preserve input order
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}, {"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    // Three tuples with same key (1)
+    data.push_back(make_tuple({common::Value::make_int64(1), common::Value::make_int64(100)}));
+    data.push_back(make_tuple({common::Value::make_int64(1), common::Value::make_int64(200)}));
+    data.push_back(make_tuple({common::Value::make_int64(1), common::Value::make_int64(300)}));
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<std::unique_ptr<Expression>> keys;
+    keys.push_back(col_expr("id"));
+    auto sort = make_sort(std::move(scan), std::move(keys), {true});  // sort by id, ascending
+
+    ASSERT_TRUE(sort->init());
+    ASSERT_TRUE(sort->open());
+
+    std::vector<int64_t> values;
+    Tuple tuple;
+    while (sort->next(tuple)) {
+        values.push_back(tuple.get(1).to_int64());
+    }
+    // Should preserve input order for equal keys: 100, 200, 300
+    ASSERT_EQ(values.size(), 3U);
+    EXPECT_EQ(values[0], 100);
+    EXPECT_EQ(values[1], 200);
+    EXPECT_EQ(values[2], 300);
+    sort->close();
+}
+
+TEST_F(OperatorTests, AggregateAvg) {
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(10)}));
+    data.push_back(make_tuple({common::Value::make_int64(20)}));
+    data.push_back(make_tuple({common::Value::make_int64(30)}));
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg(AggregateType::Avg, "avg_val", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    EXPECT_EQ(tuple.get(0).to_int64(), 20);  // (10+20+30)/3 = 20
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
 }  // namespace
