@@ -139,7 +139,7 @@ jobs:
         echo "=== Checking profdata ==="
         ls -la coverage.profdata 2>/dev/null || echo "No profdata created"
         echo "=== Exporting to lcov format ==="
-        llvm-cov export -instr-profile=coverage.profdata --format=lcov --object=./sqlEngineCore > coverage.info 2>&1 || echo "Export failed"
+        llvm-cov export -instr-profile=coverage.profdata --format=lcov --object=./libsqlEngineCore.a > coverage.info 2>&1 || echo "Export failed"
         echo "=== Coverage info size ==="
         wc -l coverage.info 2>/dev/null || echo "No coverage.info created"
         head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
