@@ -746,4 +746,27 @@ TEST_F(OperatorTests, AggregateAvg) {
     agg->close();
 }
 
+TEST_F(OperatorTests, AggregateAvgFractional) {
+    // Test with non-integer result to catch truncation bugs
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(1)}));
+    data.push_back(make_tuple({common::Value::make_int64(2)}));
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg(AggregateType::Avg, "avg_val", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    // (1+2)/2 = 1.5 - should use floating point division
+    EXPECT_EQ(tuple.get(0).to_float64(), 1.5);
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
 }  // namespace
