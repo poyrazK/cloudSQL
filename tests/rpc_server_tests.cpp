@@ -283,4 +283,48 @@ TEST_F(RpcServerTests, NoHandlerRegistered) {
     server_->stop();
 }
 
+TEST_F(RpcServerTests, LargePayload) {
+    server_->start();
+
+    // Set a handler that tracks if it was called
+    server_->set_handler(RpcType::PushData,
+                         [&](const RpcHeader&, const std::vector<uint8_t>&, int) {
+                             handler_called_ = true;
+                         });
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port_);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    connect(fd, (sockaddr*)&addr, sizeof(addr));
+
+    // Send large payload (10KB)
+    RpcHeader hdr;
+    hdr.type = RpcType::PushData;
+    hdr.payload_len = 10240;
+    char h_buf[RpcHeader::HEADER_SIZE];
+    hdr.encode(h_buf);
+    send(fd, h_buf, RpcHeader::HEADER_SIZE, 0);
+
+    // Send payload data
+    std::vector<char> large_data(10240, 'x');
+    send(fd, large_data.data(), large_data.size(), 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_TRUE(handler_called_);
+
+    close(fd);
+    server_->stop();
+}
+
+TEST_F(RpcServerTests, ServerOnSpecificPort) {
+    // Test server can bind to specific port
+    constexpr uint16_t specific_port = 6399;
+    auto specific_server = std::make_unique<RpcServer>(specific_port);
+
+    ASSERT_TRUE(specific_server->start());
+    specific_server->stop();
+}
+
 }  // namespace
