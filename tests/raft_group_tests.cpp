@@ -236,4 +236,196 @@ TEST_F(RaftGroupTests, DifferentGroupIds) {
     EXPECT_EQ(group2->group_id(), 2);
 }
 
+// ============= RequestVoteArgs Edge Cases =============
+
+TEST_F(RaftGroupTests, RequestVoteArgsLargeCandidateId) {
+    RequestVoteArgs args;
+    std::string large_id(256, 'x');
+    args.term = 100;
+    args.candidate_id = large_id;
+    args.last_log_index = 50;
+    args.last_log_term = 25;
+
+    auto serialized = args.serialize();
+    // Verify size: term(8) + id_len(8) + id(256) + last_log_index(8) + last_log_term(8) = 288
+    EXPECT_EQ(serialized.size(), 8 + 8 + 256 + 8 + 8);
+
+    // Parse and verify serialized fields
+    uint64_t term_val = 0;
+    uint64_t id_len = 0;
+    uint64_t last_log_index_val = 0;
+    uint64_t last_log_term_val = 0;
+    std::memcpy(&term_val, serialized.data(), 8);
+    std::memcpy(&id_len, serialized.data() + 8, 8);
+    std::memcpy(&last_log_index_val, serialized.data() + 16 + id_len, 8);
+    std::memcpy(&last_log_term_val, serialized.data() + 24 + id_len, 8);
+
+    EXPECT_EQ(term_val, 100u);
+    EXPECT_EQ(id_len, 256u);
+    EXPECT_EQ(last_log_index_val, 50u);
+    EXPECT_EQ(last_log_term_val, 25u);
+
+    // Verify candidate_id content
+    std::string decoded_id(reinterpret_cast<const char*>(serialized.data() + 16), 256);
+    EXPECT_EQ(decoded_id, large_id);
+}
+
+TEST_F(RaftGroupTests, RequestVoteArgsZeroValues) {
+    RequestVoteArgs args;
+    args.term = 0;
+    args.candidate_id = "";
+    args.last_log_index = 0;
+    args.last_log_term = 0;
+
+    auto serialized = args.serialize();
+    // Verify size: 8 (term) + 8 (id_len) + 0 (empty id) + 8 (last_log_index) + 8 (last_log_term)
+    EXPECT_EQ(serialized.size(), 8 + 8 + 0 + 8 + 8);
+
+    // Parse and verify serialized fields
+    uint64_t term_val = 0;
+    uint64_t id_len = 0;
+    uint64_t last_log_index_val = 0;
+    uint64_t last_log_term_val = 0;
+    std::memcpy(&term_val, serialized.data(), 8);
+    std::memcpy(&id_len, serialized.data() + 8, 8);
+    std::memcpy(&last_log_index_val, serialized.data() + 16 + id_len, 8);
+    std::memcpy(&last_log_term_val, serialized.data() + 24 + id_len, 8);
+
+    EXPECT_EQ(term_val, 0u);
+    EXPECT_EQ(id_len, 0u);
+    EXPECT_EQ(last_log_index_val, 0u);
+    EXPECT_EQ(last_log_term_val, 0u);
+}
+
+// ============= AppendEntriesArgs with Entries =============
+
+TEST_F(RaftGroupTests, AppendEntriesArgsWithEntries) {
+    AppendEntriesArgs args;
+    args.term = 2;
+    args.leader_id = "leader1";
+    args.prev_log_index = 5;
+    args.prev_log_term = 1;
+    args.leader_commit = 10;
+
+    // Add some log entries
+    LogEntry entry1;
+    entry1.term = 2;
+    entry1.index = 6;
+    entry1.data = {1, 2, 3};
+    args.entries.push_back(entry1);
+
+    LogEntry entry2;
+    entry2.term = 2;
+    entry2.index = 7;
+    entry2.data = {4, 5, 6, 7};
+    args.entries.push_back(entry2);
+
+    EXPECT_EQ(args.entries.size(), 2);
+
+    // Verify entry1
+    EXPECT_EQ(args.entries[0].term, 2);
+    EXPECT_EQ(args.entries[0].index, 6);
+    EXPECT_EQ(args.entries[0].data.size(), 3);
+    EXPECT_EQ(args.entries[0].data[0], 1);
+    EXPECT_EQ(args.entries[0].data[1], 2);
+    EXPECT_EQ(args.entries[0].data[2], 3);
+
+    // Verify entry2
+    EXPECT_EQ(args.entries[1].term, 2);
+    EXPECT_EQ(args.entries[1].index, 7);
+    EXPECT_EQ(args.entries[1].data.size(), 4);
+    EXPECT_EQ(args.entries[1].data[0], 4);
+    EXPECT_EQ(args.entries[1].data[1], 5);
+    EXPECT_EQ(args.entries[1].data[2], 6);
+    EXPECT_EQ(args.entries[1].data[3], 7);
+}
+
+// ============= RequestVoteReply Variations =============
+
+TEST_F(RaftGroupTests, RequestVoteReplyVoteDenied) {
+    RequestVoteReply reply;
+    reply.term = 10;
+    reply.vote_granted = false;
+
+    EXPECT_EQ(reply.term, 10);
+    EXPECT_FALSE(reply.vote_granted);
+}
+
+// ============= AppendEntriesReply Variations =============
+
+TEST_F(RaftGroupTests, AppendEntriesReplyFailure) {
+    AppendEntriesReply reply;
+    reply.term = 5;
+    reply.success = false;
+
+    EXPECT_EQ(reply.term, 5);
+    EXPECT_FALSE(reply.success);
+}
+
+// ============= Persistent State With Values =============
+
+TEST_F(RaftGroupTests, PersistentStateWithLog) {
+    RaftPersistentState state;
+    state.current_term = 5;
+    state.voted_for = "node3";
+
+    LogEntry entry1;
+    entry1.term = 3;
+    entry1.index = 1;
+    entry1.data = {1, 2};
+    state.log.push_back(entry1);
+
+    LogEntry entry2;
+    entry2.term = 5;
+    entry2.index = 2;
+    entry2.data = {3, 4, 5};
+    state.log.push_back(entry2);
+
+    EXPECT_EQ(state.current_term, 5);
+    EXPECT_EQ(state.voted_for, "node3");
+    EXPECT_EQ(state.log.size(), 2);
+
+    // Verify entry1
+    EXPECT_EQ(state.log[0].term, 3);
+    EXPECT_EQ(state.log[0].index, 1);
+    EXPECT_EQ(state.log[0].data.size(), 2);
+    EXPECT_EQ(state.log[0].data[0], 1);
+    EXPECT_EQ(state.log[0].data[1], 2);
+
+    // Verify entry2
+    EXPECT_EQ(state.log[1].term, 5);
+    EXPECT_EQ(state.log[1].index, 2);
+    EXPECT_EQ(state.log[1].data.size(), 3);
+    EXPECT_EQ(state.log[1].data[0], 3);
+    EXPECT_EQ(state.log[1].data[1], 4);
+    EXPECT_EQ(state.log[1].data[2], 5);
+}
+
+// ============= Volatile State With Values =============
+
+TEST_F(RaftGroupTests, VolatileStateWithValues) {
+    RaftVolatileState state;
+    state.commit_index = 100;
+    state.last_applied = 95;
+
+    EXPECT_EQ(state.commit_index, 100);
+    EXPECT_EQ(state.last_applied, 95);
+}
+
+// ============= Multiple Groups =============
+
+TEST_F(RaftGroupTests, MultipleGroupManager) {
+    auto group1 = manager_->get_or_create_group(1);
+    auto group2 = manager_->get_or_create_group(2);
+    auto group3 = manager_->get_or_create_group(3);
+
+    EXPECT_EQ(group1->group_id(), 1);
+    EXPECT_EQ(group2->group_id(), 2);
+    EXPECT_EQ(group3->group_id(), 3);
+
+    // Getting same group returns same instance
+    auto group1_again = manager_->get_or_create_group(1);
+    EXPECT_EQ(group1.get(), group1_again.get());
+}
+
 }  // namespace
