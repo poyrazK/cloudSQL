@@ -80,8 +80,9 @@ add_library(sqlEngineCore ${CORE_SOURCES})
 
 # Coverage
 if(BUILD_COVERAGE)
-    target_compile_options(sqlEngineCore PUBLIC --coverage -O0)
-    target_link_libraries(sqlEngineCore PUBLIC --coverage)
+    # Use LLVM coverage mapping for branch coverage support
+    target_compile_options(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping -O0)
+    target_link_libraries(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping)
 endif()
 
 # Sanitizers
