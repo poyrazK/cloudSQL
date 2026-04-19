@@ -111,15 +111,11 @@ jobs:
         chmod +x build/*_tests || true
 
     - name: Run Unit Tests
-      env:
-        LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
       run: |
         cd build
         ctest --output-on-failure
 
     - name: Run Distributed Tests
-      env:
-        LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
       run: |
         set +e
         ./tests/run_dist_test.sh tests/logic/*.slt
@@ -131,18 +127,17 @@ jobs:
         cd build
         # Debug: list all coverage files before merge
         echo "=== Files before merge ==="
-        ls -la *.profraw *.profdata 2>/dev/null || echo "No profraw/profdata files found"
-        echo "=== Profraw file count ==="
-        ls -la *.profraw 2>/dev/null | wc -l
-        echo "=== Merging LLVM profile data ==="
-        llvm-profdata merge *.profraw -output=coverage.profdata 2>&1 || echo "Merge failed or no files"
-        echo "=== Checking profdata ==="
-        ls -la coverage.profdata 2>/dev/null || echo "No profdata created"
-        echo "=== Exporting to lcov format ==="
-        llvm-cov export -instr-profile=coverage.profdata --format=lcov --object=./cloudSQL_tests --show-branch-coverage > coverage.info 2>&1 || echo "Export failed"
-        echo "=== Coverage info size ==="
-        wc -l coverage.info 2>/dev/null || echo "No coverage.info created"
-        head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
+        ls -la *.gcda *.gcno 2>/dev/null || echo "No .gcda/.gcno files found"
+        echo "=== gcda file count ==="
+        ls -la *.gcda 2>/dev/null | wc -l
+        echo "=== Converting gcda to lcov format ==="
+        # For source-based coverage with gcov, we need to convert .gcda files to lcov
+        for gcda in $(find . -name "*.gcda" 2>/dev/null | head -5); do
+          echo "Processing: $gcda"
+          llvm-cov gcov "$gcda" 2>&1 || echo "gcov failed for $gcda"
+        done
+        echo "=== Checking for .gcov files ==="
+        ls -la *.gcov 2>/dev/null | head -5 || echo "No .gcov files found"
         echo "=== Filtering and generating HTML ==="
         # Filter out warning lines from llvm-cov output before processing with lcov
         grep -v "^warning:" coverage.info > coverage_filtered.info || true
