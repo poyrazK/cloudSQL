@@ -124,6 +124,37 @@ TEST(TransactionManagerTests, GetTransaction) {
     EXPECT_EQ(tm.get_transaction(txn1->get_id()), nullptr);
 }
 
+TEST(TransactionManagerTests, PrepareWhenNotRunning) {
+    auto catalog = Catalog::create();
+    storage::StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
+
+    Transaction* const txn = tm.begin();
+    ASSERT_NE(txn, nullptr);
+
+    // Force txn to PREPARED state before prepare() call
+    txn->set_state(TransactionState::PREPARED);
+    tm.prepare(txn);
+    // prepare() should return early since state != RUNNING
+
+    // Also test with COMMITTED
+    Transaction* const txn2 = tm.begin();
+    txn2->set_state(TransactionState::COMMITTED);
+    tm.prepare(txn2);
+
+    // And ABORTED
+    Transaction* const txn3 = tm.begin();
+    txn3->set_state(TransactionState::ABORTED);
+    tm.prepare(txn3);
+
+    tm.commit(txn);
+    tm.commit(txn2);
+    tm.commit(txn3);
+}
+
 TEST(TransactionManagerTests, CommitIdempotent) {
     auto catalog = Catalog::create();
     storage::StorageManager disk_manager("./test_data");
