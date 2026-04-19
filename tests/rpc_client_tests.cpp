@@ -80,14 +80,15 @@ TEST_F(RpcClientTests, CallAfterServerStop) {
     server_->start();
 
     // Set a handler that responds immediately
-    server_->set_handler(RpcType::Heartbeat, [](const RpcHeader&, const std::vector<uint8_t>&, int fd) {
-        RpcHeader resp_h;
-        resp_h.type = RpcType::Heartbeat;
-        resp_h.payload_len = 0;
-        char h_buf[RpcHeader::HEADER_SIZE];
-        resp_h.encode(h_buf);
-        send(fd, h_buf, RpcHeader::HEADER_SIZE, 0);
-    });
+    server_->set_handler(RpcType::Heartbeat,
+                         [](const RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                             RpcHeader resp_h;
+                             resp_h.type = RpcType::Heartbeat;
+                             resp_h.payload_len = 0;
+                             char h_buf[RpcHeader::HEADER_SIZE];
+                             resp_h.encode(h_buf);
+                             send(fd, h_buf, RpcHeader::HEADER_SIZE, 0);
+                         });
 
     RpcClient client("127.0.0.1", port_);
     ASSERT_TRUE(client.connect());
@@ -211,10 +212,8 @@ TEST_F(RpcClientTests, SendOnlyWithoutResponse) {
     server_->start();
 
     std::atomic<int> call_count{0};
-    server_->set_handler(RpcType::Heartbeat,
-                         [&](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
-                             call_count++;
-                         });
+    server_->set_handler(RpcType::Heartbeat, [&](const RpcHeader& h, const std::vector<uint8_t>& p,
+                                                 int fd) { call_count++; });
 
     RpcClient client("127.0.0.1", port_);
     ASSERT_TRUE(client.connect());
