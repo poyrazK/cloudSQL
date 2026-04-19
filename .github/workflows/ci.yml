@@ -144,6 +144,9 @@ jobs:
         wc -l coverage.info 2>/dev/null || echo "No coverage.info created"
         head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
         echo "=== Filtering and generating HTML ==="
+        # Filter out warning lines from llvm-cov output before processing with lcov
+        grep -v "^warning:" coverage.info > coverage_filtered.info || true
+        mv coverage_filtered.info coverage.info
         lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' '*/_deps/*' --output-file filtered_coverage.info --ignore-errors inconsistent,unused 2>&1 || echo "lcov filter failed"
         echo "=== Checking filtered coverage ==="
         wc -l filtered_coverage.info 2>/dev/null || echo "No filtered coverage.info"
