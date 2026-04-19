@@ -134,7 +134,7 @@ jobs:
         ls -la *.gcov 2>/dev/null | head -5 || echo "No .gcov files"
         echo "=== Capturing with lcov ==="
         # lcov can read .gcov files directly when they're in the same directory as .gcda
-        lcov --capture --directory . --output-file coverage.info 2>&1 || echo "lcov capture failed"
+        lcov --capture --directory . --branch-coverage --output-file coverage.info 2>&1 || echo "lcov capture failed"
         echo "=== Checking coverage.info ==="
         wc -l coverage.info 2>/dev/null || echo "No coverage.info"
         head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
