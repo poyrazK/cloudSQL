@@ -800,9 +800,9 @@ TEST_F(OperatorTests, AggregateMultipleAggregates) {
 
     Tuple tuple;
     EXPECT_TRUE(agg->next(tuple));
-    EXPECT_EQ(tuple.get(0).to_int64(), 60);    // SUM
-    EXPECT_EQ(tuple.get(1).to_int64(), 3);     // COUNT
-    EXPECT_EQ(tuple.get(2).to_float64(), 20.0); // AVG
+    EXPECT_EQ(tuple.get(0).to_int64(), 60);      // SUM
+    EXPECT_EQ(tuple.get(1).to_int64(), 3);       // COUNT
+    EXPECT_EQ(tuple.get(2).to_float64(), 20.0);  // AVG
     EXPECT_FALSE(agg->next(tuple));
     agg->close();
 }
@@ -905,7 +905,8 @@ TEST_F(OperatorTests, HashJoinRightOuter) {
     // RIGHT join output: matched rows + unmatched right rows with NULLs
     // Matched: (2, 2)
     // Unmatched right: (NULL, 3), (NULL, 4)
-    std::vector<std::pair<int64_t, int64_t>> results;  // (left_value, right_value); use INT64_MIN as sentinel for NULL
+    std::vector<std::pair<int64_t, int64_t>>
+        results;  // (left_value, right_value); use INT64_MIN as sentinel for NULL
     Tuple tuple;
     while (join->next(tuple)) {
         int64_t left_val = tuple.get(0).is_null() ? INT64_MIN : tuple.get(0).to_int64();
@@ -991,11 +992,11 @@ TEST_F(OperatorTests, HashJoinNullKeys) {
     Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
     std::vector<Tuple> left_data;
     left_data.push_back(make_tuple({common::Value::make_int64(1)}));  // matches 1
-    left_data.push_back(make_tuple({common::Value()}));                        // NULL - currently matches NULL
+    left_data.push_back(make_tuple({common::Value()}));  // NULL - currently matches NULL
 
     Schema right_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
     std::vector<Tuple> right_data;
-    right_data.push_back(make_tuple({common::Value()}));                        // NULL - currently matches
+    right_data.push_back(make_tuple({common::Value()}));               // NULL - currently matches
     right_data.push_back(make_tuple({common::Value::make_int64(1)}));  // matches 1
 
     auto left_scan = make_buffer_scan("left_table", left_data, left_schema);
