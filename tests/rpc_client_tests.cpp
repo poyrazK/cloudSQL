@@ -173,18 +173,18 @@ TEST_F(RpcClientTests, ReconnectAfterServerRestart) {
     auto reconnect_server = std::make_unique<RpcServer>(reconnect_port);
     reconnect_server->start();
 
-    server_->set_handler(RpcType::QueryResults,
-                         [](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
-                             RpcHeader resp_h;
-                             resp_h.type = RpcType::QueryResults;
-                             resp_h.payload_len = static_cast<uint16_t>(p.size());
-                             char h_buf[RpcHeader::HEADER_SIZE];
-                             resp_h.encode(h_buf);
-                             send(fd, h_buf, RpcHeader::HEADER_SIZE, 0);
-                             if (!p.empty()) {
-                                 send(fd, p.data(), p.size(), 0);
-                             }
-                         });
+    reconnect_server->set_handler(RpcType::QueryResults,
+                                  [](const RpcHeader& h, const std::vector<uint8_t>& p, int fd) {
+                                      RpcHeader resp_h;
+                                      resp_h.type = RpcType::QueryResults;
+                                      resp_h.payload_len = static_cast<uint16_t>(p.size());
+                                      char h_buf[RpcHeader::HEADER_SIZE];
+                                      resp_h.encode(h_buf);
+                                      send(fd, h_buf, RpcHeader::HEADER_SIZE, 0);
+                                      if (!p.empty()) {
+                                          send(fd, p.data(), p.size(), 0);
+                                      }
+                                  });
 
     RpcClient client("127.0.0.1", reconnect_port);
     ASSERT_TRUE(client.connect());
