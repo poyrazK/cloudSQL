@@ -569,4 +569,69 @@ TEST(ExpressionTests, ParameterExprType) {
     EXPECT_EQ(expr.type(), ExprType::Parameter);
 }
 
+// ============= InExpr Edge Case Tests =============
+
+TEST(ExpressionTests, InExprWithDuplicates) {
+    // Column value appears multiple times in IN list
+    auto column = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    std::vector<std::unique_ptr<Expression>> values;
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(5)));
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(5)));  // duplicate
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(5)));  // duplicate
+
+    InExpr expr(std::move(column), std::move(values), false);
+    auto result = expr.evaluate();
+    EXPECT_TRUE(result.as_bool());  // 5 IN (5, 5, 5) = true
+}
+
+TEST(ExpressionTests, InExprWithManyValues) {
+    // IN with many values (10)
+    auto column = std::make_unique<ConstantExpr>(Value::make_int64(7));
+    std::vector<std::unique_ptr<Expression>> values;
+    for (int i = 1; i <= 10; i++) {
+        values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(i)));
+    }
+
+    InExpr expr(std::move(column), std::move(values), false);
+    auto result = expr.evaluate();
+    EXPECT_TRUE(result.as_bool());  // 7 IN (1..10) = true
+}
+
+TEST(ExpressionTests, InExprNotWithManyValues) {
+    // NOT IN with many values where value is not present
+    auto column = std::make_unique<ConstantExpr>(Value::make_int64(15));
+    std::vector<std::unique_ptr<Expression>> values;
+    for (int i = 1; i <= 10; i++) {
+        values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(i)));
+    }
+
+    InExpr expr(std::move(column), std::move(values), true);  // NOT IN
+    auto result = expr.evaluate();
+    EXPECT_TRUE(result.as_bool());  // 15 NOT IN (1..10) = true
+}
+
+TEST(ExpressionTests, InExprWithNullInList) {
+    // IN list containing NULL - SQL semantics: 5 IN (1, NULL, 10) = false
+    // because 5 == NULL is NULL (not true), so NULL doesn't match
+    auto column = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    std::vector<std::unique_ptr<Expression>> values;
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(1)));
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_null()));  // NULL in list
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(10)));
+
+    InExpr expr(std::move(column), std::move(values), false);
+    auto result = expr.evaluate();
+    EXPECT_FALSE(result.as_bool());  // 5 IN (1, NULL, 10) = false (NULL doesn't match)
+}
+
+TEST(ExpressionTests, InExprEmptyList) {
+    // IN with empty list
+    auto column = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    std::vector<std::unique_ptr<Expression>> values;  // empty
+
+    InExpr expr(std::move(column), std::move(values), false);
+    auto result = expr.evaluate();
+    EXPECT_FALSE(result.as_bool());  // 5 IN () = false
+}
+
 }  // namespace
