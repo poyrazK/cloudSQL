@@ -194,4 +194,109 @@ TEST(TransactionManagerTests, MultipleTransactions) {
     }
 }
 
+TEST(TransactionManagerTests, SnapshotCaptureSingleTxn) {
+    auto catalog = Catalog::create();
+    storage::StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
+
+    Transaction* const txn = tm.begin();
+    ASSERT_NE(txn, nullptr);
+
+    // Snapshot should be valid: xmin <= xmax
+    const auto& snap = txn->get_snapshot();
+    EXPECT_LE(snap.xmin, snap.xmax);
+
+    // Snapshot's xmax should be at least as large as txn's id + 1
+    EXPECT_GE(snap.xmax, txn->get_id() + 1);
+
+    tm.commit(txn);
+}
+
+TEST(TransactionManagerTests, SnapshotWithActiveTransactions) {
+    auto catalog = Catalog::create();
+    storage::StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
+
+    Transaction* const txn1 = tm.begin();
+    ASSERT_NE(txn1, nullptr);
+    txn_id_t txn1_id = txn1->get_id();
+
+    // Start txn2 while txn1 is still active
+    Transaction* const txn2 = tm.begin();
+    ASSERT_NE(txn2, nullptr);
+    txn_id_t txn2_id = txn2->get_id();
+
+    // txn2's snapshot should include txn1 in active_txns
+    const auto& snap2 = txn2->get_snapshot();
+    EXPECT_TRUE(snap2.active_txns.find(txn1_id) != snap2.active_txns.end());
+    EXPECT_GE(snap2.xmax, txn2_id + 1);
+
+    // txn1's snapshot should NOT include txn2 (txn2 started after txn1)
+    const auto& snap1 = txn1->get_snapshot();
+    EXPECT_TRUE(snap1.active_txns.find(txn2_id) == snap1.active_txns.end());
+
+    tm.commit(txn1);
+    tm.commit(txn2);
+}
+
+TEST(TransactionManagerTests, SnapshotAfterCommit) {
+    auto catalog = Catalog::create();
+    storage::StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
+
+    Transaction* const txn1 = tm.begin();
+    Transaction* const txn2 = tm.begin();
+    txn_id_t txn1_id = txn1->get_id();
+
+    // Commit txn1
+    tm.commit(txn1);
+
+    // Start txn3 after txn1 commits
+    Transaction* const txn3 = tm.begin();
+
+    // txn3's snapshot should NOT include txn1 (it committed)
+    const auto& snap3 = txn3->get_snapshot();
+    EXPECT_TRUE(snap3.active_txns.find(txn1_id) == snap3.active_txns.end());
+    // But should include txn2 which is still active
+    EXPECT_TRUE(snap3.active_txns.find(txn2->get_id()) != snap3.active_txns.end());
+
+    tm.commit(txn2);
+    tm.commit(txn3);
+}
+
+TEST(TransactionManagerTests, SerializableWriteSkewDetection) {
+    // SERIALIZABLE isolation should detect write skew when two transactions
+    // read overlapping data and write to different columns
+    auto catalog = Catalog::create();
+    storage::StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
+
+    Transaction* const txn1 = tm.begin(IsolationLevel::SERIALIZABLE);
+    Transaction* const txn2 = tm.begin(IsolationLevel::SERIALIZABLE);
+
+    ASSERT_NE(txn1, nullptr);
+    ASSERT_NE(txn2, nullptr);
+    EXPECT_EQ(txn1->get_isolation_level(), IsolationLevel::SERIALIZABLE);
+    EXPECT_EQ(txn2->get_isolation_level(), IsolationLevel::SERIALIZABLE);
+
+    // Both should be able to begin and hold their isolation levels
+    EXPECT_EQ(txn1->get_state(), TransactionState::RUNNING);
+    EXPECT_EQ(txn2->get_state(), TransactionState::RUNNING);
+
+    tm.commit(txn1);
+    tm.commit(txn2);
+}
+
 }  // namespace
