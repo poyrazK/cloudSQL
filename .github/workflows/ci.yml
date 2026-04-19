@@ -138,13 +138,8 @@ jobs:
         echo "=== Checking coverage.info ==="
         wc -l coverage.info 2>/dev/null || echo "No coverage.info"
         head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
-        echo "=== Filtering and generating HTML ==="
-        lcov --remove coverage.info '/usr/*' '*/tests/*' '*/CMakeFiles/*' '*/_deps/*' --output-file filtered_coverage.info --ignore-errors inconsistent,unused 2>&1 || echo "lcov filter failed"
-        echo "=== Checking filtered coverage ==="
-        wc -l filtered_coverage.info 2>/dev/null || echo "No filtered_coverage.info"
-        echo "=== HTML output directory ==="
-        ls -la out_coverage 2>/dev/null || echo "out_coverage directory not found or empty"
-        genhtml --branch-coverage filtered_coverage.info --output-directory out_coverage --ignore-errors inconsistent 2>&1 || echo "genhtml failed"
+        echo "=== Generating HTML with branch coverage ==="
+        genhtml --branch-coverage coverage.info --output-directory out_coverage --ignore-errors inconsistent,category 2>&1 || echo "genhtml failed"
         echo "=== HTML files in out_coverage ==="
         ls -la out_coverage/ 2>/dev/null | head -20
 
