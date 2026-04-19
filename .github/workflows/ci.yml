@@ -127,9 +127,14 @@ jobs:
         cd build
         echo "=== Finding gcda files ==="
         find . -name "*.gcda" 2>/dev/null | head -10
-        echo "=== Capturing coverage with lcov ==="
-        # Use llvm-cov gcov directly (not llvm-cov-gcov wrapper)
-        lcov --capture --directory . --output-file coverage.info --gcov-tool "llvm-cov gcov" 2>&1 || echo "lcov capture failed"
+        echo "=== Running llvm-cov gcov on all gcda files ==="
+        # Run llvm-cov gcov on each .gcda file to create .gcov files
+        find . -name "*.gcda" -exec sh -c 'llvm-cov gcov "$1" 2>/dev/null || true' _ {} \;
+        echo "=== Checking for .gcov files ==="
+        ls -la *.gcov 2>/dev/null | head -5 || echo "No .gcov files"
+        echo "=== Capturing with lcov ==="
+        # lcov can read .gcov files directly when they're in the same directory as .gcda
+        lcov --capture --directory . --output-file coverage.info 2>&1 || echo "lcov capture failed"
         echo "=== Checking coverage.info ==="
         wc -l coverage.info 2>/dev/null || echo "No coverage.info"
         head -20 coverage.info 2>/dev/null || echo "Cannot read coverage.info"
