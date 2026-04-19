@@ -81,9 +81,9 @@ add_library(sqlEngineCore ${CORE_SOURCES})
 # Coverage
 if(BUILD_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        # Use LLVM coverage mapping for branch coverage support (Clang only)
+        # Use source-based code coverage for Clang
         target_compile_options(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping -O0)
-        target_link_options(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping -u __llvm_internal_fn)
+        target_link_options(sqlEngineCore PUBLIC -fprofile-instr-generate -fcoverage-mapping)
     else()
         # Fallback for GCC - uses traditional gcov format
         target_compile_options(sqlEngineCore PUBLIC --coverage -O0)
