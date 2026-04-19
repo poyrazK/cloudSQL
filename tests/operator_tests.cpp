@@ -769,4 +769,157 @@ TEST_F(OperatorTests, AggregateAvgFractional) {
     agg->close();
 }
 
+TEST_F(OperatorTests, HashJoinRightOuter) {
+    // Right table: values 2, 3, 4 (only 2 matches)
+    Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> left_data;
+    left_data.push_back(make_tuple({common::Value::make_int64(1)}));  // no match
+    left_data.push_back(make_tuple({common::Value::make_int64(2)}));  // matches
+
+    Schema right_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> right_data;
+    right_data.push_back(make_tuple({common::Value::make_int64(2)}));  // matches
+    right_data.push_back(make_tuple({common::Value::make_int64(3)}));  // no match - should appear
+    right_data.push_back(make_tuple({common::Value::make_int64(4)}));  // no match - should appear
+
+    auto left_scan = make_buffer_scan("left_table", left_data, left_schema);
+    auto right_scan = make_buffer_scan("right_table", right_data, right_schema);
+
+    auto join = make_hash_join(std::move(left_scan), std::move(right_scan), col_expr("id"),
+                               col_expr("id"), JoinType::Right);
+
+    ASSERT_TRUE(join->init());
+    ASSERT_TRUE(join->open());
+
+    // RIGHT join output: matched rows + unmatched right rows with NULLs
+    // Matched: (2, 2)
+    // Unmatched right: (NULL, 3), (NULL, 4)
+    std::vector<std::pair<int64_t, int64_t>> results;  // (left_value, right_value); use INT64_MIN as sentinel for NULL
+    Tuple tuple;
+    while (join->next(tuple)) {
+        int64_t left_val = tuple.get(0).is_null() ? INT64_MIN : tuple.get(0).to_int64();
+        int64_t right_val = tuple.get(1).is_null() ? INT64_MIN : tuple.get(1).to_int64();
+        results.push_back({left_val, right_val});
+    }
+
+    EXPECT_EQ(results.size(), 3U);
+    // Find the matched row (2, 2)
+    bool found_matched = false;
+    bool found_unmatched_3 = false;
+    bool found_unmatched_4 = false;
+    for (const auto& r : results) {
+        if (r.first == 2 && r.second == 2) {
+            found_matched = true;
+        } else if (r.first == INT64_MIN && r.second == 3) {
+            found_unmatched_3 = true;
+        } else if (r.first == INT64_MIN && r.second == 4) {
+            found_unmatched_4 = true;
+        }
+    }
+    EXPECT_TRUE(found_matched);
+    EXPECT_TRUE(found_unmatched_3);
+    EXPECT_TRUE(found_unmatched_4);
+    join->close();
+}
+
+TEST_F(OperatorTests, HashJoinFullOuter) {
+    // Left: 1, 2 - Right: 2, 3
+    // Unmatched left: 1, Unmatched right: 3
+    Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> left_data;
+    left_data.push_back(make_tuple({common::Value::make_int64(1)}));  // no match
+    left_data.push_back(make_tuple({common::Value::make_int64(2)}));  // matches
+
+    Schema right_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> right_data;
+    right_data.push_back(make_tuple({common::Value::make_int64(2)}));  // matches
+    right_data.push_back(make_tuple({common::Value::make_int64(3)}));  // no match
+
+    auto left_scan = make_buffer_scan("left_table", left_data, left_schema);
+    auto right_scan = make_buffer_scan("right_table", right_data, right_schema);
+
+    auto join = make_hash_join(std::move(left_scan), std::move(right_scan), col_expr("id"),
+                               col_expr("id"), JoinType::Full);
+
+    ASSERT_TRUE(join->init());
+    ASSERT_TRUE(join->open());
+
+    // Full outer join: matched (2,2) + unmatched left (1,NULL) + unmatched right (NULL,3)
+    std::vector<std::pair<int64_t, int64_t>> results;
+    Tuple tuple;
+    while (join->next(tuple)) {
+        int64_t left_val = tuple.get(0).is_null() ? -1 : tuple.get(0).to_int64();
+        int64_t right_val = tuple.get(1).is_null() ? -1 : tuple.get(1).to_int64();
+        results.push_back({left_val, right_val});
+    }
+
+    EXPECT_EQ(results.size(), 3U);
+    // Should have (2,2), (1,-1), (-1,3)
+    bool found_match = false;
+    bool found_unmatched_left = false;
+    bool found_unmatched_right = false;
+    for (const auto& r : results) {
+        if (r.first == 2 && r.second == 2) {
+            found_match = true;
+        } else if (r.first == 1 && r.second == -1) {
+            found_unmatched_left = true;
+        } else if (r.first == -1 && r.second == 3) {
+            found_unmatched_right = true;
+        }
+    }
+    EXPECT_TRUE(found_match);
+    EXPECT_TRUE(found_unmatched_left);
+    EXPECT_TRUE(found_unmatched_right);
+    join->close();
+}
+
+TEST_F(OperatorTests, HashJoinNullKeys) {
+    // Note: Current implementation hashes NULL to string "NULL" and matches them.
+    // This is non-standard SQL behavior (NULL = NULL should not match), but
+    // documents current behavior. Left: 1, NULL - Right: NULL, 1
+    Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> left_data;
+    left_data.push_back(make_tuple({common::Value::make_int64(1)}));  // matches 1
+    left_data.push_back(make_tuple({common::Value()}));                        // NULL - currently matches NULL
+
+    Schema right_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> right_data;
+    right_data.push_back(make_tuple({common::Value()}));                        // NULL - currently matches
+    right_data.push_back(make_tuple({common::Value::make_int64(1)}));  // matches 1
+
+    auto left_scan = make_buffer_scan("left_table", left_data, left_schema);
+    auto right_scan = make_buffer_scan("right_table", right_data, right_schema);
+
+    auto join = make_hash_join(std::move(left_scan), std::move(right_scan), col_expr("id"),
+                               col_expr("id"), JoinType::Inner);
+
+    ASSERT_TRUE(join->init());
+    ASSERT_TRUE(join->open());
+
+    // Current implementation matches both: (1,1) and (NULL, NULL)
+    // Use INT64_MIN as sentinel for NULL values to record NULL/NULL matches
+    std::vector<std::pair<int64_t, int64_t>> results;
+    Tuple tuple;
+    while (join->next(tuple)) {
+        int64_t left_val = tuple.get(0).is_null() ? INT64_MIN : tuple.get(0).to_int64();
+        int64_t right_val = tuple.get(1).is_null() ? INT64_MIN : tuple.get(1).to_int64();
+        results.push_back({left_val, right_val});
+    }
+
+    // Expect 2 results: (1,1) and (NULL,NULL) represented as (INT64_MIN, INT64_MIN)
+    EXPECT_EQ(results.size(), 2U);
+    bool found_match_1_1 = false;
+    bool found_null_null = false;
+    for (const auto& r : results) {
+        if (r.first == 1 && r.second == 1) {
+            found_match_1_1 = true;
+        } else if (r.first == INT64_MIN && r.second == INT64_MIN) {
+            found_null_null = true;
+        }
+    }
+    EXPECT_TRUE(found_match_1_1);
+    EXPECT_TRUE(found_null_null);
+    join->close();
+}
+
 }  // namespace
