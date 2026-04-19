@@ -295,4 +295,115 @@ TEST(LockManagerTests, ExclusiveThenShared) {
     static_cast<void>(lm.unlock(&txn, ridB));
 }
 
+/**
+ * @brief Verifies acquire_shared returns false immediately when txn is ABORTED
+ */
+TEST(LockManagerTests, SharedAcquireAbortedTxn) {
+    LockManager lm;
+    Transaction txn(1);
+    HeapTable::TupleId rid(1, 1);
+
+    // Set txn to ABORTED before acquiring lock
+    txn.set_state(TransactionState::ABORTED);
+
+    // Should return false immediately — no waiting
+    EXPECT_FALSE(lm.acquire_shared(&txn, rid));
+}
+
+/**
+ * @brief Verifies acquire_exclusive returns false immediately when txn is ABORTED
+ */
+TEST(LockManagerTests, ExclusiveAcquireAbortedTxn) {
+    LockManager lm;
+    Transaction txn(1);
+    HeapTable::TupleId rid(1, 1);
+
+    // Set txn to ABORTED before acquiring lock
+    txn.set_state(TransactionState::ABORTED);
+
+    // Should return false immediately — no waiting
+    EXPECT_FALSE(lm.acquire_exclusive(&txn, rid));
+}
+
+/**
+ * @brief Verifies exclusive lock acquisition returns false on timeout
+ */
+TEST(LockManagerTests, ExclusiveAcquireTimeout) {
+    LockManager lm;
+    Transaction txn1(1);
+    Transaction txn2(2);
+    HeapTable::TupleId rid(1, 1);
+
+    // txn1 holds exclusive lock
+    EXPECT_TRUE(lm.acquire_exclusive(&txn1, rid));
+
+    // txn2 tries to acquire exclusive — should block then timeout
+    std::atomic<bool> acquired{false};
+    std::thread t([&]() {
+        if (lm.acquire_exclusive(&txn2, rid)) {
+            acquired = true;
+        }
+    });
+
+    // Wait longer than the 1000ms timeout
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    EXPECT_FALSE(acquired.load());
+
+    // Release — txn2 would acquire but we won't wait for it
+    static_cast<void>(lm.unlock(&txn1, rid));
+    t.join();
+    static_cast<void>(lm.unlock(&txn2, rid));
+}
+
+/**
+ * @brief Verifies re-acquiring exclusive on same RID returns true immediately
+ */
+TEST(LockManagerTests, AlreadyExclusiveReturn) {
+    LockManager lm;
+    Transaction txn(1);
+    HeapTable::TupleId rid(1, 1);
+
+    // Acquire exclusive first
+    EXPECT_TRUE(lm.acquire_exclusive(&txn, rid));
+
+    // Same txn tries exclusive again — should return true (already held)
+    EXPECT_TRUE(lm.acquire_exclusive(&txn, rid));
+
+    static_cast<void>(lm.unlock(&txn, rid));
+}
+
+/**
+ * @brief Verifies acquiring shared after already holding exclusive on same RID
+ */
+TEST(LockManagerTests, SharedAfterExclusiveSameRID) {
+    LockManager lm;
+    Transaction txn(1);
+    HeapTable::TupleId rid(1, 1);
+
+    // Acquire exclusive first
+    EXPECT_TRUE(lm.acquire_exclusive(&txn, rid));
+
+    // Same txn tries shared — since exclusive supersedes shared, should return true
+    EXPECT_TRUE(lm.acquire_shared(&txn, rid));
+
+    static_cast<void>(lm.unlock(&txn, rid));
+}
+
+/**
+ * @brief Verifies lock upgrade from SHARED to EXCLUSIVE on same RID
+ */
+TEST(LockManagerTests, LockUpgrade) {
+    LockManager lm;
+    Transaction txn(1);
+    HeapTable::TupleId rid(1, 1);
+
+    // Acquire shared first
+    EXPECT_TRUE(lm.acquire_shared(&txn, rid));
+
+    // Upgrade to exclusive — should succeed without blocking
+    EXPECT_TRUE(lm.acquire_exclusive(&txn, rid));
+
+    static_cast<void>(lm.unlock(&txn, rid));
+}
+
 }  // namespace
