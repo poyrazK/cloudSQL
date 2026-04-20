@@ -155,7 +155,7 @@ TEST_F(RpcClientTests, ConcurrentCalls) {
     RpcClient client("127.0.0.1", port_);
     ASSERT_TRUE(client.connect());
 
-    // Make 5 concurrent calls - RpcClient is single-threaded so they serialize
+    // Make 5 sequential calls to verify state is preserved across multiple requests
     for (int i = 0; i < 5; i++) {
         std::vector<uint8_t> payload = {static_cast<uint8_t>(i)};
         std::vector<uint8_t> response;
@@ -229,6 +229,8 @@ TEST_F(RpcClientTests, DISABLED_ReconnectAfterServerRestart) {
                                   });
 
     // Reconnect
+    // Force the client to drop its previous socket before attempting to reconnect
+    client.disconnect();
     if (!client.connect()) {
         reconnect_server->stop();
         GTEST_SKIP() << "Could not reconnect after server restart";
