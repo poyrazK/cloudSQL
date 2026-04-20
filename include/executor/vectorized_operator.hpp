@@ -118,8 +118,7 @@ class VectorizedFilterOperator : public VectorizedOperator {
         }
 
         selection_mask_->clear();
-        condition_->evaluate_vectorized(*input_batch_, child_->output_schema(),
-                                        *selection_mask_);
+        condition_->evaluate_vectorized(*input_batch_, child_->output_schema(), *selection_mask_);
 
         std::vector<size_t> selection;
         for (size_t r = 0; r < input_batch_->row_count(); ++r) {
