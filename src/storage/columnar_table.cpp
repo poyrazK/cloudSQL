@@ -158,8 +158,19 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
             std::vector<uint8_t> nulls(actual_rows);
             n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
 
-            // For variable-length strings, we need to scan from the beginning
-            // since each record has variable length (4-byte length prefix + data)
+            // For variable-length strings, skip start_row records first
+            // by reading and discarding their length-prefixed data
+            if (start_row > 0) {
+                for (uint32_t r = 0; r < start_row; ++r) {
+                    uint32_t len = 0;
+                    if (!d_in.read(reinterpret_cast<char*>(&len), 4)) break;
+                    if (len > 0) {
+                        d_in.seekg(static_cast<std::streamoff>(len), std::ios::cur);
+                    }
+                }
+            }
+
+            // Now read the actual_rows we want
             for (uint32_t r = 0; r < actual_rows; ++r) {
                 uint32_t len = 0;
                 d_in.read(reinterpret_cast<char*>(&len), 4);

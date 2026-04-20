@@ -176,10 +176,16 @@ TEST_F(StringVectorTests, SpecialCharacters) {
     StringVector vec(ValueType::TYPE_TEXT);
 
     vec.append(Value::make_text("hello\nworld\ttab"));
-    vec.append(Value::make_text("emoji: 🎉 NULL: \0 embedded"));
+
+    // Build string with embedded NUL character to test binary data handling
+    std::string with_nul("emoji: 🎉 NULL:\0 embedded", 25);
+    vec.append(Value::make_text(with_nul));
 
     EXPECT_EQ(vec.get(0).as_text(), "hello\nworld\ttab");
-    // Note: strings with embedded nulls may be truncated due to C++ string behavior
+    // Verify embedded NUL is preserved
+    std::string retrieved = vec.get(1).as_text();
+    EXPECT_EQ(retrieved.size(), 25u);
+    EXPECT_EQ(retrieved, with_nul);
 }
 
 // Test empty string
