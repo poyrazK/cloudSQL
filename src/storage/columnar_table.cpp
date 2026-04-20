@@ -70,7 +70,8 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
         } else if (type == common::ValueType::TYPE_FLOAT64) {
             auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(col_vec);
             d_out.write(reinterpret_cast<const char*>(num_vec.raw_data()), batch.row_count() * 8);
-        } else if (type == common::ValueType::TYPE_TEXT || type == common::ValueType::TYPE_VARCHAR ||
+        } else if (type == common::ValueType::TYPE_TEXT ||
+                   type == common::ValueType::TYPE_VARCHAR ||
                    type == common::ValueType::TYPE_CHAR) {
             auto& str_vec = dynamic_cast<executor::StringVector&>(col_vec);
             const auto& data = str_vec.raw_data();
@@ -148,7 +149,8 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
                     num_vec.append(common::Value::make_float64(data[r]));
                 }
             }
-        } else if (type == common::ValueType::TYPE_TEXT || type == common::ValueType::TYPE_VARCHAR ||
+        } else if (type == common::ValueType::TYPE_TEXT ||
+                   type == common::ValueType::TYPE_VARCHAR ||
                    type == common::ValueType::TYPE_CHAR) {
             auto& str_vec = dynamic_cast<executor::StringVector&>(target_col);
 
