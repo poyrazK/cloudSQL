@@ -130,12 +130,11 @@ class VectorizedFilterOperator : public VectorizedOperator {
                     }
                 }
                 out_batch.set_row_count(out_batch.row_count() + selection.size());
-                input_batch_->clear();
-                return true;
             }
             input_batch_->clear();
         }
-        return false;
+        // Return true if we accumulated any rows, false if no matches found
+        return out_batch.row_count() > 0;
     }
 };
 
