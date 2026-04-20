@@ -14,6 +14,7 @@ Implemented a high-performance column-oriented data store.
 ### 2. Vectorized Data Structures (`include/executor/types.hpp`)
 Developed SIMD-friendly contiguous memory buffers for batch processing.
 - **ColumnVector & NumericVector**: Specialized C++ templates for storing a "vector" of data for a single column.
+- **StringVector**: Variable-length string storage for TEXT/VARCHAR/CHAR columns.
 - **VectorBatch**: A collection of `ColumnVector` objects representing a chunk of rows (typically 1024 rows).
 
 ### 3. Vectorized Execution Engine (`include/executor/vectorized_operator.hpp`)

@@ -70,6 +70,15 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
         } else if (type == common::ValueType::TYPE_FLOAT64) {
             auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(col_vec);
             d_out.write(reinterpret_cast<const char*>(num_vec.raw_data()), batch.row_count() * 8);
+        } else if (type == common::ValueType::TYPE_TEXT || type == common::ValueType::TYPE_VARCHAR ||
+                   type == common::ValueType::TYPE_CHAR) {
+            auto& str_vec = dynamic_cast<executor::StringVector&>(col_vec);
+            const auto& data = str_vec.raw_data();
+            for (size_t r = 0; r < batch.row_count(); ++r) {
+                uint32_t len = static_cast<uint32_t>(data[r].size());
+                d_out.write(reinterpret_cast<const char*>(&len), 4);
+                d_out.write(data[r].data(), len);
+            }
         } else {
             throw std::runtime_error("ColumnarTable::append_batch: Unsupported persistence type " +
                                      std::to_string(static_cast<int>(type)));
@@ -137,6 +146,27 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
                     num_vec.append(common::Value::make_null());
                 } else {
                     num_vec.append(common::Value::make_float64(data[r]));
+                }
+            }
+        } else if (type == common::ValueType::TYPE_TEXT || type == common::ValueType::TYPE_VARCHAR ||
+                   type == common::ValueType::TYPE_CHAR) {
+            auto& str_vec = dynamic_cast<executor::StringVector&>(target_col);
+
+            n_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
+            std::vector<uint8_t> nulls(actual_rows);
+            n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
+
+            // For variable-length strings, we need to scan from the beginning
+            // since each record has variable length (4-byte length prefix + data)
+            for (uint32_t r = 0; r < actual_rows; ++r) {
+                uint32_t len = 0;
+                d_in.read(reinterpret_cast<char*>(&len), 4);
+                std::string s(len, '\0');
+                d_in.read(s.data(), len);
+                if (nulls[r] != 0U) {
+                    str_vec.append(common::Value::make_null());
+                } else {
+                    str_vec.append(common::Value::make_text(s));
                 }
             }
         } else {

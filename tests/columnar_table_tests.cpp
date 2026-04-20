@@ -28,6 +28,8 @@ static void cleanup_table(const std::string& name) {
   std::remove(("./test_data/" + name + ".col0.data.bin").c_str());
   std::remove(("./test_data/" + name + ".col1.nulls.bin").c_str());
   std::remove(("./test_data/" + name + ".col1.data.bin").c_str());
+  std::remove(("./test_data/" + name + ".col2.nulls.bin").c_str());
+  std::remove(("./test_data/" + name + ".col2.data.bin").c_str());
     // clang-format on
 }
 
@@ -209,15 +211,72 @@ TEST_F(ColumnarTableTests, ReadBatchPartial) {
     ASSERT_EQ(out->row_count(), 2U);
 }
 
-TEST_F(ColumnarTableTests, UnsupportedTypeThrows) {
-    const std::string name = "col_test_unsupported";
+TEST_F(ColumnarTableTests, TextTypeNowSupported) {
+    const std::string name = "col_test_text";
     cleanup_table(name);
 
     Schema schema;
     schema.add_column("text_col", common::ValueType::TYPE_TEXT);
 
-    // VectorBatch::create() throws when it sees TYPE_TEXT (unsupported)
-    EXPECT_THROW([[maybe_unused]] auto batch = VectorBatch::create(schema), std::runtime_error);
+    // VectorBatch::create() should now succeed with TYPE_TEXT (StringVector implemented)
+    auto batch = VectorBatch::create(schema);
+    ASSERT_NE(batch, nullptr);
+    EXPECT_EQ(batch->column_count(), 1U);
+}
+
+TEST_F(ColumnarTableTests, TextLifecycle) {
+    const std::string name = "col_test_text_lifecycle";
+    cleanup_table(name);
+
+    Schema schema;
+    schema.add_column("id", common::ValueType::TYPE_INT64);
+    schema.add_column("text_col", common::ValueType::TYPE_TEXT);
+
+    ColumnarTable table(name, *sm_, schema);
+    ASSERT_TRUE(table.create());
+
+    // Create a batch with mixed int and text data
+    auto batch = VectorBatch::create(schema);
+    ASSERT_NE(batch, nullptr);
+
+    // Add row 1: id=1, text="hello"
+    batch->set_row_count(0);
+    executor::Tuple t1;
+    t1.set(0, common::Value::make_int64(1));
+    t1.set(1, common::Value::make_text("hello"));
+    batch->append_tuple(t1);
+
+    // Add row 2: id=2, text=NULL
+    executor::Tuple t2;
+    t2.set(0, common::Value::make_int64(2));
+    t2.set(1, common::Value::make_null());
+    batch->append_tuple(t2);
+
+    // Add row 3: id=3, text="world"
+    executor::Tuple t3;
+    t3.set(0, common::Value::make_int64(3));
+    t3.set(1, common::Value::make_text("world"));
+    batch->append_tuple(t3);
+
+    batch->set_row_count(3);
+    ASSERT_TRUE(table.append_batch(*batch));
+
+    // Read back and verify
+    auto read_batch = VectorBatch::create(schema);
+    ASSERT_TRUE(table.read_batch(0, 10, *read_batch));
+    EXPECT_EQ(read_batch->row_count(), 3U);
+
+    // Verify int column
+    auto& id_col = read_batch->get_column(0);
+    EXPECT_EQ(id_col.get(0).to_int64(), 1);
+    EXPECT_EQ(id_col.get(1).to_int64(), 2);
+    EXPECT_EQ(id_col.get(2).to_int64(), 3);
+
+    // Verify text column
+    auto& text_col = read_batch->get_column(1);
+    EXPECT_EQ(text_col.get(0).as_text(), "hello");
+    EXPECT_TRUE(text_col.get(1).is_null());
+    EXPECT_EQ(text_col.get(2).as_text(), "world");
 }
 
 TEST_F(ColumnarTableTests, CreateTwice) {

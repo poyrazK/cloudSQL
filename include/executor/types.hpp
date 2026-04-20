@@ -331,6 +331,70 @@ class NumericVector : public ColumnVector {
 };
 
 /**
+ * @brief Vectorized storage for variable-length string columns.
+ */
+class StringVector : public ColumnVector {
+   private:
+    std::vector<std::string> data_;
+
+   public:
+    explicit StringVector(common::ValueType type) : ColumnVector(type) {}
+
+    /**
+     * @brief Appends a Value, handling nullability and string conversion.
+     */
+    void append(const common::Value& val) override {
+        if (val.is_null()) {
+            null_bitmap_.push_back(true);
+            data_.emplace_back();
+        } else {
+            null_bitmap_.push_back(false);
+            data_.push_back(val.as_text());
+        }
+        size_++;
+    }
+
+    /**
+     * @brief Materializes a common::Value for the element at the specified index.
+     */
+    common::Value get(size_t index) const override {
+        if (index >= size_ || null_bitmap_[index]) return common::Value::make_null();
+        return common::Value::make_text(data_[index]);
+    }
+
+    /**
+     * @brief Directly sets the value at a specific index.
+     * Resizes if necessary to accommodate the index.
+     */
+    void set(size_t index, const std::string& val) {
+        if (index >= size_) {
+            resize(index + 1);
+        }
+        data_[index] = val;
+        null_bitmap_[index] = false;
+    }
+
+    /**
+     * @brief Provides read-only access to the underlying string data.
+     */
+    const std::vector<std::string>& raw_data() const { return data_; }
+
+    /**
+     * @brief Resizes the underlying buffers to the specified capacity.
+     */
+    void resize(size_t new_size) {
+        data_.resize(new_size);
+        null_bitmap_.resize(new_size, false);
+        size_ = new_size;
+    }
+
+    void clear() override {
+        ColumnVector::clear();
+        data_.clear();
+    }
+};
+
+/**
  * @brief Represents a set of data blocks (batches) in a columnar format for vectorized processing.
  */
 class VectorBatch {
@@ -379,7 +443,10 @@ class VectorBatch {
                     add_column(std::make_unique<NumericVector<bool>>(col.type()));
                     break;
                 case common::ValueType::TYPE_TEXT:
-                    throw std::runtime_error("Vectorized StringVector implementation is pending.");
+                case common::ValueType::TYPE_VARCHAR:
+                case common::ValueType::TYPE_CHAR:
+                    add_column(std::make_unique<StringVector>(col.type()));
+                    break;
                 default:
                     throw std::runtime_error("Unsupported column type for vectorized execution: " +
                                              std::to_string(static_cast<int>(col.type())));
