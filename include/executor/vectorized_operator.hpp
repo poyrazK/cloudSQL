@@ -335,8 +335,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
                               std::vector<std::unique_ptr<parser::Expression>> group_by,
-                              std::vector<VectorizedAggregateInfo> aggregates,
-                              Schema output_schema)
+                              std::vector<VectorizedAggregateInfo> aggregates, Schema output_schema)
         : VectorizedOperator(std::move(output_schema)),
           child_(std::move(child)),
           group_by_(std::move(group_by)),
