@@ -24,14 +24,14 @@ enum FaultMode : int {
 };
 
 class FaultInjection {
-public:
+   public:
     static FaultInjection& instance();
 
     void set_fault(FaultMode mode);
     void clear();
     bool should_fault(FaultMode mode) const;
 
-private:
+   private:
     FaultInjection() = default;
 
     std::atomic<int> fault_mode_{FAULT_NONE};

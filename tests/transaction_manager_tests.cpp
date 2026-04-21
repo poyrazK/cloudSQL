@@ -348,8 +348,8 @@ TEST(TransactionManagerTests, BeginWithActiveTransactions) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/txn_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -389,27 +389,25 @@ TEST(TransactionManagerTests, InsertThenAbort) {
     // Create table
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE abort_test (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
 
     // Begin + Insert (explicit BEGIN for transactional insert)
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO abort_test VALUES (1, 100)"))
-                      .parse_statement()));
+                          .parse_statement()));
 
     // Verify insert worked
-    const auto res_before =
-        exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM abort_test")).parse_statement());
+    const auto res_before = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT * FROM abort_test")).parse_statement());
     EXPECT_EQ(res_before.row_count(), 1U);
 
     // Rollback
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     // Verify row is gone
-    const auto res_after =
-        exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM abort_test")).parse_statement());
+    const auto res_after = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT * FROM abort_test")).parse_statement());
     EXPECT_EQ(res_after.row_count(), 0U);
 
     static_cast<void>(std::remove("./test_data/abort_test.heap"));
@@ -427,32 +425,31 @@ TEST(TransactionManagerTests, UpdateThenAbort) {
     // Create + insert initial row
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_abort (id INT, val TEXT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_abort VALUES (1, 'old')"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin + Update
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("UPDATE upd_abort SET val = 'new' WHERE id = 1"))
-                      .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE upd_abort SET val = 'new' WHERE id = 1"))
+             .parse_statement()));
 
     // Verify update is visible
-    const auto res_before = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT val FROM upd_abort WHERE id = 1")).parse_statement());
+    const auto res_before =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_abort WHERE id = 1"))
+                          .parse_statement());
     EXPECT_STREQ(res_before.rows()[0].get(0).to_string().c_str(), "new");
 
     // Rollback
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     // Verify old value is back
-    const auto res_after = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT val FROM upd_abort WHERE id = 1")).parse_statement());
+    const auto res_after =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_abort WHERE id = 1"))
+                          .parse_statement());
     EXPECT_STREQ(res_after.rows()[0].get(0).to_string().c_str(), "old");
 
     static_cast<void>(std::remove("./test_data/upd_abort.heap"));
@@ -462,8 +459,8 @@ TEST(TransactionManagerTests, PrepareOnRunningTxn) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/prepare_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -482,8 +479,8 @@ TEST(TransactionManagerTests, AbortWithLocks) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/abort_locks_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -491,26 +488,20 @@ TEST(TransactionManagerTests, AbortWithLocks) {
 
     static_cast<void>(std::remove("./test_data/locktest.heap"));
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE locktest (id INT)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO locktest VALUES (1)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE locktest (id INT)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO locktest VALUES (1)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // BEGIN, INSERT (adds lock via QueryExecutor), ROLLBACK
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO locktest VALUES (2)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO locktest VALUES (2)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
-    const auto res = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT * FROM locktest")).parse_statement());
+    const auto res =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM locktest")).parse_statement());
     EXPECT_EQ(res.row_count(), 1U);
 
     static_cast<void>(std::remove("./test_data/locktest.heap"));
@@ -521,8 +512,8 @@ TEST(TransactionManagerTests, CommitWithLocks) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/commit_locks_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -548,8 +539,8 @@ TEST(TransactionManagerTests, CommitWithSharedLocks) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/shared_locks_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -573,8 +564,8 @@ TEST(TransactionManagerTests, InsertThenAbortWithIndex) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/idx_abort_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -585,23 +576,21 @@ TEST(TransactionManagerTests, InsertThenAbortWithIndex) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE idx_abort (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_val ON idx_abort (val)"))
-                      .parse_statement()));
+                          .parse_statement()));
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO idx_abort VALUES (1, 100)"))
-                      .parse_statement()));
+                          .parse_statement()));
 
     const auto res_before =
         exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM idx_abort")).parse_statement());
     EXPECT_EQ(res_before.row_count(), 1U);
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     const auto res_after =
         exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM idx_abort")).parse_statement());
@@ -615,8 +604,8 @@ TEST(TransactionManagerTests, UpdateThenAbortWithIndex) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/upd_idx_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -627,33 +616,27 @@ TEST(TransactionManagerTests, UpdateThenAbortWithIndex) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_idx (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_upd_val ON upd_idx (val)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_idx VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO upd_idx VALUES (1, 100)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("UPDATE upd_idx SET val = 999 WHERE id = 1"))
-                      .parse_statement()));
+                          .parse_statement()));
 
-    const auto res_before =
-        exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_idx WHERE id = 1"))
-                      .parse_statement());
+    const auto res_before = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT val FROM upd_idx WHERE id = 1")).parse_statement());
     EXPECT_EQ(std::stoi(res_before.rows()[0].get(0).to_string()), 999);
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
-    const auto res_after =
-        exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_idx WHERE id = 1"))
-                      .parse_statement());
+    const auto res_after = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT val FROM upd_idx WHERE id = 1")).parse_statement());
     EXPECT_EQ(std::stoi(res_after.rows()[0].get(0).to_string()), 100);
 
     static_cast<void>(std::remove("./test_data/upd_idx.heap"));
@@ -670,21 +653,16 @@ TEST(TransactionManagerTests, DeleteThenAbort) {
     executor::QueryExecutor exec(*catalog, bpm, lm, tm);
 
     // Create + insert initial row
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE del_abort (id INT)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO del_abort VALUES (1)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE del_abort (id INT)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO del_abort VALUES (1)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin + Delete
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("DELETE FROM del_abort WHERE id = 1"))
-                      .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("DELETE FROM del_abort WHERE id = 1")).parse_statement()));
 
     // Verify delete is visible
     const auto res_before =
@@ -692,8 +670,7 @@ TEST(TransactionManagerTests, DeleteThenAbort) {
     EXPECT_EQ(res_before.row_count(), 0U);
 
     // Rollback
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     // Verify row is back
     const auto res_after =
@@ -708,8 +685,8 @@ TEST(TransactionManagerTests, AbortWithSharedLocks) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/shared_abort_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -735,8 +712,8 @@ TEST(TransactionManagerTests, UndoPhysicalRemoveFailure) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/phys_remove_fault.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -746,19 +723,17 @@ TEST(TransactionManagerTests, UndoPhysicalRemoveFailure) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE phys_fault (id INT, val INT)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO phys_fault VALUES (1, 100)"))
-                      .parse_statement()));
+                          .parse_statement()));
 
     // Arm fault injection for physical_remove
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_PHYSICAL_REMOVE);
 
     // ROLLBACK — should hit the error branch inside undo_transaction
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     // Clear fault
     cloudsql::common::FaultInjection::instance().clear();
@@ -771,8 +746,8 @@ TEST(TransactionManagerTests, UndoIndexInsertFailure) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/idx_insert_fault.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -781,28 +756,25 @@ TEST(TransactionManagerTests, UndoIndexInsertFailure) {
     static_cast<void>(std::remove("./test_data/idx_ins_fault.heap"));
     static_cast<void>(std::remove("./test_data/idx_ins_fault.idx"));
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE idx_ins_fault (id INT, val INT)"))
-                      .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE idx_ins_fault (id INT, val INT)"))
+             .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_if ON idx_ins_fault (val)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO idx_ins_fault VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Delete + ROLLBACK with index insert fault
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("DELETE FROM idx_ins_fault WHERE id = 1"))
-                      .parse_statement()));
+                          .parse_statement()));
 
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_INDEX_INSERT);
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/idx_ins_fault.heap"));
@@ -814,8 +786,8 @@ TEST(TransactionManagerTests, UndoIndexRemoveFailure) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/idx_rm_fault.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -826,25 +798,22 @@ TEST(TransactionManagerTests, UndoIndexRemoveFailure) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE idx_rm_fault (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_rf ON idx_rm_fault (val)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO idx_rm_fault VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("UPDATE idx_rm_fault SET val = 999 WHERE id = 1"))
-                      .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE idx_rm_fault SET val = 999 WHERE id = 1"))
+             .parse_statement()));
 
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_INDEX_REMOVE);
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/idx_rm_fault.heap"));
@@ -954,8 +923,8 @@ TEST(TransactionManagerTests, UndoLogInsertRIDNotFound) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/ins_rid_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -965,12 +934,10 @@ TEST(TransactionManagerTests, UndoLogInsertRIDNotFound) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE ins_rid (id INT, val INT)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO ins_rid VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO ins_rid VALUES (1, 100)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin, manually add INSERT undo with non-existent RID, abort
     Transaction* txn = tm.begin();
@@ -989,8 +956,8 @@ TEST(TransactionManagerTests, UndoLogDeleteRIDNotFound) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/del_rid_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -998,14 +965,11 @@ TEST(TransactionManagerTests, UndoLogDeleteRIDNotFound) {
 
     static_cast<void>(std::remove("./test_data/del_rid.heap"));
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE del_rid (id INT)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO del_rid VALUES (1)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE del_rid (id INT)")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO del_rid VALUES (1)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin, manually add DELETE undo with non-existent RID, abort
     Transaction* txn = tm.begin();
@@ -1025,8 +989,8 @@ TEST(TransactionManagerTests, UpdateUndoNewTupleNotFound) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/upd_new_notfound.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1037,15 +1001,13 @@ TEST(TransactionManagerTests, UpdateUndoNewTupleNotFound) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_new (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_un ON upd_new (val)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_new VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO upd_new VALUES (1, 100)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin, manually add UPDATE undo with non-existent new RID (but has old_rid)
     Transaction* txn = tm.begin();
@@ -1068,8 +1030,8 @@ TEST(TransactionManagerTests, UpdateUndoOldTupleNotFound) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/upd_old_notfound.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1080,15 +1042,13 @@ TEST(TransactionManagerTests, UpdateUndoOldTupleNotFound) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_old (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_uo ON upd_old (val)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_old VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO upd_old VALUES (1, 100)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin, add UPDATE undo with non-existent old RID
     Transaction* txn = tm.begin();
@@ -1110,8 +1070,8 @@ TEST(TransactionManagerTests, UpdateUndoWithIndexInsertFault) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/upd_idx_ins_fault.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1122,30 +1082,27 @@ TEST(TransactionManagerTests, UpdateUndoWithIndexInsertFault) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_ii_fault (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_ui ON upd_ii_fault (val)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_ii_fault VALUES (1, 100)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_ii_fault VALUES (2, 200)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin + UPDATE (creates new version with old_rid pointing to original)
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("UPDATE upd_ii_fault SET val = 999 WHERE id = 1"))
-                      .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE upd_ii_fault SET val = 999 WHERE id = 1"))
+             .parse_statement()));
 
     // Fault inject index insert for old_rid restore during abort
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_INDEX_INSERT);
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/upd_ii_fault.heap"));
@@ -1158,8 +1115,8 @@ TEST(TransactionManagerTests, Commit101Transactions) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/overflow_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1177,8 +1134,8 @@ TEST(TransactionManagerTests, Abort101Transactions) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/abort_overflow_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1197,8 +1154,8 @@ TEST(TransactionManagerTests, UpdateUndoBothTuplesFound) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/upd_both_found.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1209,38 +1166,37 @@ TEST(TransactionManagerTests, UpdateUndoBothTuplesFound) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_both (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_ub ON upd_both (val)"))
-                      .parse_statement()));
+                          .parse_statement()));
     // Insert two rows
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_both VALUES (1, 100)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_both VALUES (2, 200)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // UPDATE id=1, then ROLLBACK — should hit all branches in UPDATE undo path
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("UPDATE upd_both SET val = 999 WHERE id = 1"))
-                      .parse_statement()));
+                          .parse_statement()));
 
     // Verify update visible
-    const auto res = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT val FROM upd_both WHERE id = 1")).parse_statement());
+    const auto res =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_both WHERE id = 1"))
+                          .parse_statement());
     EXPECT_EQ(std::stoi(res.rows()[0].get(0).to_string()), 999);
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     // After rollback, original value should be back
-    const auto res_after = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT val FROM upd_both WHERE id = 1")).parse_statement());
+    const auto res_after =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT val FROM upd_both WHERE id = 1"))
+                          .parse_statement());
     EXPECT_EQ(std::stoi(res_after.rows()[0].get(0).to_string()), 100);
 
     static_cast<void>(std::remove("./test_data/upd_both.heap"));
@@ -1253,8 +1209,8 @@ TEST(TransactionManagerTests, DeleteUndoWithIndexRestore) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/del_idx_restore.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1265,34 +1221,29 @@ TEST(TransactionManagerTests, DeleteUndoWithIndexRestore) {
 
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE del_idx (id INT, val INT)"))
-                      .parse_statement()));
+                          .parse_statement()));
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_di ON del_idx (val)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO del_idx VALUES (1, 100)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("INSERT INTO del_idx VALUES (1, 100)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // DELETE, then ROLLBACK — should hit DELETE undo path with index restore
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("DELETE FROM del_idx WHERE id = 1"))
-                      .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("DELETE FROM del_idx WHERE id = 1")).parse_statement()));
 
     // Verify delete visible
-    const auto res = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT * FROM del_idx")).parse_statement());
+    const auto res =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM del_idx")).parse_statement());
     EXPECT_EQ(res.row_count(), 0U);
 
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
 
     // Row should be restored
-    const auto res_after = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT * FROM del_idx")).parse_statement());
+    const auto res_after =
+        exec.execute(*Parser(std::make_unique<Lexer>("SELECT * FROM del_idx")).parse_statement());
     EXPECT_EQ(res_after.row_count(), 1U);
 
     static_cast<void>(std::remove("./test_data/del_idx.heap"));
@@ -1387,8 +1338,8 @@ TEST(TransactionManagerTests, CommitWithLogFailure) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/commit_log_fail.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1411,8 +1362,8 @@ TEST(TransactionManagerTests, AbortWithLogFailure) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/abort_log_fail.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1435,8 +1386,8 @@ TEST(TransactionManagerTests, PrepareWithLogFailure) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/prepare_log_fail.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1493,8 +1444,8 @@ TEST(TransactionManagerTests, CommitOverflowThreshold) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/overflow10_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1511,8 +1462,8 @@ TEST(TransactionManagerTests, AbortOverflowThreshold) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/abort_overflow10_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1529,8 +1480,8 @@ TEST(TransactionManagerTests, UndoLogUnknownType) {
     storage::StorageManager disk_manager("./test_data");
     disk_manager.create_dir_if_not_exists();
     recovery::LogManager log_mgr("./test_data/unknown_log.dat");
-    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
-                                   disk_manager, &log_mgr);
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
     auto catalog = Catalog::create();
     LockManager lm;
     TransactionManager tm(lm, *catalog, bpm, &log_mgr);
@@ -1539,17 +1490,16 @@ TEST(TransactionManagerTests, UndoLogUnknownType) {
     static_cast<void>(std::remove("./test_data/unknown_test.heap"));
 
     // Create a real table
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE unknown_test (id INT)"))
-                      .parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE unknown_test (id INT)")).parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     Transaction* txn = tm.begin();
     ASSERT_NE(txn, nullptr);
 
     // Add an undo log with UNKNOWN type for a real table
-    txn->add_undo_log_for_test({UndoLog::Type::UNKNOWN, "unknown_test", HeapTable::TupleId(1, 1), std::nullopt});
+    txn->add_undo_log_for_test(
+        {UndoLog::Type::UNKNOWN, "unknown_test", HeapTable::TupleId(1, 1), std::nullopt});
 
     // abort() should hit the default case in the switch after table lookup succeeds
     tm.abort(txn);

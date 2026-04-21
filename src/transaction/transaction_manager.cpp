@@ -201,7 +201,8 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                             uint16_t pos = idx_info.column_positions[0];
                             common::ValueType ktype = table_meta->columns[pos].type;
                             storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                            if (!index.remove(tuple.get(pos), log.rid) || FAULT_IF(cloudsql::common::FAULT_INDEX_REMOVE)) {
+                            if (!index.remove(tuple.get(pos), log.rid) ||
+                                FAULT_IF(cloudsql::common::FAULT_INDEX_REMOVE)) {
                                 std::cerr << "Rollback ERROR: Index remove failed for table '"
                                           << log.table_name << "', index '" << idx_info.name
                                           << "'\n";
@@ -210,7 +211,8 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                         }
                     }
                 }
-                if (!table.physical_remove(log.rid) || FAULT_IF(cloudsql::common::FAULT_PHYSICAL_REMOVE)) {
+                if (!table.physical_remove(log.rid) ||
+                    FAULT_IF(cloudsql::common::FAULT_PHYSICAL_REMOVE)) {
                     std::cerr << "Rollback ERROR: physical_remove failed for INSERT undo\n";
                     success = false;
                 }
@@ -229,7 +231,8 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                                 uint16_t pos = idx_info.column_positions[0];
                                 common::ValueType ktype = table_meta->columns[pos].type;
                                 storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                                if (!index.insert(tuple.get(pos), log.rid) || FAULT_IF(cloudsql::common::FAULT_INDEX_INSERT)) {
+                                if (!index.insert(tuple.get(pos), log.rid) ||
+                                    FAULT_IF(cloudsql::common::FAULT_INDEX_INSERT)) {
                                     std::cerr << "Rollback ERROR: Index insert failed for table '"
                                               << log.table_name << "', index '" << idx_info.name
                                               << "'\n";
@@ -251,7 +254,8 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                             uint16_t pos = idx_info.column_positions[0];
                             common::ValueType ktype = table_meta->columns[pos].type;
                             storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                            if (!index.remove(new_tuple.get(pos), log.rid) || FAULT_IF(cloudsql::common::FAULT_INDEX_REMOVE)) {
+                            if (!index.remove(new_tuple.get(pos), log.rid) ||
+                                FAULT_IF(cloudsql::common::FAULT_INDEX_REMOVE)) {
                                 std::cerr << "Rollback ERROR: Index remove failed for table '"
                                           << log.table_name << "', index '" << idx_info.name
                                           << "'\n";
@@ -260,14 +264,16 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                         }
                     }
                 }
-                if (!table.physical_remove(log.rid) || FAULT_IF(cloudsql::common::FAULT_PHYSICAL_REMOVE)) {
+                if (!table.physical_remove(log.rid) ||
+                    FAULT_IF(cloudsql::common::FAULT_PHYSICAL_REMOVE)) {
                     std::cerr << "Rollback ERROR: physical_remove failed for new version in UPDATE "
                                  "undo\n";
                     success = false;
                 }
 
                 if (log.old_rid.has_value()) {
-                    if (!table.undo_remove(log.old_rid.value()) || FAULT_IF(cloudsql::common::FAULT_UNDO_REMOVE)) {
+                    if (!table.undo_remove(log.old_rid.value()) ||
+                        FAULT_IF(cloudsql::common::FAULT_UNDO_REMOVE)) {
                         std::cerr << "Rollback ERROR: undo_remove failed for old version in UPDATE "
                                      "undo\n";
                         success = false;
@@ -279,7 +285,8 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                                     uint16_t pos = idx_info.column_positions[0];
                                     common::ValueType ktype = table_meta->columns[pos].type;
                                     storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                                    if (!index.insert(old_tuple.get(pos), log.old_rid.value()) || FAULT_IF(cloudsql::common::FAULT_INDEX_INSERT)) {
+                                    if (!index.insert(old_tuple.get(pos), log.old_rid.value()) ||
+                                        FAULT_IF(cloudsql::common::FAULT_INDEX_INSERT)) {
                                         std::cerr
                                             << "Rollback ERROR: Index insert failed for table '"
                                             << log.table_name << "', index '" << idx_info.name
