@@ -287,6 +287,188 @@ class VectorizedAggregateOperator : public VectorizedOperator {
     }
 };
 
+/**
+ * @brief Group state for vectorized GROUP BY - accumulator data per group
+ */
+struct VectorizedGroupState {
+    std::vector<int64_t> counts;
+    std::vector<double> sums;
+    std::vector<common::Value> mins;
+    std::vector<common::Value> maxes;
+
+    VectorizedGroupState() = default;
+    explicit VectorizedGroupState(size_t agg_count) {
+        counts.assign(agg_count, 0);
+        sums.assign(agg_count, 0.0);
+        mins.assign(agg_count, common::Value::make_null());
+        maxes.assign(agg_count, common::Value::make_null());
+    }
+};
+
+/**
+ * @brief Vectorized GROUP BY operator with hash-based aggregation
+ */
+class VectorizedGroupByOperator : public VectorizedOperator {
+   private:
+    std::unique_ptr<VectorizedOperator> child_;
+    std::vector<std::unique_ptr<parser::Expression>> group_by_;
+    std::vector<VectorizedAggregateInfo> aggregates_;
+
+    // Hash table: group key string -> group state
+    std::unordered_map<std::string, VectorizedGroupState> groups_;
+    // Ordered group keys for output iteration
+    std::vector<std::string> group_keys_;
+    // Group key values for each group
+    std::vector<std::vector<common::Value>> group_values_;
+
+    // Current output position
+    size_t current_group_idx_ = 0;
+
+    // Processing state
+    enum class ProcessState { Input, Output };
+    ProcessState state_ = ProcessState::Input;
+
+    // Reusable batch objects
+    std::unique_ptr<VectorBatch> input_batch_;
+    std::unique_ptr<VectorBatch> group_key_batch_;
+
+   public:
+    VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
+                              std::vector<std::unique_ptr<parser::Expression>> group_by,
+                              std::vector<VectorizedAggregateInfo> aggregates,
+                              Schema output_schema)
+        : VectorizedOperator(std::move(output_schema)),
+          child_(std::move(child)),
+          group_by_(std::move(group_by)),
+          aggregates_(std::move(aggregates)) {
+        input_batch_ = VectorBatch::create(child_->output_schema());
+        // Create schema for group key evaluation
+        Schema key_schema;
+        for (size_t i = 0; i < group_by_.size(); ++i) {
+            key_schema.add_column("gb_key_" + std::to_string(i), common::ValueType::TYPE_TEXT);
+        }
+        group_key_batch_ = VectorBatch::create(key_schema);
+    }
+
+    bool next_batch(VectorBatch& out_batch) override {
+        if (state_ == ProcessState::Input) {
+            // Phase 1: Consume all input batches and populate hash table
+            while (child_->next_batch(*input_batch_)) {
+                process_input_batch(*input_batch_);
+            }
+            state_ = ProcessState::Output;
+        }
+
+        // Phase 2: Produce grouped output batches
+        return produce_output_batch(out_batch);
+    }
+
+   private:
+    void process_input_batch(VectorBatch& batch) {
+        // Evaluate group-by expressions into group_key_batch_
+        for (size_t i = 0; i < group_by_.size(); ++i) {
+            group_by_[i]->evaluate_vectorized(batch, child_->output_schema(),
+                                             group_key_batch_->get_column(i));
+        }
+
+        // For each row, compute hash key and update/insert group
+        for (size_t r = 0; r < batch.row_count(); ++r) {
+            // Build key from group-by values
+            std::string key;
+            for (size_t i = 0; i < group_by_.size(); ++i) {
+                key += group_key_batch_->get_column(i).get(r).to_string();
+                key += "|";
+            }
+
+            // Get or create group state
+            auto it = groups_.find(key);
+            if (it == groups_.end()) {
+                // Store group key values for output
+                std::vector<common::Value> key_vals;
+                for (size_t i = 0; i < group_by_.size(); ++i) {
+                    key_vals.push_back(group_key_batch_->get_column(i).get(r));
+                }
+                auto result = groups_.emplace(key, VectorizedGroupState(aggregates_.size()));
+                it = result.first;
+                group_keys_.push_back(key);
+                group_values_.push_back(std::move(key_vals));
+            }
+
+            // Update accumulators for this row
+            update_accumulators(it->second, batch, r);
+        }
+        input_batch_->clear();
+    }
+
+    void update_accumulators(VectorizedGroupState& state, VectorBatch& batch, size_t row_idx) {
+        for (size_t i = 0; i < aggregates_.size(); ++i) {
+            const auto& agg = aggregates_[i];
+
+            if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+                // COUNT(*) - always increment
+                state.counts[i]++;
+            } else if (agg.type == AggregateType::Sum && agg.input_col_idx >= 0) {
+                auto& col = batch.get_column(agg.input_col_idx);
+                if (!col.is_null(row_idx)) {
+                    if (col.type() == common::ValueType::TYPE_INT64) {
+                        auto& num_col = dynamic_cast<NumericVector<int64_t>&>(col);
+                        state.sums[i] += num_col.raw_data()[row_idx];
+                    } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                        auto& num_col = dynamic_cast<NumericVector<double>&>(col);
+                        state.sums[i] += num_col.raw_data()[row_idx];
+                    }
+                }
+            }
+        }
+    }
+
+    bool produce_output_batch(VectorBatch& out_batch) {
+        if (current_group_idx_ >= group_keys_.size()) {
+            return false;  // EOF
+        }
+
+        out_batch.clear();
+        if (out_batch.column_count() == 0) {
+            out_batch.init_from_schema(output_schema_);
+        }
+
+        constexpr size_t BATCH_SIZE = 1024;
+        size_t output_count = 0;
+
+        while (current_group_idx_ < group_keys_.size() && output_count < BATCH_SIZE) {
+            // Append group key columns
+            const auto& key_vals = group_values_[current_group_idx_];
+            for (size_t i = 0; i < key_vals.size(); ++i) {
+                out_batch.get_column(i).append(key_vals[i]);
+            }
+
+            // Append aggregate result columns
+            const auto& state = groups_.at(group_keys_[current_group_idx_]);
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                size_t col_idx = group_by_.size() + i;
+                switch (aggregates_[i].type) {
+                    case AggregateType::Count:
+                        out_batch.get_column(col_idx).append(
+                            common::Value::make_int64(state.counts[i]));
+                        break;
+                    case AggregateType::Sum:
+                        out_batch.get_column(col_idx).append(
+                            common::Value::make_float64(state.sums[i]));
+                        break;
+                    default:
+                        out_batch.get_column(col_idx).append(common::Value::make_null());
+                        break;
+                }
+            }
+            output_count++;
+            current_group_idx_++;
+        }
+
+        out_batch.set_row_count(output_count);
+        return true;
+    }
+};
+
 }  // namespace cloudsql::executor
 
 #endif  // CLOUDSQL_EXECUTOR_VECTORIZED_OPERATOR_HPP
