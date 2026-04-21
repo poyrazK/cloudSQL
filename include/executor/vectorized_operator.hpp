@@ -424,6 +424,20 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         state.sums[i] += num_col.raw_data()[row_idx];
                     }
                 }
+            } else if (agg.type == AggregateType::Min && agg.input_col_idx >= 0) {
+                auto& col = batch.get_column(agg.input_col_idx);
+                if (!col.is_null(row_idx)) {
+                    if (state.mins[i].is_null() || col.get(row_idx) < state.mins[i]) {
+                        state.mins[i] = col.get(row_idx);
+                    }
+                }
+            } else if (agg.type == AggregateType::Max && agg.input_col_idx >= 0) {
+                auto& col = batch.get_column(agg.input_col_idx);
+                if (!col.is_null(row_idx)) {
+                    if (state.maxes[i].is_null() || state.maxes[i] < col.get(row_idx)) {
+                        state.maxes[i] = col.get(row_idx);
+                    }
+                }
             }
         }
     }
@@ -460,6 +474,12 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                     case AggregateType::Sum:
                         out_batch.get_column(col_idx).append(
                             common::Value::make_float64(state.sums[i]));
+                        break;
+                    case AggregateType::Min:
+                        out_batch.get_column(col_idx).append(state.mins[i]);
+                        break;
+                    case AggregateType::Max:
+                        out_batch.get_column(col_idx).append(state.maxes[i]);
                         break;
                     default:
                         out_batch.get_column(col_idx).append(common::Value::make_null());
