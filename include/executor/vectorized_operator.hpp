@@ -102,10 +102,7 @@ class VectorizedFilterOperator : public VectorizedOperator {
     }
 
     bool next_batch(VectorBatch& out_batch) override {
-        // If we already have accumulated rows from a previous call, return them
-        if (out_batch.row_count() > 0) {
-            return true;
-        }
+        out_batch.clear();
 
         // Ensure output batch is structured for current schema
         if (out_batch.column_count() == 0) {
@@ -135,9 +132,9 @@ class VectorizedFilterOperator : public VectorizedOperator {
                         dest_col.append(src_col.get(r));
                     }
                 }
-                out_batch.set_row_count(out_batch.row_count() + selection.size());
+                out_batch.set_row_count(selection.size());
                 input_batch_->clear();
-                return true;  // Return with accumulated matches
+                return true;  // Return with matches
             }
             input_batch_->clear();
         }
@@ -214,6 +211,12 @@ class VectorizedAggregateOperator : public VectorizedOperator {
         results_int_.assign(aggregates_.size(), 0);
         results_double_.assign(aggregates_.size(), 0.0);
         has_value_.assign(aggregates_.size(), false);
+        // COUNT aggregates always have a value (0 for empty input) per SQL spec
+        for (size_t i = 0; i < aggregates_.size(); ++i) {
+            if (aggregates_[i].type == AggregateType::Count) {
+                has_value_[i] = true;
+            }
+        }
         input_batch_ = VectorBatch::create(child_->output_schema());
     }
 

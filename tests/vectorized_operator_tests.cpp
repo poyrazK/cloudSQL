@@ -254,8 +254,7 @@ class VectorizedAggregateTests : public ::testing::Test {
 };
 
 TEST_F(VectorizedAggregateTests, CountOnlyEmpty) {
-    // Note: COUNT(*) on empty table currently returns NULL due to has_value_ semantics
-    // This test verifies behavior as-is rather than expecting specific results
+    // COUNT(*) on empty table should return 0 per SQL spec
     Schema schema;
     schema.add_column("val", common::ValueType::TYPE_INT64);
 
@@ -276,7 +275,7 @@ TEST_F(VectorizedAggregateTests, CountOnlyEmpty) {
     auto result = VectorBatch::create(agg.output_schema());
     ASSERT_TRUE(agg.next_batch(*result));
     EXPECT_EQ(result->row_count(), 1);
-    // Empty table aggregate produces a result batch (done_ = true)
+    EXPECT_EQ(result->get_column(0).get(0).as_int64(), 0);  // COUNT(*) = 0 for empty
 }
 
 TEST_F(VectorizedAggregateTests, SumWithFloat64) {
