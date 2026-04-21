@@ -373,4 +373,305 @@ TEST_F(HeapTableTests, FileIdAfterCreate) {
     EXPECT_NE(table_->file_id(), 0U);
 }
 
+// ============= Iterator Move Assignment Tests =============
+
+TEST_F(HeapTableTests, IteratorMoveAssignment_DifferentTable) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(1, "A"));
+    table_->insert(make_test_tuple(2, "B"));
+
+    // Create first iterator and advance it
+    auto it1 = table_->scan();
+    Tuple tuple;
+    ASSERT_TRUE(it1.next(tuple));  // Advance to first record
+
+    // Create second table with different data
+    auto table2 = std::make_unique<HeapTable>("test_table2", *bpm_, *schema_);
+    ASSERT_TRUE(table2->create());
+    table2->insert(make_test_tuple(100, "X"));
+
+    auto it2 = table2->scan();
+
+    // Move-assign iterator2 to iterator1 (different tables)
+    // The operator= returns early without transferring state when tables differ
+    // So it1 still iterates over table1, and it2's page gets unpinned
+    it1 = std::move(it2);
+
+    // it1 keeps its original state (iterating over table1)
+    EXPECT_TRUE(it1.next(tuple));
+    EXPECT_EQ(tuple.get(0).as_int64(), 2);  // Second record since first was consumed
+}
+
+TEST_F(HeapTableTests, IteratorMoveAssignment_SameTable) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(1, "A"));
+    table_->insert(make_test_tuple(2, "B"));
+    table_->insert(make_test_tuple(3, "C"));
+
+    // Create two iterators on same table
+    auto it1 = table_->scan();
+    auto it2 = table_->scan();
+
+    // Advance it1 past first record
+    Tuple tuple;
+    ASSERT_TRUE(it1.next(tuple));
+    EXPECT_EQ(tuple.get(0).as_int64(), 1);
+
+    // Move-assign it2 to it1 (same table)
+    it1 = std::move(it2);
+
+    // it1 should now be at the beginning (same as it2 was)
+    EXPECT_TRUE(it1.next(tuple));
+    EXPECT_EQ(tuple.get(0).as_int64(), 1);
+}
+
+TEST_F(HeapTableTests, IteratorMoveAssignment_SelfMove) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(1, "A"));
+
+    auto it = table_->scan();
+    Tuple tuple;
+    ASSERT_TRUE(it.next(tuple));
+
+    // Self-move assignment is a no-op: operator= checks (this != &other) and returns early
+    it = std::move(it);
+
+    // Iterator should continue from where it was (past first record, at EOF)
+    EXPECT_FALSE(it.next(tuple));
+}
+
+// ============= Iterator next() Deleted Tuple Tests =============
+
+TEST_F(HeapTableTests, IteratorNext_SkipsDeletedTuples) {
+    ASSERT_TRUE(table_->create());
+    auto rid1 = table_->insert(make_test_tuple(1, "First"));
+    auto rid2 = table_->insert(make_test_tuple(2, "Second"));
+    auto rid3 = table_->insert(make_test_tuple(3, "Third"));
+
+    // Delete the middle record
+    table_->remove(rid2, 1);
+
+    // Create another iterator and iterate
+    auto it = table_->scan();
+    Tuple tuple;
+    std::vector<int64_t> seen;
+    while (it.next(tuple)) {
+        seen.push_back(tuple.get(0).as_int64());
+    }
+
+    // Should only see 1 and 3 (2 was skipped)
+    ASSERT_EQ(seen.size(), 2U);
+    EXPECT_EQ(seen[0], 1);
+    EXPECT_EQ(seen[1], 3);
+}
+
+TEST_F(HeapTableTests, IteratorNext_FirstTupleDeleted) {
+    ASSERT_TRUE(table_->create());
+    auto rid1 = table_->insert(make_test_tuple(1, "First"));
+    auto rid2 = table_->insert(make_test_tuple(2, "Second"));
+
+    // Delete the first record
+    table_->remove(rid1, 1);
+
+    // Iterate - should skip to second record
+    auto it = table_->scan();
+    Tuple tuple;
+    EXPECT_TRUE(it.next(tuple));
+    EXPECT_EQ(tuple.get(0).as_int64(), 2);
+    EXPECT_FALSE(it.next(tuple));  // EOF
+}
+
+// ============= Update Failure Path Test =============
+
+TEST_F(HeapTableTests, Update_WhenRemoveFails_ReturnsFalse) {
+    ASSERT_TRUE(table_->create());
+    auto tuple = make_test_tuple(1, "Original");
+    auto rid = table_->insert(tuple);
+    EXPECT_EQ(table_->tuple_count(), 1U);
+
+    // Physically remove the tuple to invalidate the RID
+    ASSERT_TRUE(table_->physical_remove(rid));
+
+    // Now try to update with an invalid RID - remove should fail
+    auto new_tuple = make_test_tuple(1, "Updated");
+    EXPECT_FALSE(table_->update(HeapTable::TupleId(9999, 9999), new_tuple, 1));
+}
+
+// ============= tuple_count() Tests =============
+
+TEST_F(HeapTableTests, TupleCount_AfterMultipleDeletes) {
+    ASSERT_TRUE(table_->create());
+    std::vector<HeapTable::TupleId> rids;
+    for (int i = 0; i < 10; ++i) {
+        rids.push_back(table_->insert(make_test_tuple(i, "User" + std::to_string(i))));
+    }
+    EXPECT_EQ(table_->tuple_count(), 10U);
+
+    // Delete 3 tuples
+    table_->remove(rids[1], 1);
+    table_->remove(rids[3], 1);
+    table_->remove(rids[7], 1);
+    EXPECT_EQ(table_->tuple_count(), 7U);
+}
+
+TEST_F(HeapTableTests, TupleCount_EmptyTable) {
+    ASSERT_TRUE(table_->create());
+    EXPECT_EQ(table_->tuple_count(), 0U);
+}
+
+// ============= drop() with Cached Page Test =============
+
+TEST_F(HeapTableTests, Drop_WithCachedPage_UnpinsBeforeDelete) {
+    ASSERT_TRUE(table_->create());
+    // Insert tuples to ensure a page is cached
+    for (int i = 0; i < 10; ++i) {
+        table_->insert(make_test_tuple(i, "User" + std::to_string(i)));
+    }
+    EXPECT_TRUE(table_->file_id() != 0);
+
+    // Note: drop() succeeds but file is removed from CWD, not from test_data/
+    // This exercises the cached_page_ unpin branch in drop()
+    EXPECT_TRUE(table_->drop());
+}
+
+// ============= Iterator next_view() Tests =============
+
+TEST_F(HeapTableTests, IteratorNextView_Basic) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(1, "Alice"));
+    table_->insert(make_test_tuple(2, "Bob"));
+
+    auto it = table_->scan();
+    HeapTable::TupleView view;
+    // First view - should return true
+    EXPECT_TRUE(it.next_view(view));
+    EXPECT_EQ(view.xmin, 0U);
+    EXPECT_EQ(view.xmax, 0U);
+    EXPECT_NE(view.payload_data, nullptr);
+
+    // Second view - should return true
+    EXPECT_TRUE(it.next_view(view));
+    // Third call - EOF, should return false
+    EXPECT_FALSE(it.next_view(view));
+}
+
+TEST_F(HeapTableTests, IteratorNextView_Materialize) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(42, "Answer"));
+
+    auto it = table_->scan();
+    HeapTable::TupleView view;
+    ASSERT_TRUE(it.next_view(view));
+
+    // Materialize the view into a Tuple
+    auto tuple = view.materialize();
+    EXPECT_EQ(tuple.get(0).as_int64(), 42);
+    EXPECT_EQ(tuple.get(1).as_text(), "Answer");
+}
+
+TEST_F(HeapTableTests, IteratorNextView_EmptyTable) {
+    ASSERT_TRUE(table_->create());
+    auto it = table_->scan();
+    HeapTable::TupleView view;
+    EXPECT_FALSE(it.next_view(view));
+}
+
+TEST_F(HeapTableTests, IteratorNextView_WithDeletes) {
+    ASSERT_TRUE(table_->create());
+    auto rid1 = table_->insert(make_test_tuple(1, "First"));
+    auto rid2 = table_->insert(make_test_tuple(2, "Second"));
+    auto rid3 = table_->insert(make_test_tuple(3, "Third"));
+
+    // Delete middle record (xmax = 1)
+    table_->remove(rid2, 1);
+
+    // next_view() returns ALL records including deleted ones
+    auto it = table_->scan();
+    HeapTable::TupleView view;
+    int count = 0;
+    while (it.next_view(view)) {
+        count++;
+    }
+    // Should see all 3 records (next_view doesn't skip deleted like next() does)
+    EXPECT_EQ(count, 3);
+}
+
+// ============= read_page()/write_page() Tests =============
+
+TEST_F(HeapTableTests, ReadPage_UsingCachedPage) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(1, "Test"));
+
+    char buffer[Page::PAGE_SIZE];
+    EXPECT_TRUE(table_->read_page(0, buffer));
+
+    // Buffer should contain page header data
+    HeapTable::PageHeader header;
+    std::memcpy(&header, buffer, sizeof(HeapTable::PageHeader));
+    EXPECT_GT(header.num_slots, 0U);
+}
+
+TEST_F(HeapTableTests, WritePage_UsingCachedPage) {
+    ASSERT_TRUE(table_->create());
+    table_->insert(make_test_tuple(1, "Test"));
+
+    // Read page, modify, write back
+    char buffer[Page::PAGE_SIZE];
+    ASSERT_TRUE(table_->read_page(0, buffer));
+
+    // Write the same data back (should use cached_page_ branch)
+    EXPECT_TRUE(table_->write_page(0, buffer));
+
+    // Read again and verify
+    char buffer2[Page::PAGE_SIZE];
+    ASSERT_TRUE(table_->read_page(0, buffer2));
+    EXPECT_EQ(std::memcmp(buffer, buffer2, Page::PAGE_SIZE), 0);
+}
+
+// ============= remove() with Cached Page Tests =============
+
+TEST_F(HeapTableTests, Remove_WhenTupleOnCachedPage) {
+    ASSERT_TRUE(table_->create());
+    // Insert multiple tuples on same page
+    auto rid1 = table_->insert(make_test_tuple(1, "First"));
+    auto rid2 = table_->insert(make_test_tuple(2, "Second"));
+    auto rid3 = table_->insert(make_test_tuple(3, "Third"));
+
+    // All three should be on the same page (page 0)
+    EXPECT_EQ(rid1.page_num, 0U);
+    EXPECT_EQ(rid2.page_num, 0U);
+    EXPECT_EQ(rid3.page_num, 0U);
+
+    // Remove first tuple - uses cached_page_ branch
+    EXPECT_TRUE(table_->remove(rid1, 1));
+    EXPECT_EQ(table_->tuple_count(), 2U);
+
+    // get() should return false for deleted tuple
+    Tuple tuple;
+    EXPECT_FALSE(table_->get(rid1, tuple));
+}
+
+TEST_F(HeapTableTests, Remove_WhenTupleNotOnCachedPage) {
+    ASSERT_TRUE(table_->create());
+    // Insert tuples to span multiple pages
+    for (int i = 0; i < 150; ++i) {
+        table_->insert(make_test_tuple(i, "User" + std::to_string(i)));
+    }
+
+    // Get the first and last RIDs
+    auto it = table_->scan();
+    HeapTable::TupleId first_rid = it.current_id();
+
+    // Find an RID on a later page
+    HeapTable::TupleId later_rid(1, 0);  // Page 1
+    HeapTable::TupleMeta meta;
+    bool found = table_->get_meta(later_rid, meta);
+
+    if (found) {
+        // Remove from non-cached page (fetch path)
+        EXPECT_TRUE(table_->remove(later_rid, 1));
+        EXPECT_EQ(table_->tuple_count(), 149U);
+    }
+}
+
 }  // namespace
