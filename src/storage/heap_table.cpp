@@ -745,7 +745,7 @@ bool HeapTable::drop() {
         cached_page_ = nullptr;
     }
     static_cast<void>(bpm_.close_file(filename_));
-    return (std::remove(filename_.c_str()) == 0);
+    return bpm_.delete_file(filename_);
 }
 
 bool HeapTable::read_page(uint32_t page_num, char* buffer) const {

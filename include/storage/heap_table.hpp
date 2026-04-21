@@ -276,8 +276,10 @@ class HeapTable {
     /** @brief Removes the physical heap file */
     bool drop();
 
-   private:
+    /** @brief Read a page from the heap file into buffer */
     bool read_page(uint32_t page_num, char* buffer) const;
+
+    /** @brief Write a buffer into a page of the heap file */
     bool write_page(uint32_t page_num, const char* buffer);
 };
 

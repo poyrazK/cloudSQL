@@ -215,6 +215,14 @@ bool StorageManager::create_dir_if_not_exists() {
     return true;
 }
 
+/**
+ * @brief Delete a file from storage
+ */
+bool StorageManager::delete_file(const std::string& filename) {
+    const std::string filepath = get_full_path(filename);
+    return std::remove(filepath.c_str()) == 0;
+}
+
 }  // namespace cloudsql::storage
 
 /** @} */
