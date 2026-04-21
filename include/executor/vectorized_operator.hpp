@@ -365,19 +365,20 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
    private:
     void process_input_batch(VectorBatch& batch) {
-        // Evaluate group-by expressions into group_key_batch_
-        for (size_t i = 0; i < group_by_.size(); ++i) {
-            group_by_[i]->evaluate_vectorized(batch, child_->output_schema(),
-                                             group_key_batch_->get_column(i));
-        }
-
-        // For each row, compute hash key and update/insert group
+        // For each row, compute hash key directly from source columns
         for (size_t r = 0; r < batch.row_count(); ++r) {
             // Build key from group-by values
             std::string key;
             for (size_t i = 0; i < group_by_.size(); ++i) {
-                key += group_key_batch_->get_column(i).get(r).to_string();
-                key += "|";
+                // Find column index for group-by expression
+                const auto& schema = child_->output_schema();
+                size_t col_idx = schema.find_column(group_by_[i]->to_string());
+                if (col_idx == static_cast<size_t>(-1)) {
+                    key += "NULL|";
+                } else {
+                    key += batch.get_column(col_idx).get(r).to_string();
+                    key += "|";
+                }
             }
 
             // Get or create group state
@@ -386,7 +387,12 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 // Store group key values for output
                 std::vector<common::Value> key_vals;
                 for (size_t i = 0; i < group_by_.size(); ++i) {
-                    key_vals.push_back(group_key_batch_->get_column(i).get(r));
+                    size_t col_idx = child_->output_schema().find_column(group_by_[i]->to_string());
+                    if (col_idx == static_cast<size_t>(-1)) {
+                        key_vals.push_back(common::Value::make_null());
+                    } else {
+                        key_vals.push_back(batch.get_column(col_idx).get(r));
+                    }
                 }
                 auto result = groups_.emplace(key, VectorizedGroupState(aggregates_.size()));
                 it = result.first;
