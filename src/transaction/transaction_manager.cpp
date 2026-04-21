@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "catalog/catalog.hpp"
+#include "common/fault_injection.hpp"
 #include "executor/types.hpp"
 #include "recovery/log_manager.hpp"
 #include "recovery/log_record.hpp"
@@ -51,8 +52,9 @@ Transaction* TransactionManager::begin(IsolationLevel level) {
 
     if (log_manager_ != nullptr) {
         recovery::LogRecord record(txn_id, txn_ptr->get_prev_lsn(), recovery::LogRecordType::BEGIN);
-        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
-        txn_ptr->set_prev_lsn(lsn);
+        if (log_manager_->append_log_record(record)) {
+            txn_ptr->set_prev_lsn(record.lsn_);
+        }
     }
 
     return txn_ptr;
@@ -66,9 +68,12 @@ void TransactionManager::prepare(Transaction* txn) {
     if (log_manager_ != nullptr) {
         recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
                                    recovery::LogRecordType::PREPARE);
-        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
-        txn->set_prev_lsn(lsn);
-        log_manager_->flush(true);
+        if (!log_manager_->append_log_record(record)) {
+            std::cerr << "Failed to log prepare\n";
+        } else {
+            txn->set_prev_lsn(record.lsn_);
+            log_manager_->flush(true);
+        }
     }
 
     txn->set_state(TransactionState::PREPARED);
@@ -82,9 +87,12 @@ void TransactionManager::commit(Transaction* txn) {
     if (log_manager_ != nullptr) {
         recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
                                    recovery::LogRecordType::COMMIT);
-        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
-        txn->set_prev_lsn(lsn);
-        log_manager_->flush(true);
+        if (!log_manager_->append_log_record(record)) {
+            std::cerr << "Failed to log commit\n";
+        } else {
+            txn->set_prev_lsn(record.lsn_);
+            log_manager_->flush(true);
+        }
     }
 
     const auto lock_set = txn->get_shared_lock_set();
@@ -106,7 +114,7 @@ void TransactionManager::commit(Transaction* txn) {
             active_transactions_.erase(it);
         }
 
-        constexpr std::size_t MAX_COMPLETED = 100;
+        constexpr std::size_t MAX_COMPLETED = 10;
         if (completed_transactions_.size() > MAX_COMPLETED) {
             completed_transactions_.pop_front();
         }
@@ -126,9 +134,12 @@ void TransactionManager::abort(Transaction* txn) {
     if (log_manager_ != nullptr) {
         recovery::LogRecord record(txn->get_id(), txn->get_prev_lsn(),
                                    recovery::LogRecordType::ABORT);
-        const recovery::lsn_t lsn = log_manager_->append_log_record(record);
-        txn->set_prev_lsn(lsn);
-        log_manager_->flush(true);
+        if (!log_manager_->append_log_record(record)) {
+            std::cerr << "Failed to log abort\n";
+        } else {
+            txn->set_prev_lsn(record.lsn_);
+            log_manager_->flush(true);
+        }
     }
 
     const auto lock_set = txn->get_shared_lock_set();
@@ -150,7 +161,7 @@ void TransactionManager::abort(Transaction* txn) {
             active_transactions_.erase(it);
         }
 
-        constexpr std::size_t MAX_COMPLETED = 100;
+        constexpr std::size_t MAX_COMPLETED = 10;
         if (completed_transactions_.size() > MAX_COMPLETED) {
             completed_transactions_.pop_front();
         }
@@ -190,7 +201,7 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                             uint16_t pos = idx_info.column_positions[0];
                             common::ValueType ktype = table_meta->columns[pos].type;
                             storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                            if (!index.remove(tuple.get(pos), log.rid)) {
+                            if (!index.remove(tuple.get(pos), log.rid) || FAULT_IF(cloudsql::common::FAULT_INDEX_REMOVE)) {
                                 std::cerr << "Rollback ERROR: Index remove failed for table '"
                                           << log.table_name << "', index '" << idx_info.name
                                           << "'\n";
@@ -199,7 +210,7 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                         }
                     }
                 }
-                if (!table.physical_remove(log.rid)) {
+                if (!table.physical_remove(log.rid) || FAULT_IF(cloudsql::common::FAULT_PHYSICAL_REMOVE)) {
                     std::cerr << "Rollback ERROR: physical_remove failed for INSERT undo\n";
                     success = false;
                 }
@@ -207,7 +218,7 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
             }
             case UndoLog::Type::DELETE: {
                 /* For DELETE undo, reset xmax and re-insert into indexes */
-                if (!table.undo_remove(log.rid)) {
+                if (!table.undo_remove(log.rid) || FAULT_IF(cloudsql::common::FAULT_UNDO_REMOVE)) {
                     std::cerr << "Rollback ERROR: undo_remove failed for DELETE undo\n";
                     success = false;
                 } else {
@@ -218,7 +229,7 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                                 uint16_t pos = idx_info.column_positions[0];
                                 common::ValueType ktype = table_meta->columns[pos].type;
                                 storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                                if (!index.insert(tuple.get(pos), log.rid)) {
+                                if (!index.insert(tuple.get(pos), log.rid) || FAULT_IF(cloudsql::common::FAULT_INDEX_INSERT)) {
                                     std::cerr << "Rollback ERROR: Index insert failed for table '"
                                               << log.table_name << "', index '" << idx_info.name
                                               << "'\n";
@@ -240,7 +251,7 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                             uint16_t pos = idx_info.column_positions[0];
                             common::ValueType ktype = table_meta->columns[pos].type;
                             storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                            if (!index.remove(new_tuple.get(pos), log.rid)) {
+                            if (!index.remove(new_tuple.get(pos), log.rid) || FAULT_IF(cloudsql::common::FAULT_INDEX_REMOVE)) {
                                 std::cerr << "Rollback ERROR: Index remove failed for table '"
                                           << log.table_name << "', index '" << idx_info.name
                                           << "'\n";
@@ -249,14 +260,14 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                         }
                     }
                 }
-                if (!table.physical_remove(log.rid)) {
+                if (!table.physical_remove(log.rid) || FAULT_IF(cloudsql::common::FAULT_PHYSICAL_REMOVE)) {
                     std::cerr << "Rollback ERROR: physical_remove failed for new version in UPDATE "
                                  "undo\n";
                     success = false;
                 }
 
                 if (log.old_rid.has_value()) {
-                    if (!table.undo_remove(log.old_rid.value())) {
+                    if (!table.undo_remove(log.old_rid.value()) || FAULT_IF(cloudsql::common::FAULT_UNDO_REMOVE)) {
                         std::cerr << "Rollback ERROR: undo_remove failed for old version in UPDATE "
                                      "undo\n";
                         success = false;
@@ -268,7 +279,7 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                                     uint16_t pos = idx_info.column_positions[0];
                                     common::ValueType ktype = table_meta->columns[pos].type;
                                     storage::BTreeIndex index(idx_info.name, bpm_, ktype);
-                                    if (!index.insert(old_tuple.get(pos), log.old_rid.value())) {
+                                    if (!index.insert(old_tuple.get(pos), log.old_rid.value()) || FAULT_IF(cloudsql::common::FAULT_INDEX_INSERT)) {
                                         std::cerr
                                             << "Rollback ERROR: Index insert failed for table '"
                                             << log.table_name << "', index '" << idx_info.name
@@ -280,6 +291,11 @@ bool TransactionManager::undo_transaction(Transaction* txn) {
                         }
                     }
                 }
+                break;
+            }
+            default: {
+                std::cerr << "Rollback ERROR: Unknown undo log type\n";
+                success = false;
                 break;
             }
         }
