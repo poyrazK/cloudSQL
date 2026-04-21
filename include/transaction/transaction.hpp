@@ -53,7 +53,7 @@ struct TransactionSnapshot {
  * @brief Represents a change that can be undone
  */
 struct UndoLog {
-    enum class Type : uint8_t { INSERT, DELETE, UPDATE };
+    enum class Type : uint8_t { INSERT, DELETE, UPDATE, UNKNOWN };
     Type type = Type::INSERT;
     std::string table_name;
     storage::HeapTable::TupleId rid;
@@ -128,7 +128,7 @@ class Transaction {
     void add_undo_log(UndoLog::Type type, const std::string& table_name,
                       const storage::HeapTable::TupleId& rid) {
         /* Enforce invariant: non-UPDATE types should not provide old_rid through this overload */
-        assert(type != UndoLog::Type::UPDATE);
+        assert(type != UndoLog::Type::UPDATE && type != UndoLog::Type::UNKNOWN);
         undo_logs_.push_back({type, table_name, rid, std::nullopt});
     }
 
@@ -141,6 +141,9 @@ class Transaction {
     }
 
     [[nodiscard]] const std::vector<UndoLog>& get_undo_logs() const { return undo_logs_; }
+
+    // Test-only: add undo log with any type including UNKNOWN
+    void add_undo_log_for_test(UndoLog log) { undo_logs_.push_back(log); }
 };
 
 }  // namespace cloudsql::transaction

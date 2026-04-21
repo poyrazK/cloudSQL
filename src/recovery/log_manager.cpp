@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 
+#include "common/fault_injection.hpp"
 #include "recovery/log_record.hpp"
 
 namespace cloudsql::recovery {
@@ -64,7 +65,13 @@ void LogManager::stop_flush_thread() {
     }
 }
 
-lsn_t LogManager::append_log_record(LogRecord& log_record) {
+bool LogManager::append_log_record(LogRecord& log_record) {
+    if (FAULT_IF(cloudsql::common::FAULT_LOG_COMMIT) ||
+        FAULT_IF(cloudsql::common::FAULT_LOG_ABORT) ||
+        FAULT_IF(cloudsql::common::FAULT_LOG_PREPARE)) {
+        return false;
+    }
+
     const std::unique_lock<std::mutex> lock(latch_);
 
     // If record size > buffer size, flush first
@@ -82,13 +89,14 @@ lsn_t LogManager::append_log_record(LogRecord& log_record) {
         std::next(log_buffer_, static_cast<std::ptrdiff_t>(log_buffer_offset_))));
     log_buffer_offset_ += record_size;
 
-    return lsn;
+    return true;
 }
 
-void LogManager::flush(bool force) {
+bool LogManager::flush(bool force) {
     (void)force;
     const std::unique_lock<std::mutex> lock(latch_);
     flush_internal();
+    return true;
 }
 
 void LogManager::flush_internal() {

@@ -50,15 +50,16 @@ class LogManager {
     /**
      * @brief Append a log record to the buffer
      * @param log_record The record to append (LSN will be set)
-     * @return The LSN of the appended record
+     * @return True if appended successfully, false otherwise
      */
-    lsn_t append_log_record(LogRecord& log_record);
+    bool append_log_record(LogRecord& log_record);
 
     /**
      * @brief Flush log buffer to disk
      * @param force If true, force flush even if buffer is not full
+     * @return True if flush succeeded, false otherwise
      */
-    void flush(bool force = false);
+    bool flush(bool force = false);
 
     /**
      * @brief Get the persistent LSN (flushed to disk)

@@ -154,16 +154,16 @@ TEST(RecoveryTests, LogManagerBasic) {
 
         // Append a few logs
         LogRecord qlog1(1, -1, LogRecordType::BEGIN);
-        const lsn_t lsn1 = log_manager.append_log_record(qlog1);
-        EXPECT_EQ(lsn1, 0);
+        ASSERT_TRUE(log_manager.append_log_record(qlog1));
+        EXPECT_EQ(qlog1.lsn_, 0);
 
-        LogRecord qlog2(1, lsn1, LogRecordType::COMMIT);
-        const lsn_t lsn2 = log_manager.append_log_record(qlog2);
-        EXPECT_EQ(lsn2, 1);
+        LogRecord qlog2(1, qlog1.lsn_, LogRecordType::COMMIT);
+        ASSERT_TRUE(log_manager.append_log_record(qlog2));
+        EXPECT_EQ(qlog2.lsn_, 1);
 
         // Wait for flush
         log_manager.flush(true);
-        EXPECT_GE(log_manager.get_persistent_lsn(), lsn2);
+        EXPECT_GE(log_manager.get_persistent_lsn(), qlog2.lsn_);
     }
 
     // Verify file content size roughly
