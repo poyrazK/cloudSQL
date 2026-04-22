@@ -500,15 +500,17 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         break;
                     case AggregateType::Sum:
                         // Emit based on output column type to preserve precision
-                        if (output_schema_.get_column(col_idx).type() == common::ValueType::TYPE_INT64) {
+                        if (output_schema_.get_column(col_idx).type() ==
+                            common::ValueType::TYPE_INT64) {
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_int64(state.sums_int64[i]));
-                        } else if (output_schema_.get_column(col_idx).type() == common::ValueType::TYPE_FLOAT64) {
+                        } else if (output_schema_.get_column(col_idx).type() ==
+                                   common::ValueType::TYPE_FLOAT64) {
                             // If we saw any float64 values, use the float64 accumulator
                             // Otherwise convert from int64 accumulator
                             double float_val = state.has_float_value_[i]
-                                ? state.sums_float64[i]
-                                : static_cast<double>(state.sums_int64[i]);
+                                                   ? state.sums_float64[i]
+                                                   : static_cast<double>(state.sums_int64[i]);
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_float64(float_val));
                         } else {
