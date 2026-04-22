@@ -29,9 +29,12 @@ Optimized global analytical queries (`COUNT`, `SUM`).
 
 ### 5. Vectorized GROUP BY
 Added `VectorizedGroupByOperator` for hash-based grouped aggregation.
-- **Hash-Based Grouping**: Uses `unordered_map` for efficient group key lookup.
+- **Hash-Based Grouping**: Uses `unordered_map` for efficient group key lookup with collision-safe key encoding.
 - **Two-Phase Processing**: Input phase builds hash table from batches; Output phase serves grouped results.
-- **Supported Aggregates**: COUNT(*) and SUM with INT64/FLOAT64 columns.
+- **Supported Aggregates**: COUNT(*), SUM, MIN, and MAX with INT64/FLOAT64 columns.
+- **Type-Specific Accumulators**: SUM uses separate `sums_int64` and `sums_float64` accumulators to preserve precision for large INT64 values.
+- **Collision-Safe Key Encoding**: Group keys use length-prefixed encoding with dedicated NULL markers, preventing key collisions from string concatenation ambiguities.
+- **Pre-resolved Column Indices**: Group-by column indices computed once in constructor to avoid repeated lookups.
 
 ## Recent Improvements (Engine Benchmarking)
 As of our latest sprint, we have established a high-performance baseline for the engine's core scanning logic:

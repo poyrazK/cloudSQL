@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "executor/types.hpp"
@@ -292,14 +293,18 @@ class VectorizedAggregateOperator : public VectorizedOperator {
  */
 struct VectorizedGroupState {
     std::vector<int64_t> counts;
-    std::vector<double> sums;
+    std::vector<int64_t> sums_int64;  // Separate accumulators to avoid precision loss
+    std::vector<double> sums_float64;
+    std::vector<bool> has_float_value_;  // Tracks whether any float64 values were accumulated
     std::vector<common::Value> mins;
     std::vector<common::Value> maxes;
 
     VectorizedGroupState() = default;
     explicit VectorizedGroupState(size_t agg_count) {
         counts.assign(agg_count, 0);
-        sums.assign(agg_count, 0.0);
+        sums_int64.assign(agg_count, 0);
+        sums_float64.assign(agg_count, 0.0);
+        has_float_value_.assign(agg_count, false);
         mins.assign(agg_count, common::Value::make_null());
         maxes.assign(agg_count, common::Value::make_null());
     }
@@ -314,6 +319,9 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     std::vector<std::unique_ptr<parser::Expression>> group_by_;
     std::vector<VectorizedAggregateInfo> aggregates_;
 
+    // Pre-resolved column indices for group-by expressions (computed once in ctor)
+    std::vector<size_t> group_by_col_indices_;
+
     // Hash table: group key string -> group state
     std::unordered_map<std::string, VectorizedGroupState> groups_;
     // Ordered group keys for output iteration
@@ -325,8 +333,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     size_t current_group_idx_ = 0;
 
     // Processing state
-    enum class ProcessState { Input, Output };
-    ProcessState state_ = ProcessState::Input;
+    enum class ProcessPhase { Input, Output };
+    ProcessPhase process_phase_ = ProcessPhase::Input;
 
     // Reusable batch objects
     std::unique_ptr<VectorBatch> input_batch_;
@@ -341,6 +349,14 @@ class VectorizedGroupByOperator : public VectorizedOperator {
           group_by_(std::move(group_by)),
           aggregates_(std::move(aggregates)) {
         input_batch_ = VectorBatch::create(child_->output_schema());
+
+        // Pre-resolve column indices once in constructor
+        const auto& schema = child_->output_schema();
+        for (size_t i = 0; i < group_by_.size(); ++i) {
+            size_t col_idx = schema.find_column(group_by_[i]->to_string());
+            group_by_col_indices_.push_back(col_idx);
+        }
+
         // Create schema for group key evaluation
         Schema key_schema;
         for (size_t i = 0; i < group_by_.size(); ++i) {
@@ -350,12 +366,12 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 
     bool next_batch(VectorBatch& out_batch) override {
-        if (state_ == ProcessState::Input) {
+        if (process_phase_ == ProcessPhase::Input) {
             // Phase 1: Consume all input batches and populate hash table
             while (child_->next_batch(*input_batch_)) {
                 process_input_batch(*input_batch_);
             }
-            state_ = ProcessState::Output;
+            process_phase_ = ProcessPhase::Output;
         }
 
         // Phase 2: Produce grouped output batches
@@ -364,19 +380,30 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
    private:
     void process_input_batch(VectorBatch& batch) {
-        // For each row, compute hash key directly from source columns
+        // For each row, compute hash key using collision-safe encoding
         for (size_t r = 0; r < batch.row_count(); ++r) {
-            // Build key from group-by values
+            // Build key using length-prefixed, type-tagged encoding
             std::string key;
-            for (size_t i = 0; i < group_by_.size(); ++i) {
-                // Find column index for group-by expression
-                const auto& schema = child_->output_schema();
-                size_t col_idx = schema.find_column(group_by_[i]->to_string());
+            for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
+                size_t col_idx = group_by_col_indices_[i];
                 if (col_idx == static_cast<size_t>(-1)) {
-                    key += "NULL|";
+                    // Column not found in schema - fail fast
+                    set_error("GROUP BY: column not found in input schema: " +
+                              group_by_[i]->to_string());
+                    return;
+                }
+
+                const auto& val = batch.get_column(col_idx).get(r);
+                if (val.is_null()) {
+                    // Use a dedicated NULL marker for null values
+                    key.append("\1NULL\0", 6);
                 } else {
-                    key += batch.get_column(col_idx).get(r).to_string();
-                    key += "|";
+                    // Length-prefixed value: marker + length (4 bytes) + data
+                    std::string val_str = val.to_string();
+                    key.push_back('\0');  // non-NULL marker
+                    uint32_t len = static_cast<uint32_t>(val_str.size());
+                    key.append(reinterpret_cast<const char*>(&len), 4);
+                    key.append(val_str);
                 }
             }
 
@@ -385,8 +412,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             if (it == groups_.end()) {
                 // Store group key values for output
                 std::vector<common::Value> key_vals;
-                for (size_t i = 0; i < group_by_.size(); ++i) {
-                    size_t col_idx = child_->output_schema().find_column(group_by_[i]->to_string());
+                for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
+                    size_t col_idx = group_by_col_indices_[i];
                     if (col_idx == static_cast<size_t>(-1)) {
                         key_vals.push_back(common::Value::make_null());
                     } else {
@@ -417,10 +444,11 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 if (!col.is_null(row_idx)) {
                     if (col.type() == common::ValueType::TYPE_INT64) {
                         auto& num_col = dynamic_cast<NumericVector<int64_t>&>(col);
-                        state.sums[i] += num_col.raw_data()[row_idx];
+                        state.sums_int64[i] += num_col.raw_data()[row_idx];
                     } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
                         auto& num_col = dynamic_cast<NumericVector<double>&>(col);
-                        state.sums[i] += num_col.raw_data()[row_idx];
+                        state.sums_float64[i] += num_col.raw_data()[row_idx];
+                        state.has_float_value_[i] = true;
                     }
                 }
             } else if (agg.type == AggregateType::Min && agg.input_col_idx >= 0) {
@@ -471,8 +499,21 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                             common::Value::make_int64(state.counts[i]));
                         break;
                     case AggregateType::Sum:
-                        out_batch.get_column(col_idx).append(
-                            common::Value::make_float64(state.sums[i]));
+                        // Emit based on output column type to preserve precision
+                        if (output_schema_.get_column(col_idx).type() == common::ValueType::TYPE_INT64) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(state.sums_int64[i]));
+                        } else if (output_schema_.get_column(col_idx).type() == common::ValueType::TYPE_FLOAT64) {
+                            // If we saw any float64 values, use the float64 accumulator
+                            // Otherwise convert from int64 accumulator
+                            double float_val = state.has_float_value_[i]
+                                ? state.sums_float64[i]
+                                : static_cast<double>(state.sums_int64[i]);
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_float64(float_val));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
                         break;
                     case AggregateType::Min:
                         out_batch.get_column(col_idx).append(state.mins[i]);
