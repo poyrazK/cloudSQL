@@ -292,10 +292,9 @@ TEST_F(QueryExecutorTests, SelectWithGroupBy) {
 TEST_F(QueryExecutorTests, SelectWithGroupByCount) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (cat TEXT, val INT)");
-    execute_sql(env.executor,
-               "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5)");
-    const auto res = execute_sql(
-        env.executor, "SELECT cat, COUNT(val) FROM test_table GROUP BY cat");
+    execute_sql(env.executor, "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5)");
+    const auto res =
+        execute_sql(env.executor, "SELECT cat, COUNT(val) FROM test_table GROUP BY cat");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.row_count(), 2U);
     // Verify counts (A=2, B=1)
@@ -319,9 +318,9 @@ TEST_F(QueryExecutorTests, SelectWithGroupByMinMax) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE test_table (cat TEXT, val INT)");
     execute_sql(env.executor,
-               "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5), ('B', 15)");
-    const auto res = execute_sql(
-        env.executor, "SELECT cat, MIN(val), MAX(val) FROM test_table GROUP BY cat");
+                "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5), ('B', 15)");
+    const auto res =
+        execute_sql(env.executor, "SELECT cat, MIN(val), MAX(val) FROM test_table GROUP BY cat");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.row_count(), 2U);
     // Verify A: min=10, max=20; B: min=5, max=15
@@ -346,12 +345,11 @@ TEST_F(QueryExecutorTests, SelectWithGroupByMinMax) {
 
 TEST_F(QueryExecutorTests, SelectWithGroupByMultipleColumns) {
     TestEnvironment env;
-    execute_sql(env.executor,
-               "CREATE TABLE test_table (cat1 TEXT, cat2 TEXT, val INT)");
+    execute_sql(env.executor, "CREATE TABLE test_table (cat1 TEXT, cat2 TEXT, val INT)");
     // 4 groups: (A,X), (A,Y), (B,X), (B,Y)
     execute_sql(env.executor,
-               "INSERT INTO test_table VALUES ('A', 'X', 10), ('A', 'Y', 20), "
-               "('A', 'X', 5), ('A', 'Y', 15), ('B', 'X', 10), ('B', 'Y', 20)");
+                "INSERT INTO test_table VALUES ('A', 'X', 10), ('A', 'Y', 20), "
+                "('A', 'X', 5), ('A', 'Y', 15), ('B', 'X', 10), ('B', 'Y', 20)");
     const auto res = execute_sql(env.executor,
                                  "SELECT cat1, cat2, SUM(val) FROM test_table GROUP BY "
                                  "cat1, cat2 ORDER BY cat1, cat2");
