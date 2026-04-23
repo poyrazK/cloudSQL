@@ -233,14 +233,21 @@ bool BufferPoolManager::delete_file(const std::string& file_name) {
 
         const uint32_t file_id = get_file_id_internal(file_name);
 
-        // Evict all pages belonging to this file
+        // First pass: check for any pinned pages belonging to this file
+        // No state is mutated until we confirm no pinned pages exist
+        for (const auto& [key, frame_id] : page_table_) {
+            if (key.file_id == file_id) {
+                if (pages_[frame_id].pin_count_ > 0) {
+                    return false;  // Cannot delete while pages are pinned
+                }
+            }
+        }
+
+        // Second pass: evict all pages belonging to this file
         for (auto it = page_table_.begin(); it != page_table_.end();) {
             if (it->first.file_id == file_id) {
                 const uint32_t frame_id = it->second;
                 Page* const page = &pages_[frame_id];
-                if (page->pin_count_ > 0) {
-                    return false;  // Cannot delete while pages are pinned
-                }
                 // Flush dirty pages before removing
                 if (page->is_dirty_) {
                     storage_manager_.write_page(file_name, page->page_id_, page->get_data());

@@ -679,7 +679,8 @@ TEST_F(HeapTableTests, Remove_WhenTupleNotOnCachedPage) {
     while (true) {
         HeapTable::TupleMeta meta;
         if (!it.next_meta(meta)) break;
-        if (meta.tuple.get(0).as_int64() > 0) {
+        // Check RID page number, not tuple value
+        if (it.current_id().page_num > 0) {
             later_rid = it.current_id();
             break;
         }

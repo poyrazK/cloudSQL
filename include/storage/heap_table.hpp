@@ -139,6 +139,21 @@ class HeapTable {
         Iterator(const Iterator&) = delete;
         Iterator& operator=(const Iterator&) = delete;
         Iterator(Iterator&& other) noexcept;
+        /**
+         * @brief Move-assignment operator for HeapTable Iterator
+         *
+         * Contract: When source and destination iterators reference different
+         * tables (table_ != other.table_), this operator is a NO-OP: it only
+         * unpins/releases the source iterator's pinned page and returns without
+         * transferring any iteration state. When both iterators reference the
+         * same table, the move transfers full ownership — current page pointer,
+         * slot position, pinned page handle, and EOF flag — to the destination.
+         *
+         * Rationale: Cross-table move-assignment intentionally leaves the
+         * destination iterator in its original state so callers who accidentally
+         * move-assign from a different table do not silently get confusing state.
+         * Do not change this behavior without careful consideration of callers.
+         */
         Iterator& operator=(Iterator&& other) noexcept;
         /**
          * @brief Fetches the next non-deleted record from the heap
