@@ -356,7 +356,8 @@ TEST_F(BTreeIndexTests, ScanIterator_TextKeyDeserialization) {
     ASSERT_TRUE(text_index->create());
     ASSERT_TRUE(text_index->open());
 
-    // Insert text keys - the scan iterator should deserialize via the else branch at btree_index.cpp:87-89
+    // Insert text keys - the scan iterator should deserialize via the else branch at
+    // btree_index.cpp:87-89
     EXPECT_TRUE(text_index->insert(Value::make_text("apple"), make_rid(1, 0)));
     EXPECT_TRUE(text_index->insert(Value::make_text("banana"), make_rid(2, 0)));
     EXPECT_TRUE(text_index->insert(Value::make_text("cherry"), make_rid(3, 0)));
