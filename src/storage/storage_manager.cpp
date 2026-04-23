@@ -219,6 +219,14 @@ bool StorageManager::create_dir_if_not_exists() {
  * @brief Delete a file from storage
  */
 bool StorageManager::delete_file(const std::string& filename) {
+    // Close any open handle first to avoid stale fstream issues
+    auto it = open_files_.find(filename);
+    if (it != open_files_.end()) {
+        if (it->second->is_open()) {
+            it->second->close();
+        }
+        open_files_.erase(it);
+    }
     const std::string filepath = get_full_path(filename);
     return std::remove(filepath.c_str()) == 0;
 }

@@ -45,8 +45,9 @@ class HeapTableTests : public ::testing::Test {
         table_.reset();
         bpm_.reset();
         disk_manager_.reset();
-        // Cleanup test files
+        // Cleanup test files (both test_table and test_table2 created in tests)
         std::remove("./test_data/test_table.heap");
+        std::remove("./test_data/test_table2.heap");
     }
 
     std::unique_ptr<StorageManager> disk_manager_;
@@ -433,8 +434,10 @@ TEST_F(HeapTableTests, IteratorMoveAssignment_SelfMove) {
     Tuple tuple;
     ASSERT_TRUE(it.next(tuple));
 
-    // Self-move assignment is a no-op: operator= checks (this != &other) and returns early
-    it = std::move(it);
+    // Self-move assignment: launder the move through a reference to exercise
+    // the self-check branch (this != &other) without -Wself-move warning
+    auto& tmp = it;
+    it = std::move(tmp);
 
     // Iterator should continue from where it was (past first record, at EOF)
     EXPECT_FALSE(it.next(tuple));
@@ -529,9 +532,12 @@ TEST_F(HeapTableTests, Drop_WithCachedPage_UnpinsBeforeDelete) {
     }
     EXPECT_TRUE(table_->file_id() != 0);
 
-    // Note: drop() succeeds but file is removed from CWD, not from test_data/
-    // This exercises the cached_page_ unpin branch in drop()
+    // HeapTable::drop() unpins cached_page_ (is_dirty=false) then calls
+    // bpm_.delete_file(filename_) -> StorageManager::delete_file ->
+    // get_full_path (prepends data_dir_) and std::remove on the full path.
+    // Verify the file was actually deleted.
     EXPECT_TRUE(table_->drop());
+    EXPECT_FALSE(disk_manager_->file_exists("test_table.heap"));
 }
 
 // ============= Iterator next_view() Tests =============
@@ -602,13 +608,22 @@ TEST_F(HeapTableTests, ReadPage_UsingCachedPage) {
     ASSERT_TRUE(table_->create());
     table_->insert(make_test_tuple(1, "Test"));
 
+    // Cached path: read page 0 after insert (cached_page_ is set)
     char buffer[Page::PAGE_SIZE];
     EXPECT_TRUE(table_->read_page(0, buffer));
-
-    // Buffer should contain page header data
     HeapTable::PageHeader header;
     std::memcpy(&header, buffer, sizeof(HeapTable::PageHeader));
     EXPECT_GT(header.num_slots, 0U);
+
+    // Non-cached path: drop and recreate, then read page 0 without prior insert
+    // This forces the fetch path (no cached_page_)
+    ASSERT_TRUE(table_->drop());
+    ASSERT_TRUE(table_->create());
+    char buffer2[Page::PAGE_SIZE];
+    EXPECT_TRUE(table_->read_page(0, buffer2));
+    HeapTable::PageHeader header2;
+    std::memcpy(&header2, buffer2, sizeof(HeapTable::PageHeader));
+    EXPECT_EQ(header2.num_slots, 0U);  // Fresh page has no slots
 }
 
 TEST_F(HeapTableTests, WritePage_UsingCachedPage) {
@@ -658,20 +673,27 @@ TEST_F(HeapTableTests, Remove_WhenTupleNotOnCachedPage) {
         table_->insert(make_test_tuple(i, "User" + std::to_string(i)));
     }
 
-    // Get the first and last RIDs
+    // Find an RID on a page > 0 by scanning
+    HeapTable::TupleId later_rid;
     auto it = table_->scan();
-    HeapTable::TupleId first_rid = it.current_id();
-
-    // Find an RID on a later page
-    HeapTable::TupleId later_rid(1, 0);  // Page 1
-    HeapTable::TupleMeta meta;
-    bool found = table_->get_meta(later_rid, meta);
-
-    if (found) {
-        // Remove from non-cached page (fetch path)
-        EXPECT_TRUE(table_->remove(later_rid, 1));
-        EXPECT_EQ(table_->tuple_count(), 149U);
+    while (true) {
+        HeapTable::TupleMeta meta;
+        if (!it.next_meta(meta)) break;
+        if (meta.tuple.get(0).as_int64() > 0) {
+            later_rid = it.current_id();
+            break;
+        }
     }
+    // Use later_rid if page_num > 0, else use a fallback hardcoded RID
+    if (later_rid.page_num == 0) {
+        later_rid = HeapTable::TupleId(1, 0);  // Hardcoded fallback
+    }
+
+    HeapTable::TupleMeta meta;
+    ASSERT_TRUE(table_->get_meta(later_rid, meta));
+    const uint64_t before_count = table_->tuple_count();
+    ASSERT_TRUE(table_->remove(later_rid, 1));
+    EXPECT_EQ(table_->tuple_count(), before_count - 1);
 }
 
 }  // namespace

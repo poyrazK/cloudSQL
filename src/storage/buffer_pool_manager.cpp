@@ -227,6 +227,43 @@ bool BufferPoolManager::delete_page(const std::string& file_name, uint32_t page_
     return true;
 }
 
+bool BufferPoolManager::delete_file(const std::string& file_name) {
+    {
+        const std::scoped_lock<std::mutex> lock(latch_);
+
+        const uint32_t file_id = get_file_id_internal(file_name);
+
+        // Evict all pages belonging to this file
+        for (auto it = page_table_.begin(); it != page_table_.end();) {
+            if (it->first.file_id == file_id) {
+                const uint32_t frame_id = it->second;
+                Page* const page = &pages_[frame_id];
+                if (page->pin_count_ > 0) {
+                    return false;  // Cannot delete while pages are pinned
+                }
+                // Flush dirty pages before removing
+                if (page->is_dirty_) {
+                    storage_manager_.write_page(file_name, page->page_id_, page->get_data());
+                    page->is_dirty_ = false;
+                }
+                replacer_.pin(frame_id);
+                page->page_id_ = 0;
+                page->file_name_ = "";
+                page->pin_count_ = 0;
+                free_list_.push_back(frame_id);
+                it = page_table_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // Remove file_id mapping
+        file_id_map_.erase(file_name);
+    }
+
+    return storage_manager_.delete_file(file_name);
+}
+
 void BufferPoolManager::flush_all_pages() {
     const std::scoped_lock<std::mutex> lock(latch_);
 

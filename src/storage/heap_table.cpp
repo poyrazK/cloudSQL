@@ -740,6 +740,9 @@ bool HeapTable::create() {
 }
 
 bool HeapTable::drop() {
+    // Unpin the insert-cached page (is_dirty=false since we're dropping the table)
+    // Note: this is asymmetric with the destructor which uses is_dirty=true -
+    // here we skip writes since the entire file will be deleted anyway.
     if (cached_page_ != nullptr) {
         bpm_.unpin_page_by_id(file_id_, cached_page_id_, false);
         cached_page_ = nullptr;
