@@ -272,6 +272,104 @@ TEST_F(QueryExecutorTests, SelectWithGroupBy) {
     const auto res = execute_sql(env.executor, "SELECT cat, SUM(val) FROM test_table GROUP BY cat");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.row_count(), 2U);
+    // Verify actual aggregated values (A=30, B=5)
+    bool found_a = false, found_b = false;
+    for (size_t i = 0; i < res.row_count(); ++i) {
+        std::string cat_val = res.rows()[i].get(0).to_string();
+        int sum_val = std::stoi(res.rows()[i].get(1).to_string());
+        if (cat_val == "A") {
+            EXPECT_EQ(sum_val, 30);
+            found_a = true;
+        } else if (cat_val == "B") {
+            EXPECT_EQ(sum_val, 5);
+            found_b = true;
+        }
+    }
+    EXPECT_TRUE(found_a);
+    EXPECT_TRUE(found_b);
+}
+
+TEST_F(QueryExecutorTests, SelectWithGroupByCount) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE test_table (cat TEXT, val INT)");
+    execute_sql(env.executor,
+               "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5)");
+    const auto res = execute_sql(
+        env.executor, "SELECT cat, COUNT(val) FROM test_table GROUP BY cat");
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.row_count(), 2U);
+    // Verify counts (A=2, B=1)
+    bool found_a = false, found_b = false;
+    for (size_t i = 0; i < res.row_count(); ++i) {
+        std::string cat_val = res.rows()[i].get(0).to_string();
+        int cnt_val = std::stoi(res.rows()[i].get(1).to_string());
+        if (cat_val == "A") {
+            EXPECT_EQ(cnt_val, 2);
+            found_a = true;
+        } else if (cat_val == "B") {
+            EXPECT_EQ(cnt_val, 1);
+            found_b = true;
+        }
+    }
+    EXPECT_TRUE(found_a);
+    EXPECT_TRUE(found_b);
+}
+
+TEST_F(QueryExecutorTests, SelectWithGroupByMinMax) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE test_table (cat TEXT, val INT)");
+    execute_sql(env.executor,
+               "INSERT INTO test_table VALUES ('A', 10), ('A', 20), ('B', 5), ('B', 15)");
+    const auto res = execute_sql(
+        env.executor, "SELECT cat, MIN(val), MAX(val) FROM test_table GROUP BY cat");
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.row_count(), 2U);
+    // Verify A: min=10, max=20; B: min=5, max=15
+    bool found_a = false, found_b = false;
+    for (size_t i = 0; i < res.row_count(); ++i) {
+        std::string cat_val = res.rows()[i].get(0).to_string();
+        int min_val = std::stoi(res.rows()[i].get(1).to_string());
+        int max_val = std::stoi(res.rows()[i].get(2).to_string());
+        if (cat_val == "A") {
+            EXPECT_EQ(min_val, 10);
+            EXPECT_EQ(max_val, 20);
+            found_a = true;
+        } else if (cat_val == "B") {
+            EXPECT_EQ(min_val, 5);
+            EXPECT_EQ(max_val, 15);
+            found_b = true;
+        }
+    }
+    EXPECT_TRUE(found_a);
+    EXPECT_TRUE(found_b);
+}
+
+TEST_F(QueryExecutorTests, SelectWithGroupByMultipleColumns) {
+    TestEnvironment env;
+    execute_sql(env.executor,
+               "CREATE TABLE test_table (cat1 TEXT, cat2 TEXT, val INT)");
+    // 4 groups: (A,X), (A,Y), (B,X), (B,Y)
+    execute_sql(env.executor,
+               "INSERT INTO test_table VALUES ('A', 'X', 10), ('A', 'Y', 20), "
+               "('A', 'X', 5), ('A', 'Y', 15), ('B', 'X', 10), ('B', 'Y', 20)");
+    const auto res = execute_sql(env.executor,
+                                 "SELECT cat1, cat2, SUM(val) FROM test_table GROUP BY "
+                                 "cat1, cat2 ORDER BY cat1, cat2");
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.row_count(), 4U);
+    // Verify sums: (A,X)=15, (A,Y)=35, (B,X)=10, (B,Y)=20
+    EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "A");
+    EXPECT_STREQ(res.rows()[0].get(1).to_string().c_str(), "X");
+    EXPECT_EQ(std::stoi(res.rows()[0].get(2).to_string()), 15);
+    EXPECT_STREQ(res.rows()[1].get(0).to_string().c_str(), "A");
+    EXPECT_STREQ(res.rows()[1].get(1).to_string().c_str(), "Y");
+    EXPECT_EQ(std::stoi(res.rows()[1].get(2).to_string()), 35);
+    EXPECT_STREQ(res.rows()[2].get(0).to_string().c_str(), "B");
+    EXPECT_STREQ(res.rows()[2].get(1).to_string().c_str(), "X");
+    EXPECT_EQ(std::stoi(res.rows()[2].get(2).to_string()), 10);
+    EXPECT_STREQ(res.rows()[3].get(0).to_string().c_str(), "B");
+    EXPECT_STREQ(res.rows()[3].get(1).to_string().c_str(), "Y");
+    EXPECT_EQ(std::stoi(res.rows()[3].get(2).to_string()), 20);
 }
 
 TEST_F(QueryExecutorTests, SelectNonExistentTable) {
