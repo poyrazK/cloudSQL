@@ -102,6 +102,13 @@ class StorageManager {
      */
     bool create_dir_if_not_exists();
 
+    /**
+     * @brief Delete a file from storage
+     * @param filename The relative name of the file
+     * @return true if deleted, false otherwise
+     */
+    bool delete_file(const std::string& filename);
+
    private:
     std::string data_dir_;
     std::unordered_map<std::string, std::unique_ptr<std::fstream>> open_files_;

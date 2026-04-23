@@ -106,6 +106,8 @@ class BufferPoolManager {
 
     bool close_file(const std::string& file_name) { return storage_manager_.close_file(file_name); }
 
+    bool delete_file(const std::string& file_name);
+
     /**
      * @brief Flush all pages in the pool to disk
      */

@@ -276,8 +276,16 @@ class HeapTable {
     /** @brief Removes the physical heap file */
     bool drop();
 
-   private:
+    /**
+     * @brief Read a page from the heap file into buffer
+     * @note Bypasses MVCC and cached_page_ invariants — test use only
+     */
     bool read_page(uint32_t page_num, char* buffer) const;
+
+    /**
+     * @brief Write a buffer into a page of the heap file
+     * @note Bypasses MVCC and cached_page_ invariants — test use only
+     */
     bool write_page(uint32_t page_num, const char* buffer);
 };
 
