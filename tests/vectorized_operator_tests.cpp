@@ -1169,6 +1169,10 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultipleMatches) {
     EXPECT_EQ(left_ids[0], 1);
     EXPECT_EQ(left_ids[1], 1);  // Second match for left id=1
     EXPECT_EQ(left_ids[2], 2);
+    // Right-side: two rows with id=1 (matches for left_id=1), then one row with id=2 (match for left_id=2)
+    EXPECT_EQ(right_ids[0], 1);
+    EXPECT_EQ(right_ids[1], 1);  // Second right row with id=1
+    EXPECT_EQ(right_ids[2], 2);
 }
 
 TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftNullKeys) {
