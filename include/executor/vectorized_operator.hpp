@@ -577,6 +577,12 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
     std::vector<bool> left_matched_in_batch_;
     std::vector<size_t> unmatched_indices_;
 
+    // Probe state for resumable bucket scanning (prevents batch overflow)
+    bool resuming_bucket_scan_ = false;  // True if we're resuming a mid-bucket scan
+    size_t resumed_bucket_idx_ = 0;     // Bucket index when resuming
+    size_t resumed_entry_idx_ = 0;      // Entry index within bucket when resuming
+    common::Value resumed_key_val_;      // Key value being probed when resuming
+
     // Join type
     JoinType join_type_;
 
@@ -711,10 +717,52 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 left_row_idx_ = 0;
                 // Reset matched tracking for new batch
                 std::fill(left_matched_in_batch_.begin(), left_matched_in_batch_.end(), false);
+                // Clear resume state when advancing to new batch
+                resuming_bucket_scan_ = false;
             }
 
             // Process rows in current batch
             while (left_row_idx_ < left_batch_->row_count() && out_batch.row_count() < BATCH_SIZE) {
+                // Check if we need to resume an interrupted bucket scan
+                if (resuming_bucket_scan_) {
+                    // We were in the middle of scanning a bucket - resume from saved position
+                    const auto& key_val = resumed_key_val_;
+                    auto& bucket = buckets_[resumed_bucket_idx_];
+                    bool found_match = left_matched_in_batch_[left_row_idx_];
+
+                    // Resume scanning bucket from resumed_entry_idx_
+                    for (size_t i = resumed_entry_idx_; i < bucket.key_values.size(); ++i) {
+                        if (out_batch.row_count() >= BATCH_SIZE) {
+                            // Batch full - save state and return
+                            resuming_bucket_scan_ = true;
+                            resumed_bucket_idx_ = resumed_bucket_idx_;
+                            resumed_entry_idx_ = i;
+                            resumed_key_val_ = key_val;
+                            return true;  // Caller must consume batch before continuing
+                        }
+
+                        const auto& bucket_key = bucket.key_values[i][right_key_col_idx_];
+                        if (bucket_key == key_val) {
+                            emit_joined_row(out_batch, left_row_idx_, bucket.payload_rows[i]);
+                            found_match = true;
+                            if (join_type_ == JoinType::Left) {
+                                left_matched_in_batch_[left_row_idx_] = true;
+                            }
+                        }
+                    }
+
+                    // Finished scanning this bucket
+                    resuming_bucket_scan_ = false;
+
+                    // Track unmatched for LEFT join
+                    if (join_type_ == JoinType::Left && !found_match) {
+                        unmatched_indices_.push_back(left_row_idx_);
+                    }
+
+                    left_row_idx_++;
+                    continue;
+                }
+
                 const auto& key_val = left_batch_->get_column(left_key_col_idx_).get(left_row_idx_);
 
                 if (key_val.is_null()) {
@@ -732,6 +780,15 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 // Search for match in this bucket
                 bool found_match = false;
                 for (size_t i = 0; i < bucket.key_values.size(); ++i) {
+                    if (out_batch.row_count() >= BATCH_SIZE) {
+                        // Batch full - save state and return
+                        resuming_bucket_scan_ = true;
+                        resumed_bucket_idx_ = bucket_idx;
+                        resumed_entry_idx_ = i;
+                        resumed_key_val_ = key_val;
+                        return true;  // Caller must consume batch before continuing
+                    }
+
                     const auto& bucket_key = bucket.key_values[i][right_key_col_idx_];
                     if (bucket_key == key_val) {
                         // Match found - emit row
