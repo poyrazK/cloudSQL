@@ -740,7 +740,7 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                         if (join_type_ == JoinType::Left) {
                             left_matched_in_batch_[left_row_idx_] = true;
                         }
-                        break;  // Each left row matches at most one right row
+                        // Continue scanning bucket for all matching right rows
                     }
                 }
 
