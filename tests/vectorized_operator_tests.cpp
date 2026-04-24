@@ -829,30 +829,23 @@ TEST_F(VectorizedGroupByTests, VerifyGroupKeyValues) {
 
 // Helper to create a VectorizedHashJoinOperator
 std::unique_ptr<VectorizedHashJoinOperator> make_vectorized_hash_join(
-    std::unique_ptr<VectorizedOperator> left,
-    std::unique_ptr<VectorizedOperator> right,
-    const std::string& left_key,
-    const std::string& right_key,
-    JoinType join_type) {
+    std::unique_ptr<VectorizedOperator> left, std::unique_ptr<VectorizedOperator> right,
+    const std::string& left_key, const std::string& right_key, JoinType join_type) {
     // Build output schema: left columns + right columns
     Schema out_schema;
     const auto& left_schema = left->output_schema();
     const auto& right_schema = right->output_schema();
 
     for (size_t i = 0; i < left_schema.columns().size(); ++i) {
-        out_schema.add_column(left_schema.columns()[i].name(),
-                             left_schema.columns()[i].type());
+        out_schema.add_column(left_schema.columns()[i].name(), left_schema.columns()[i].type());
     }
     for (size_t i = 0; i < right_schema.columns().size(); ++i) {
-        out_schema.add_column(right_schema.columns()[i].name(),
-                             right_schema.columns()[i].type());
+        out_schema.add_column(right_schema.columns()[i].name(), right_schema.columns()[i].type());
     }
 
     return std::make_unique<VectorizedHashJoinOperator>(
-        std::move(left), std::move(right),
-        std::make_unique<ColumnExpr>(left_key),
-        std::make_unique<ColumnExpr>(right_key),
-        join_type, std::move(out_schema));
+        std::move(left), std::move(right), std::make_unique<ColumnExpr>(left_key),
+        std::make_unique<ColumnExpr>(right_key), join_type, std::move(out_schema));
 }
 
 TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeft) {
@@ -891,8 +884,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeft) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Left);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Left);
 
     auto result = VectorBatch::create(join->output_schema());
     std::vector<std::tuple<int64_t, std::string, int64_t, int64_t>> matches;
@@ -957,20 +950,19 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinInner) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Inner);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
 
     auto result = VectorBatch::create(join->output_schema());
     std::vector<std::tuple<int64_t, std::string, int64_t, int64_t>> matches;
 
     while (join->next_batch(*result)) {
         for (size_t i = 0; i < result->row_count(); ++i) {
-            matches.push_back(std::make_tuple(
-                result->get_column(0).get(i).as_int64(),   // left.id
-                result->get_column(1).get(i).as_text(),      // left.name
-                result->get_column(2).get(i).as_int64(),   // right.id
-                result->get_column(3).get(i).as_int64()   // right.val
-            ));
+            matches.push_back(std::make_tuple(result->get_column(0).get(i).as_int64(),  // left.id
+                                              result->get_column(1).get(i).as_text(),   // left.name
+                                              result->get_column(2).get(i).as_int64(),  // right.id
+                                              result->get_column(3).get(i).as_int64()   // right.val
+                                              ));
         }
         result->clear();
     }
@@ -1014,8 +1006,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinNullKeys) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_null_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Inner);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
 
     auto result = VectorBatch::create(join->output_schema());
     int match_count = 0;
@@ -1061,8 +1053,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinEmptyRight) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Left);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Left);
 
     auto result = VectorBatch::create(join->output_schema());
     int total_rows = 0;
@@ -1110,8 +1102,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinEmptyLeft) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Inner);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
 
     auto result = VectorBatch::create(join->output_schema());
     int total_rows = 0;
@@ -1157,8 +1149,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultipleMatches) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Inner);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
 
     auto result = VectorBatch::create(join->output_schema());
     std::vector<int64_t> left_ids;
@@ -1210,8 +1202,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftNullKeys) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Left);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Left);
 
     auto result = VectorBatch::create(join->output_schema());
     int total_rows = 0;
@@ -1265,20 +1257,19 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinOutputValues) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Inner);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
 
     auto result = VectorBatch::create(join->output_schema());
     std::vector<std::tuple<int64_t, std::string, int64_t, int64_t>> matches;
 
     while (join->next_batch(*result)) {
         for (size_t i = 0; i < result->row_count(); ++i) {
-            matches.push_back(std::make_tuple(
-                result->get_column(0).get(i).as_int64(),    // left.id
-                result->get_column(1).get(i).as_text(),       // left.name
-                result->get_column(2).get(i).as_int64(),    // right.id
-                result->get_column(3).get(i).as_int64()      // right.val
-            ));
+            matches.push_back(std::make_tuple(result->get_column(0).get(i).as_int64(),  // left.id
+                                              result->get_column(1).get(i).as_text(),   // left.name
+                                              result->get_column(2).get(i).as_int64(),  // right.id
+                                              result->get_column(3).get(i).as_int64()   // right.val
+                                              ));
         }
         result->clear();
     }
@@ -1330,8 +1321,8 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultiBatch) {
     auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
-    auto join = make_vectorized_hash_join(
-        std::move(left_scan), std::move(right_scan), "id", "id", JoinType::Inner);
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
 
     auto result = VectorBatch::create(join->output_schema());
     int64_t total_rows = 0;
