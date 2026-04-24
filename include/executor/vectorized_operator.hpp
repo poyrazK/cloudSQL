@@ -541,7 +541,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
  * @brief Hash bucket for graceful hash join
  */
 struct VectorizedHashBucket {
-    std::vector<std::vector<common::Value>> key_values;   // Key column values per row
+    std::vector<std::vector<common::Value>> key_values;    // Key column values per row
     std::vector<std::vector<common::Value>> payload_rows;  // Full right row values
 };
 
@@ -568,9 +568,9 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
     std::unique_ptr<VectorBatch> right_batch_;
 
     // Probe state
-    size_t left_row_idx_ = 0;  // Current row within left_batch_
-    bool right_exhausted_ = false;    // All right consumed
-    bool left_exhausted_ = false;     // All left consumed
+    size_t left_row_idx_ = 0;       // Current row within left_batch_
+    bool right_exhausted_ = false;  // All right consumed
+    bool left_exhausted_ = false;   // All left consumed
 
     // For LEFT join: track matched/unmatched rows
     static constexpr size_t BATCH_SIZE = 1024;
@@ -593,11 +593,10 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
 
    public:
     VectorizedHashJoinOperator(std::unique_ptr<VectorizedOperator> left,
-                              std::unique_ptr<VectorizedOperator> right,
-                              std::unique_ptr<parser::Expression> left_key,
-                              std::unique_ptr<parser::Expression> right_key,
-                              JoinType join_type,
-                              Schema output_schema)
+                               std::unique_ptr<VectorizedOperator> right,
+                               std::unique_ptr<parser::Expression> left_key,
+                               std::unique_ptr<parser::Expression> right_key, JoinType join_type,
+                               Schema output_schema)
         : VectorizedOperator(std::move(output_schema)),
           left_(std::move(left)),
           right_(std::move(right)),
@@ -702,7 +701,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 if (!left_->next_batch(*left_batch_)) {
                     left_exhausted_ = true;
                     right_exhausted_ = true;
-                    // If we have data in out_batch (from unmatched emit), return true to give caller the data
+                    // If we have data in out_batch (from unmatched emit), return true to give
+                    // caller the data
                     if (out_batch.row_count() > 0) {
                         return true;
                     }
@@ -812,7 +812,6 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
         return false;
     }
 };
-
 
 }  // namespace cloudsql::executor
 
