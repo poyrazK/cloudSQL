@@ -89,6 +89,7 @@ coverage/
 # Storage Files
 # ==============
 *.heap
+*.bin
 
 # ==============
 # Emacs
