@@ -1119,8 +1119,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinEmptyLeft) {
 
 TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultipleMatches) {
     // Test when right has duplicate keys: id=1 appears twice
-    // Current implementation limitation: each left row matches at most ONE right row
-    // This is a known issue - proper hash join should match ALL right rows with same key
+    // Each left row should match ALL right rows with the same key
     Schema left_schema;
     left_schema.add_column("id", common::ValueType::TYPE_INT64);
 
@@ -1164,13 +1163,17 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultipleMatches) {
         result->clear();
     }
 
-    // NOTE: Current implementation uses "break" after first match per left row
-    // So each left row only matches ONE right row, even if duplicates exist
-    // This test documents the current behavior; proper hash join would return 3
-    EXPECT_EQ(left_ids.size(), 2);  // left_id=1 matches once, left_id=2 matches once
-    EXPECT_EQ(right_ids.size(), 2);
+    // INNER: left_id=1 matches 2 right rows, left_id=2 matches 1 right row = 3 total
+    EXPECT_EQ(left_ids.size(), 3);
+    EXPECT_EQ(right_ids.size(), 3);
     EXPECT_EQ(left_ids[0], 1);
-    EXPECT_EQ(left_ids[1], 2);
+    EXPECT_EQ(left_ids[1], 1);  // Second match for left id=1
+    EXPECT_EQ(left_ids[2], 2);
+    // Right-side: two rows with id=1 (matches for left_id=1), then one row with id=2 (match for
+    // left_id=2)
+    EXPECT_EQ(right_ids[0], 1);
+    EXPECT_EQ(right_ids[1], 1);  // Second right row with id=1
+    EXPECT_EQ(right_ids[2], 2);
 }
 
 TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftNullKeys) {
