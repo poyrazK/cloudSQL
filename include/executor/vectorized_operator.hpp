@@ -579,8 +579,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
 
     // Probe state for resumable bucket scanning (prevents batch overflow)
     bool resuming_bucket_scan_ = false;  // True if we're resuming a mid-bucket scan
-    size_t resumed_bucket_idx_ = 0;     // Bucket index when resuming
-    size_t resumed_entry_idx_ = 0;      // Entry index within bucket when resuming
+    size_t resumed_bucket_idx_ = 0;      // Bucket index when resuming
+    size_t resumed_entry_idx_ = 0;       // Entry index within bucket when resuming
     common::Value resumed_key_val_;      // Key value being probed when resuming
 
     // Join type
