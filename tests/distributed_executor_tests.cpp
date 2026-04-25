@@ -662,8 +662,7 @@ TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle) {
     servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
 
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -697,8 +696,7 @@ TEST_F(DistributedExecutorWithNodesTests, LeftJoinShuffle) {
     servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
 
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -731,8 +729,7 @@ TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle) {
     servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
 
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM t1 RIGHT JOIN t2 ON t1.id = t2.id");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 RIGHT JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -775,8 +772,7 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     servers_[0]->set_handler(network::RpcType::FetchUnmatchedLeftRows, success_h);
     servers_[1]->set_handler(network::RpcType::FetchUnmatchedLeftRows, success_h);
 
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM t1 FULL JOIN t2 ON t1.id = t2.id");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 FULL JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -830,8 +826,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
     cm_->register_node("node_1", "127.0.0.1", 6430, config::RunMode::Data);
     set_execute_fragment_handler(*servers_[0], true);
 
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM test_table ORDER BY id");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM test_table ORDER BY id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -849,8 +844,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithLimitOffset) {
     cm_->register_node("node_1", "127.0.0.1", 6431, config::RunMode::Data);
     set_execute_fragment_handler(*servers_[0], true);
 
-    auto lexer = std::make_unique<Lexer>(
-        "SELECT * FROM test_table LIMIT 10 OFFSET 5");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM test_table LIMIT 10 OFFSET 5");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -870,32 +864,32 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
 
     // TxnPrepare returns failure → all_prepared = false → TxnAbort
     srv1->set_handler(network::RpcType::TxnPrepare,
-                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                         network::QueryResultsReply reply;
-                         reply.success = false;
-                         reply.error_msg = "Prepare failed";
-                         network::RpcHeader resp_h;
-                         resp_h.type = network::RpcType::TxnPrepare;
-                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                         char h_buf[network::RpcHeader::HEADER_SIZE];
-                         resp_h.encode(h_buf);
-                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                         auto data = reply.serialize();
-                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                     });
+                      [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                          network::QueryResultsReply reply;
+                          reply.success = false;
+                          reply.error_msg = "Prepare failed";
+                          network::RpcHeader resp_h;
+                          resp_h.type = network::RpcType::TxnPrepare;
+                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                          char h_buf[network::RpcHeader::HEADER_SIZE];
+                          resp_h.encode(h_buf);
+                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                          auto data = reply.serialize();
+                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                      });
     srv1->set_handler(network::RpcType::TxnAbort,
-                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                         network::QueryResultsReply reply;
-                         reply.success = true;
-                         network::RpcHeader resp_h;
-                         resp_h.type = network::RpcType::TxnAbort;
-                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                         char h_buf[network::RpcHeader::HEADER_SIZE];
-                         resp_h.encode(h_buf);
-                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                         auto data = reply.serialize();
-                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                     });
+                      [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                          network::QueryResultsReply reply;
+                          reply.success = true;
+                          network::RpcHeader resp_h;
+                          resp_h.type = network::RpcType::TxnAbort;
+                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                          char h_buf[network::RpcHeader::HEADER_SIZE];
+                          resp_h.encode(h_buf);
+                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                          auto data = reply.serialize();
+                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                      });
 
     auto lexer = std::make_unique<Lexer>("COMMIT");
     Parser parser(std::move(lexer));
