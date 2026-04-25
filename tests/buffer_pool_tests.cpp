@@ -469,4 +469,40 @@ TEST(BufferPoolTests, PoolExhaustion) {
     bpm.unpin_page(file, id3, false);
 }
 
+TEST(BufferPoolTests, FetchPage_ReadFailure) {
+    // Create a file smaller than PAGE_SIZE (only 1 byte) at the correct path
+    // before StorageManager opens it. When fetch_page tries to read page 0,
+    // read_page sees gcount() < PAGE_SIZE and !eof && gcount > 0 -> returns false.
+    // This exercises the "if (!read_page()) memset(page, 0)" branch (lines 104-107).
+    const std::string short_file = "./test_data/bpm_short_read.db";
+    static_cast<void>(std::remove(short_file.c_str()));
+    {
+        std::ofstream out(short_file, std::ios::binary);
+        out.put(0xFF);  // 1-byte "corrupt" file
+    }
+
+    StorageManager disk_manager("./test_data");
+    BufferPoolManager bpm(2, disk_manager);
+
+    // fetch_page_by_id on page 0 - read_page fails on short read, page zeroed
+    Page* page = bpm.fetch_page("bpm_short_read.db", 0);
+    ASSERT_NE(page, nullptr);
+
+    // Verify the first byte is our data, and remaining bytes are zeroed (read failure path)
+    const char* data = page->get_data();
+    // Byte 0 should be 0xFF from our file, subsequent bytes zeroed by read_page's zero-fill
+    EXPECT_EQ(static_cast<unsigned char>(data[0]), 0xFFu);
+    bool rest_zero = true;
+    for (size_t i = 1; i < Page::PAGE_SIZE; ++i) {
+        if (data[i] != 0) {
+            rest_zero = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(rest_zero);
+
+    bpm.unpin_page("bpm_short_read.db", 0, false);
+    static_cast<void>(std::remove(short_file.c_str()));
+}
+
 }  // namespace
