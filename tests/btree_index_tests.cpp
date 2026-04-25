@@ -5,9 +5,14 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <fcntl.h>
 #include <memory>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -39,8 +44,11 @@ class BTreeIndexTests : public ::testing::Test {
         index_.reset();
         bpm_.reset();
         disk_manager_.reset();
-        // Cleanup test files
+        // Cleanup test files (main index and auxiliary ones used in specific tests)
         std::remove("./test_idx_data/test_index.idx");
+        std::remove("./test_idx_data/text_fill_idx.idx");
+        std::remove("./test_idx_data/text_scan_idx.idx");
+        std::remove("./test_idx_data/fill_idx.idx");
     }
 
     std::unique_ptr<StorageManager> disk_manager_;
@@ -340,14 +348,12 @@ TEST_F(BTreeIndexTests, InsertManyTextKeys_FillLeaf) {
         }
         count = i + 1;
     }
-    // Verify we inserted some but hit the limit
+    // Verify we inserted some and that the leaf-full branch was reached.
+    // insert(...) must have returned false at least once (count < 500).
     EXPECT_GT(count, 0);
-    EXPECT_LE(count, 500);
-    // The first insert should succeed
-    EXPECT_GE(count, 1);
-
+    ASSERT_LT(count, 500) << "insert should fail when leaf is full";
+    // Note: text_index cleanup handled by TearDown (text_fill_idx.idx added)
     text_index->close();
-    std::remove("./test_idx_data/text_fill_idx.idx");
 }
 
 TEST_F(BTreeIndexTests, ScanIterator_TextKeyDeserialization) {
@@ -375,8 +381,8 @@ TEST_F(BTreeIndexTests, ScanIterator_TextKeyDeserialization) {
     EXPECT_EQ(entries_found, 3);
     EXPECT_TRUE(it.is_done());
 
+    // Note: text_scan_idx.idx cleanup handled by TearDown
     text_index->close();
-    std::remove("./test_idx_data/text_scan_idx.idx");
 }
 
 TEST_F(BTreeIndexTests, InsertReturnsFalse_WhenLeafFull) {
@@ -394,15 +400,167 @@ TEST_F(BTreeIndexTests, InsertReturnsFalse_WhenLeafFull) {
         if (!result) {
             // Should fail once leaf is full (around entry 40)
             EXPECT_GE(i, 30);  // Should have inserted at least 30
+            // Note: fill_idx.idx cleanup handled by TearDown
             fill_index->close();
-            std::remove("./test_idx_data/fill_idx.idx");
             return;
         }
     }
     // If we inserted 60 without failure, the space check isn't working as expected
-    // This still exercises the insert path; the test verifies at least some inserts work
+    // This still exercises the insert path; test verifies at least some inserts work.
+    // Note: fill_idx.idx cleanup handled by TearDown
     fill_index->close();
-    std::remove("./test_idx_data/fill_idx.idx");
+}
+
+// ============= BTreeIndex Additional Coverage Tests =============
+
+using cloudsql::common::ValueType;
+using cloudsql::storage::BTreeIndex;
+using cloudsql::storage::BufferPoolManager;
+using cloudsql::storage::HeapTable;
+using cloudsql::storage::StorageManager;
+
+// Separate test fixture for the next_leaf test since we need
+// direct StorageManager access to write raw linked pages
+class BTreeIndexNextLeafTests : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        disk_manager_ = std::make_unique<StorageManager>("./test_nextleaf_data");
+        disk_manager_->create_dir_if_not_exists();
+        bpm_ = std::make_unique<BufferPoolManager>(8, *disk_manager_);  // small pool
+    }
+
+    void TearDown() override {
+        index_.reset();
+        bpm_.reset();
+        disk_manager_.reset();
+        std::remove("./test_nextleaf_data/linked_idx.idx");
+    }
+
+    std::unique_ptr<StorageManager> disk_manager_;
+    std::unique_ptr<BufferPoolManager> bpm_;
+    std::unique_ptr<BTreeIndex> index_;
+};
+
+// Validate NodeHeader layout so the test fails loudly if the struct changes.
+// NodeHeader layout: type(1) at offset 0, num_keys(2) at offset 2,
+// parent_page(4) at offset 4, next_leaf(4) at offset 8. Total = 12 bytes.
+static_assert(sizeof(BTreeIndex::NodeHeader) == 12, "NodeHeader must be 12 bytes");
+static_assert(offsetof(BTreeIndex::NodeHeader, type) == 0, "type at offset 0");
+static_assert(offsetof(BTreeIndex::NodeHeader, num_keys) == 2, "num_keys at offset 2");
+static_assert(offsetof(BTreeIndex::NodeHeader, parent_page) == 4, "parent_page at offset 4");
+static_assert(offsetof(BTreeIndex::NodeHeader, next_leaf) == 8, "next_leaf at offset 8");
+
+TEST_F(BTreeIndexNextLeafTests, ScanIterator_NextLeaf) {
+    // Build a 2-page linked leaf structure directly on disk using raw I/O,
+    // bypassing the BTreeIndex API entirely for page creation.
+    // Layout: page 0 (2 entries, next_leaf→1) -> page 1 (1 entry, next_leaf→0)
+    char page0[Page::PAGE_SIZE];
+    char page1[Page::PAGE_SIZE];
+    std::memset(page0, 0, sizeof(page0));
+    std::memset(page1, 0, sizeof(page1));
+
+    // NodeHeader layout: type(1) at offset 0, padding(1) at offset 1,
+    // num_keys(2) at offset 2, parent_page(4) at offset 4, next_leaf(4) at offset 8
+    page0[0] = 0;                                          // type: Leaf
+    page0[2] = 2;                                          // num_keys low byte (LE)
+    page0[3] = 0;                                          // num_keys high byte
+    page0[8] = 1;                                          // next_leaf: page 1 (LE)
+    page0[9] = page0[10] = page0[11] = 0;                 // next_leaf high bytes
+
+    page1[0] = 0;                                         // type: Leaf
+    page1[2] = 1;                                         // num_keys: 1 (LE)
+    page1[3] = 0;                                         // num_keys high byte
+    // next_leaf at offset 8 = 0 (terminal leaf)
+
+    // Entry format: type|lexeme|page|slot| (10 bytes each, null-terminated string)
+    std::memcpy(page0 + 12, "5|999|1|0|", 10);            // page 0 entry 0
+    std::memcpy(page0 + 22, "5|111|1|1|", 10);            // page 0 entry 1
+    std::memcpy(page1 + 12, "5|888|2|0|", 10);            // page 1 entry 0
+
+    // Use raw C I/O to write the linked structure. No BTreeIndex/BPM objects
+    // own this file yet, so no dirty-page flush can corrupt our data.
+    {
+        int fd = open("./test_nextleaf_data/linked_idx.idx",
+                      O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        ASSERT_TRUE(fd >= 0);
+        ASSERT_EQ(write(fd, page0, Page::PAGE_SIZE), Page::PAGE_SIZE);
+        ASSERT_EQ(write(fd, page1, Page::PAGE_SIZE), Page::PAGE_SIZE);
+        ASSERT_EQ(fsync(fd), 0);
+        ASSERT_EQ(close(fd), 0);
+    }
+
+    // Create the index and open the crafted file
+    index_ = std::make_unique<BTreeIndex>("linked_idx", *bpm_, ValueType::TYPE_INT64);
+    ASSERT_TRUE(index_->open());
+
+    // scan() iterates through all leaf pages via the next_leaf chain.
+    // Page 0 has 2 entries (999, 111) and next_leaf=1.
+    // Page 1 has 1 entry (888) and next_leaf=0.
+    // The Iterator::next method follows the next_leaf chain to page 1 when
+    // slot reaches num_keys on page 0, exercising the `next_leaf != 0` branch.
+    auto it = index_->scan();
+
+    // Collect all entries via the Iterator, which follows next_leaf chain
+    // to visit pages beyond the starting root page.
+    BTreeIndex::Entry entry;
+    int count = 0;
+    std::vector<int64_t> found_keys;
+    while (it.next(entry)) {
+        ++count;
+        found_keys.push_back(entry.key.as_int64());
+    }
+    EXPECT_EQ(count, 3) << "scan found " << count << " entries";
+}
+
+// Test that write_page new_page path is reachable when buffer pool is exhausted.
+// Since BTreeIndex::write_page is private, we test through insert() by pinning
+// all frames, then inserting to a page not in the table.
+class BTreeIndexWritePageNewPageTests : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        disk_manager_ = std::make_unique<StorageManager>("./test_writetest_data");
+        disk_manager_->create_dir_if_not_exists();
+        bpm_ = std::make_unique<BufferPoolManager>(2, *disk_manager_);  // tiny pool
+    }
+
+    void TearDown() override {
+        index_.reset();
+        bpm_.reset();
+        disk_manager_.reset();
+        std::remove("./test_writetest_data/write_test.idx");
+    }
+
+    std::unique_ptr<StorageManager> disk_manager_;
+    std::unique_ptr<BufferPoolManager> bpm_;
+    std::unique_ptr<BTreeIndex> index_;
+};
+
+// Rename test to reflect actual behavior: with find_leaf always returning
+// root_page_=0, write_page only ever hits cached page 0 and new_page fallback
+// is never reached. Insert succeeds via cached page even when pool is otherwise full.
+TEST_F(BTreeIndexWritePageNewPageTests, Insert_AfterPoolExhausted_StillSucceedsViaCachedPage) {
+    index_ = std::make_unique<BTreeIndex>("write_test", *bpm_, ValueType::TYPE_INT64);
+    ASSERT_TRUE(index_->create());
+    ASSERT_TRUE(index_->open());
+
+    // Insert first entry - page 0 is established and pinned in pool
+    ASSERT_TRUE(index_->insert(Value::make_int64(42), HeapTable::TupleId(999, 0)));
+
+    // Fill the only frame with a pinned dummy page (pool is now full)
+    uint32_t pg_dummy = 0;
+    Page* p_dummy = bpm_->new_page("dummy", &pg_dummy);
+    ASSERT_NE(p_dummy, nullptr);
+
+    // Insert should still succeed because write_page(0) hits cached page 0.
+    // The new_page path in write_page is only reached for pages not in page_table
+    // AND when no frames are available - but since find_leaf always returns 0
+    // and page 0 is already cached, fetch_page succeeds and new_page is not called.
+    bool insert_ok = index_->insert(Value::make_int64(100), HeapTable::TupleId(1, 1));
+    EXPECT_TRUE(insert_ok);
+
+    // Clean up
+    bpm_->unpin_page("dummy", pg_dummy, false);
+    bpm_->delete_file("dummy");
 }
 
 }  // namespace

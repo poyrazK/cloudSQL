@@ -48,6 +48,12 @@ class HeapTableTests : public ::testing::Test {
         // Cleanup test files (both test_table and test_table2 created in tests)
         std::remove("./test_data/test_table.heap");
         std::remove("./test_data/test_table2.heap");
+        // Auxiliary tables created by individual tests
+        std::remove("./test_data/bool_table.heap");
+        std::remove("./test_data/float_table.heap");
+        std::remove("./test_data/float_view_table.heap");
+        std::remove("./test_data/mapped_table.heap");
+        std::remove("./test_data/big_table.heap");
     }
 
     std::unique_ptr<StorageManager> disk_manager_;
@@ -735,8 +741,7 @@ TEST_F(HeapTableTests, InsertAndRetrieveBool) {
         count++;
     }
     EXPECT_EQ(count, 2);
-
-    std::remove("./test_data/bool_table.heap");
+    // Note: bool_table.heap cleanup handled by TearDown
 }
 
 TEST_F(HeapTableTests, InsertAndRetrieveFloat) {
@@ -766,8 +771,7 @@ TEST_F(HeapTableTests, InsertAndRetrieveFloat) {
 
     EXPECT_DOUBLE_EQ(out1.get(1).as_float64(), 3.14159);
     EXPECT_DOUBLE_EQ(out2.get(1).as_float64(), 2.71828);
-
-    std::remove("./test_data/float_table.heap");
+    // Note: float_table.heap cleanup handled by TearDown
 }
 
 TEST_F(HeapTableTests, TupleView_GetFloatValue) {
@@ -794,8 +798,7 @@ TEST_F(HeapTableTests, TupleView_GetFloatValue) {
     // get_value on column 1 (FLOAT64)
     auto val = view.get_value(1);
     EXPECT_DOUBLE_EQ(val.as_float64(), 1.41421);
-
-    std::remove("./test_data/float_view_table.heap");
+    // Note: float_view_table.heap cleanup handled by TearDown
 }
 
 // ============= write_page() Non-Cached Path =============
@@ -866,6 +869,95 @@ TEST_F(HeapTableTests, PhysicalRemove_NonCachedPage) {
     const auto before_count = table_->tuple_count();
     EXPECT_TRUE(table_->physical_remove(later_rid));
     EXPECT_EQ(table_->tuple_count(), before_count - 1);
+}
+
+// ============= TupleView column_mapping path =============
+
+// Exercises heap_table.cpp lines 65-75: when column_mapping is set,
+// get_value resolves logical col_index through the mapping to get
+// the physical column index, then walks the payload accordingly.
+// This branch is only reachable when a TupleView has a non-null column_mapping,
+// which normally comes from ProjectOperator. We test it directly here.
+TEST_F(HeapTableTests, TupleView_GetValue_WithColumnMapping) {
+    ASSERT_TRUE(table_->create());
+    // Physical table: col0=id(INT64), col1=name(TEXT), col2=flag(BOOL)
+    auto phys_schema = std::make_unique<Schema>();
+    phys_schema->add_column("id", ValueType::TYPE_INT64, false);
+    phys_schema->add_column("name", ValueType::TYPE_TEXT, false);
+    phys_schema->add_column("flag", ValueType::TYPE_BOOL, false);
+
+    HeapTable mapped_table("mapped_table", *bpm_, *phys_schema);
+    ASSERT_TRUE(mapped_table.create());
+
+    // Insert a tuple: (id=99, name="Test", flag=true)
+    auto tuple = Tuple({Value::make_int64(99), Value::make_text("Test"), Value::make_bool(true)});
+    mapped_table.insert(tuple);
+
+    // Get a TupleView and manually set column_mapping to test the mapping path.
+    // column_mapping = {2, 0} means: logical col0 → physical col2, logical col1 → physical col0
+    // This exercises the column_mapping branch in get_value (line 73-74)
+    // NOTE: view.payload_data points into a page pinned by the iterator. The iterator
+    // must remain alive and not be advanced until all view.get_value() calls complete,
+    // otherwise the payload_data pointer becomes invalid (dangling).
+    auto it = mapped_table.scan();
+    HeapTable::TupleView view;
+    ASSERT_TRUE(it.next_view(view));
+
+    // Build a column mapping: logical col0 points to physical col2 (flag),
+    // logical col1 points to physical col0 (id).
+    // view.schema is a 3-column physical schema, but column_mapping has only 2 entries,
+    // so get_value() uses mapping.size() (2) as the logical column count (line 65-67).
+    std::vector<size_t> mapping = {2, 0};
+    view.column_mapping = &mapping;
+    view.schema = phys_schema.get();
+
+    // get_value(0) should resolve through mapping to physical col2 (BOOL=true)
+    auto val0 = view.get_value(0);
+    EXPECT_TRUE(val0.as_bool());
+
+    // get_value(1) should resolve through mapping to physical col0 (INT64=99)
+    auto val1 = view.get_value(1);
+    EXPECT_EQ(val1.as_int64(), 99);
+    // Note: mapped_table.heap cleanup handled by TearDown
+}
+
+// ============= Insert Large Tuple (heap_payload assign) =============
+
+// Exercises heap_table.cpp lines 330-333: when serialized tuple exceeds
+// 1024-byte stack_buf, ensure_capacity triggers heap_payload.assign()
+// which copies stack data to heap and switches to heap serialization.
+TEST_F(HeapTableTests, Insert_LargeTuple_HeapPayloadAssign) {
+    ASSERT_TRUE(table_->create());
+
+    // Build a table with a TEXT column. Inserting a string > 900 bytes
+    // ensures the serialized tuple exceeds the 1024-byte stack buffer
+    // (≈18 bytes header + 1 type byte + 4 length prefix + ~950+ content).
+    auto big_schema = std::make_unique<Schema>();
+    big_schema->add_column("id", ValueType::TYPE_INT64, false);
+    big_schema->add_column("data", ValueType::TYPE_TEXT, false);
+
+    HeapTable big_table("big_table", *bpm_, *big_schema);
+    ASSERT_TRUE(big_table.create());
+
+    // 950-character string to exceed stack buffer after header overhead
+    std::string large_text(950, 'X');
+    auto tuple = Tuple({Value::make_int64(1), Value::make_text(large_text)});
+    auto rid = big_table.insert(tuple);
+    EXPECT_FALSE(rid.is_null());
+
+    // Verify the tuple was inserted and retrieved correctly
+    Tuple out;
+    ASSERT_TRUE(big_table.get(rid, out));
+    EXPECT_EQ(out.get(0).as_int64(), 1);
+    EXPECT_EQ(out.get(1).as_text(), large_text);
+
+    // Verify scan also works (iterates through PageHeader::next_page chain)
+    auto it = big_table.scan();
+    Tuple scan_out;
+    ASSERT_TRUE(it.next(scan_out));
+    EXPECT_EQ(scan_out.get(0).as_int64(), 1);
+    EXPECT_EQ(scan_out.get(1).as_text(), large_text);
+    // Note: big_table.heap cleanup handled by TearDown
 }
 
 }  // namespace
