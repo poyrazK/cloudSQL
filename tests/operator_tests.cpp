@@ -12,10 +12,20 @@
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "parser/expression.hpp"
+#include "storage/btree_index.hpp"
+#include "storage/buffer_pool_manager.hpp"
+#include "storage/heap_table.hpp"
+#include "storage/storage_manager.hpp"
+#include "transaction/lock_manager.hpp"
+#include "transaction/transaction.hpp"
 
 using namespace cloudsql;
+using namespace cloudsql::common;
+using namespace cloudsql::storage;
+using cloudsql::config::Config;
 using namespace cloudsql::executor;
 using namespace cloudsql::parser;
+using namespace cloudsql::transaction;
 
 namespace {
 
@@ -126,6 +136,35 @@ class OperatorTests : public ::testing::Test {
     void TearDown() override {}
 };
 
+class IndexScanOperatorTests : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        disk_manager_ = std::make_unique<StorageManager>("./test_idx_data");
+        disk_manager_->create_dir_if_not_exists();
+        bpm_ = std::make_unique<BufferPoolManager>(10, *disk_manager_);
+        schema_ = std::make_unique<Schema>();
+        schema_->add_column("id", common::ValueType::TYPE_INT64, false);
+        schema_->add_column("name", common::ValueType::TYPE_TEXT, true);
+        table_ = std::make_shared<HeapTable>("test_table", *bpm_, *schema_);
+        index_ = std::make_unique<BTreeIndex>("test_index", *bpm_, ValueType::TYPE_INT64);
+    }
+
+    void TearDown() override {
+        index_.reset();
+        table_.reset();
+        bpm_.reset();
+        disk_manager_.reset();
+        std::remove("./test_idx_data/test_table.heap");
+        std::remove("./test_idx_data/test_index.idx");
+    }
+
+    std::unique_ptr<StorageManager> disk_manager_;
+    std::unique_ptr<BufferPoolManager> bpm_;
+    std::shared_ptr<HeapTable> table_;
+    std::unique_ptr<BTreeIndex> index_;
+    std::unique_ptr<Schema> schema_;
+};
+
 TEST_F(OperatorTests, BufferScanBasic) {
     Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
     std::vector<Tuple> data;
@@ -173,6 +212,102 @@ TEST_F(OperatorTests, BufferScanExhausted) {
     EXPECT_FALSE(scan->next(tuple));
     EXPECT_FALSE(scan->next(tuple));
     scan->close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_Basic) {
+    // Insert 3 tuples with indexed INT64 key column
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(1), common::Value::make_text("alice")});
+    Tuple t2 = make_tuple({common::Value::make_int64(2), common::Value::make_text("bob")});
+    Tuple t3 = make_tuple({common::Value::make_int64(3), common::Value::make_text("charlie")});
+    auto rid1 = table_->insert(t1);
+    auto rid2 = table_->insert(t2);
+    auto rid3 = table_->insert(t3);
+
+    // Index on first column (id)
+    index_->insert(t1.values()[0], rid1);
+    index_->insert(t2.values()[0], rid2);
+    index_->insert(t3.values()[0], rid3);
+
+    // Search for key = 2
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(2));
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    int count = 0;
+    while (scan.next(tuple)) {
+        count++;
+    }
+    EXPECT_EQ(count, 1);
+    scan.close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_NotFound) {
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(10)});
+    Tuple t2 = make_tuple({common::Value::make_int64(20)});
+    auto rid1 = table_->insert(t1);
+    auto rid2 = table_->insert(t2);
+
+    index_->insert(t1.values()[0], rid1);
+    index_->insert(t2.values()[0], rid2);
+
+    // Search for non-existent key = 99
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(99));
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    EXPECT_FALSE(scan.next(tuple));
+    scan.close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_TxnVisibility) {
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(1)});
+    auto rid1 = table_->insert(t1);
+
+    index_->insert(t1.values()[0], rid1);
+
+    // Create a transaction and scan with it
+    Transaction txn(1, IsolationLevel::SERIALIZABLE);
+    LockManager lock_mgr;
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(1), &txn, &lock_mgr);
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    EXPECT_TRUE(scan.next(tuple));
+    EXPECT_FALSE(scan.next(tuple));
+    scan.close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_DeletedTuple) {
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(1)});
+    Tuple t2 = make_tuple({common::Value::make_int64(2)});
+    auto rid1 = table_->insert(t1);
+    auto rid2 = table_->insert(t2);
+
+    index_->insert(t1.values()[0], rid1);
+    index_->insert(t2.values()[0], rid2);
+
+    // Delete tuple with id=1
+    table_->remove(rid1, 1);
+
+    // Search for key = 1 (should not be found)
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(1));
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    EXPECT_FALSE(scan.next(tuple));
+    scan.close();
 }
 
 TEST_F(OperatorTests, LimitBasic) {
