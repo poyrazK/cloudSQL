@@ -706,6 +706,7 @@ TEST_F(DistributedExecutorWithNodesTests, LeftJoinShuffle) {
 }
 
 // Test: RIGHT JOIN (is_outer_join=true, bloom filter SKIPPED — line 311)
+// Phase 3-5 should run but may not reach it if all_success not set
 TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle) {
     auto srv1 = std::make_unique<network::RpcServer>(6424);
     auto srv2 = std::make_unique<network::RpcServer>(6425);
@@ -721,11 +722,13 @@ TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle) {
         send_success_reply(fd);
     };
 
-    // ShuffleFragment, BloomFilterBits, ExecuteFragment — bloom filter push skipped for RIGHT
+    // Phase 1 shuffle (left table) — required or early return at line 257
     servers_[0]->set_handler(network::RpcType::ShuffleFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    // BloomFilterBits for aggregated bloom filter
     servers_[0]->set_handler(network::RpcType::BloomFilterBits, success_h);
     servers_[1]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    // ExecuteFragment for final query results
     servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
 
@@ -854,7 +857,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithLimitOffset) {
 }
 
 // Test: 2PC commit with prepare failure (lines 416-427)
-// DISABLED: hangs due to TxnPrepare async thread not receiving reply
+// DISABLED: TxnPrepare client.call() hangs even with reply handler set
 TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
     auto srv1 = std::make_unique<network::RpcServer>(6432);
     srv1->start();
@@ -864,32 +867,24 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
 
     // TxnPrepare returns failure → all_prepared = false → TxnAbort
     srv1->set_handler(network::RpcType::TxnPrepare,
-                      [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                          network::QueryResultsReply reply;
-                          reply.success = false;
-                          reply.error_msg = "Prepare failed";
-                          network::RpcHeader resp_h;
-                          resp_h.type = network::RpcType::TxnPrepare;
-                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                          char h_buf[network::RpcHeader::HEADER_SIZE];
-                          resp_h.encode(h_buf);
-                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                          auto data = reply.serialize();
-                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                      });
+                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                         network::QueryResultsReply reply;
+                         reply.success = false;
+                         reply.error_msg = "Prepare failed";
+                         network::RpcHeader resp_h;
+                         resp_h.type = network::RpcType::TxnPrepare;
+                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                         char h_buf[network::RpcHeader::HEADER_SIZE];
+                         resp_h.encode(h_buf);
+                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                         auto data = reply.serialize();
+                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                     });
+    // TxnAbort: no reply needed (lines 429-441 use std::async without client.call response check)
     srv1->set_handler(network::RpcType::TxnAbort,
-                      [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                          network::QueryResultsReply reply;
-                          reply.success = true;
-                          network::RpcHeader resp_h;
-                          resp_h.type = network::RpcType::TxnAbort;
-                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                          char h_buf[network::RpcHeader::HEADER_SIZE];
-                          resp_h.encode(h_buf);
-                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                          auto data = reply.serialize();
-                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                      });
+                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                         // No response needed for abort - fire and forget
+                     });
 
     auto lexer = std::make_unique<Lexer>("COMMIT");
     Parser parser(std::move(lexer));
