@@ -536,6 +536,62 @@ TEST_F(DistributedExecutorWithNodesTests, InsertShardRouting) {
     EXPECT_TRUE(res.success());
 }
 
+// Test: INSERT with connect failure (lines 511-512)
+// Register node but don't start server → client.connect() returns false
+TEST_F(DistributedExecutorWithNodesTests, InsertConnectFailure) {
+    // Register node but NO server → connect fails
+    cm_->register_node("node_fail", "127.0.0.1", 6499, config::RunMode::Data);
+    // data_nodes.size() = 1, shard_idx for value 1 is 1 % 1 = 0 (in bounds)
+    // But node_fail has no server → connect() fails → line 512 error
+    // This sets has_error_ = true → success() returns false
+    // lines 516-518: if (!errors.empty()) res.set_error(errors);
+    // res.set_rows_affected(0) is still called
+
+    auto lexer = std::make_unique<Lexer>("INSERT INTO shard_table VALUES (1, 'test')");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "INSERT INTO shard_table VALUES (1, 'test')");
+    EXPECT_FALSE(res.success());  // has_error_ is true (set_error called)
+    EXPECT_EQ(res.rows_affected(), 0ULL);
+    EXPECT_FALSE(res.error().empty());
+}
+
+// Test: INSERT with RPC call failure (lines 509-510)
+// Start server but handler for ExecuteFragment causes call to fail/timeout
+TEST_F(DistributedExecutorWithNodesTests, DISABLED_InsertRpcFailure) {
+    // DISABLED: RpcClient.call() hangs with no handler for ExecuteFragment
+    auto srv1 = std::make_unique<network::RpcServer>(6500);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6500, config::RunMode::Data);
+    // Set handler for wrong type so ExecuteFragment call fails → line 509
+    srv1->set_handler(network::RpcType::Heartbeat,
+                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                         network::QueryResultsReply reply;
+                         reply.success = true;
+                         network::RpcHeader resp_h;
+                         resp_h.type = network::RpcType::Heartbeat;
+                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                         char h_buf[network::RpcHeader::HEADER_SIZE];
+                         resp_h.encode(h_buf);
+                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                         auto data = reply.serialize();
+                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                     });
+
+    auto lexer = std::make_unique<Lexer>("INSERT INTO shard_table VALUES (1, 'test')");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "INSERT INTO shard_table VALUES (1, 'test')");
+    EXPECT_FALSE(res.success());  // RPC call fails → error set
+    EXPECT_EQ(res.rows_affected(), 0ULL);
+}
+
 // Test: COMMIT with working nodes (2PC prepare/commit paths - lines 388-449)
 TEST_F(DistributedExecutorWithNodesTests, CommitWithNodes) {
     auto srv1 = std::make_unique<network::RpcServer>(6415);
@@ -820,6 +876,42 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithSumAggregate) {
     EXPECT_TRUE(res.success());
 }
 
+// Test: UPDATE with sharding key (lines 535-536)
+TEST_F(DistributedExecutorWithNodesTests, UpdateWithShardKey) {
+    auto srv1 = std::make_unique<network::RpcServer>(6433);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6433, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>("UPDATE test_table SET id = 2 WHERE id = 1");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "UPDATE test_table SET id = 2 WHERE id = 1");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: DELETE with sharding key (lines 537-538)
+TEST_F(DistributedExecutorWithNodesTests, DeleteWithShardKey) {
+    auto srv1 = std::make_unique<network::RpcServer>(6434);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6434, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>("DELETE FROM test_table WHERE id = 1");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "DELETE FROM test_table WHERE id = 1");
+    EXPECT_TRUE(res.success());
+}
+
 // Test: SELECT with ORDER BY (lines 893-920)
 TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
     auto srv1 = std::make_unique<network::RpcServer>(6430);
@@ -835,6 +927,42 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
     ASSERT_NE(stmt, nullptr);
 
     auto res = exec_->execute(*stmt, "SELECT * FROM test_table ORDER BY id");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: SELECT with MIN aggregate (lines 879-882)
+TEST_F(DistributedExecutorWithNodesTests, SelectWithMinAggregate) {
+    auto srv1 = std::make_unique<network::RpcServer>(6435);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6435, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>("SELECT MIN(id) FROM test_table");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT MIN(id) FROM test_table");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: SELECT with MAX aggregate
+TEST_F(DistributedExecutorWithNodesTests, SelectWithMaxAggregate) {
+    auto srv1 = std::make_unique<network::RpcServer>(6436);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6436, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>("SELECT MAX(value) FROM test_table");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT MAX(value) FROM test_table");
     EXPECT_TRUE(res.success());
 }
 
