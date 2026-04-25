@@ -139,13 +139,16 @@ class OperatorTests : public ::testing::Test {
 class IndexScanOperatorTests : public ::testing::Test {
    protected:
     void SetUp() override {
-        disk_manager_ = std::make_unique<StorageManager>("./test_idx_data");
+        // Use unique directory per test run to avoid stale file collisions
+        test_dir_ = std::string("./test_idx_data_") + std::to_string(getpid());
+        disk_manager_ = std::make_unique<StorageManager>(test_dir_);
         disk_manager_->create_dir_if_not_exists();
         bpm_ = std::make_unique<BufferPoolManager>(10, *disk_manager_);
         schema_ = std::make_unique<Schema>();
         schema_->add_column("id", common::ValueType::TYPE_INT64, false);
         schema_->add_column("name", common::ValueType::TYPE_TEXT, true);
         table_ = std::make_shared<HeapTable>("test_table", *bpm_, *schema_);
+        table_->create();
         index_ = std::make_unique<BTreeIndex>("test_index", *bpm_, ValueType::TYPE_INT64);
     }
 
@@ -154,8 +157,9 @@ class IndexScanOperatorTests : public ::testing::Test {
         table_.reset();
         bpm_.reset();
         disk_manager_.reset();
-        std::remove("./test_idx_data/test_table.heap");
-        std::remove("./test_idx_data/test_index.idx");
+        std::remove((test_dir_ + "/test_table.heap").c_str());
+        std::remove((test_dir_ + "/test_index.idx").c_str());
+        std::remove(test_dir_.c_str());
     }
 
     std::unique_ptr<StorageManager> disk_manager_;
@@ -163,6 +167,7 @@ class IndexScanOperatorTests : public ::testing::Test {
     std::shared_ptr<HeapTable> table_;
     std::unique_ptr<BTreeIndex> index_;
     std::unique_ptr<Schema> schema_;
+    std::string test_dir_;
 };
 
 TEST_F(OperatorTests, BufferScanBasic) {
@@ -247,8 +252,8 @@ TEST_F(IndexScanOperatorTests, IndexScan_Basic) {
 TEST_F(IndexScanOperatorTests, IndexScan_NotFound) {
     ASSERT_TRUE(index_->create());
 
-    Tuple t1 = make_tuple({common::Value::make_int64(10)});
-    Tuple t2 = make_tuple({common::Value::make_int64(20)});
+    Tuple t1 = make_tuple({common::Value::make_int64(10), common::Value::make_null()});
+    Tuple t2 = make_tuple({common::Value::make_int64(20), common::Value::make_null()});
     auto rid1 = table_->insert(t1);
     auto rid2 = table_->insert(t2);
 
@@ -268,7 +273,7 @@ TEST_F(IndexScanOperatorTests, IndexScan_NotFound) {
 TEST_F(IndexScanOperatorTests, IndexScan_TxnVisibility) {
     ASSERT_TRUE(index_->create());
 
-    Tuple t1 = make_tuple({common::Value::make_int64(1)});
+    Tuple t1 = make_tuple({common::Value::make_int64(1), common::Value::make_null()});
     auto rid1 = table_->insert(t1);
 
     index_->insert(t1.values()[0], rid1);
@@ -290,8 +295,8 @@ TEST_F(IndexScanOperatorTests, IndexScan_TxnVisibility) {
 TEST_F(IndexScanOperatorTests, IndexScan_DeletedTuple) {
     ASSERT_TRUE(index_->create());
 
-    Tuple t1 = make_tuple({common::Value::make_int64(1)});
-    Tuple t2 = make_tuple({common::Value::make_int64(2)});
+    Tuple t1 = make_tuple({common::Value::make_int64(1), common::Value::make_null()});
+    Tuple t2 = make_tuple({common::Value::make_int64(2), common::Value::make_null()});
     auto rid1 = table_->insert(t1);
     auto rid2 = table_->insert(t2);
 
