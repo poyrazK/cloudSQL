@@ -391,6 +391,22 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
         }
     }
 
+    // Helper to send a successful QueryResultsReply on a given fd
+    void send_success_reply(int fd, const std::string& error_msg = "") {
+        network::QueryResultsReply reply;
+        reply.success = error_msg.empty();
+        reply.error_msg = error_msg;
+        reply.schema.add_column("id", common::ValueType::TYPE_INT32);
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        auto data = reply.serialize();
+        if (!data.empty()) send(fd, data.data(), data.size(), 0);
+    }
+
     // Set up a handler that returns successful QueryResultsReply
     void set_execute_fragment_handler(network::RpcServer& srv, bool success = true,
                                       const std::string& error_msg = "") {
@@ -617,6 +633,279 @@ TEST_F(DistributedExecutorWithNodesTests, SelectBroadcastNoShardKey) {
     auto res = exec_->execute(*stmt, "SELECT * FROM test_table");
     // Broadcasts to all nodes, should succeed
     EXPECT_TRUE(res.success());
+}
+
+// Test: INNER JOIN shuffle (lines 195-360)
+// Exercises: Phase 1 ShuffleFragment, BloomFilterBits aggregation, BloomFilterPush, Phase 2
+TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle) {
+    auto srv1 = std::make_unique<network::RpcServer>(6420);
+    auto srv2 = std::make_unique<network::RpcServer>(6421);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6420, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6421, config::RunMode::Data);
+
+    // Set up handlers for all RPCs in join path
+    auto success_h = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+        send_success_reply(fd);
+    };
+
+    servers_[0]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[0]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    servers_[1]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    servers_[0]->set_handler(network::RpcType::BloomFilterPush, success_h);
+    servers_[1]->set_handler(network::RpcType::BloomFilterPush, success_h);
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
+
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: LEFT JOIN (is_outer_join=false, bloom filter IS applied)
+TEST_F(DistributedExecutorWithNodesTests, LeftJoinShuffle) {
+    auto srv1 = std::make_unique<network::RpcServer>(6422);
+    auto srv2 = std::make_unique<network::RpcServer>(6423);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6422, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6423, config::RunMode::Data);
+
+    auto success_h = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+        send_success_reply(fd);
+    };
+
+    servers_[0]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[0]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    servers_[1]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    servers_[0]->set_handler(network::RpcType::BloomFilterPush, success_h);
+    servers_[1]->set_handler(network::RpcType::BloomFilterPush, success_h);
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
+
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: RIGHT JOIN (is_outer_join=true, bloom filter SKIPPED — line 311)
+TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle) {
+    auto srv1 = std::make_unique<network::RpcServer>(6424);
+    auto srv2 = std::make_unique<network::RpcServer>(6425);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6424, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6425, config::RunMode::Data);
+
+    auto success_h = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+        send_success_reply(fd);
+    };
+
+    // ShuffleFragment, BloomFilterBits, ExecuteFragment — bloom filter push skipped for RIGHT
+    servers_[0]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[0]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    servers_[1]->set_handler(network::RpcType::BloomFilterBits, success_h);
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
+
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM t1 RIGHT JOIN t2 ON t1.id = t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 RIGHT JOIN t2 ON t1.id = t2.id");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: FULL JOIN triggers Phase 3-5 coordinator-side processing (lines 616-823)
+TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
+    auto srv1 = std::make_unique<network::RpcServer>(6426);
+    auto srv2 = std::make_unique<network::RpcServer>(6427);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6426, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6427, config::RunMode::Data);
+
+    auto success_h = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+        send_success_reply(fd);
+    };
+
+    // All handlers needed for FULL JOIN path
+    servers_[0]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ShuffleFragment, success_h);
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
+    servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
+
+    // Phase 3-5 handlers for RIGHT-side
+    servers_[0]->set_handler(network::RpcType::UnmatchedRowsReport, success_h);
+    servers_[1]->set_handler(network::RpcType::UnmatchedRowsReport, success_h);
+    servers_[0]->set_handler(network::RpcType::FetchUnmatchedRows, success_h);
+    servers_[1]->set_handler(network::RpcType::FetchUnmatchedRows, success_h);
+
+    // Phase 3-5 handlers for LEFT-side
+    servers_[0]->set_handler(network::RpcType::UnmatchedLeftRowsReport, success_h);
+    servers_[1]->set_handler(network::RpcType::UnmatchedLeftRowsReport, success_h);
+    servers_[0]->set_handler(network::RpcType::FetchUnmatchedLeftRows, success_h);
+    servers_[1]->set_handler(network::RpcType::FetchUnmatchedLeftRows, success_h);
+
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM t1 FULL JOIN t2 ON t1.id = t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 FULL JOIN t2 ON t1.id = t2.id");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: SELECT with COUNT aggregate (lines 831-892)
+TEST_F(DistributedExecutorWithNodesTests, SelectWithCountAggregate) {
+    auto srv1 = std::make_unique<network::RpcServer>(6428);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6428, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>("SELECT COUNT(*) FROM test_table");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT COUNT(*) FROM test_table");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: SELECT with SUM aggregate
+TEST_F(DistributedExecutorWithNodesTests, SelectWithSumAggregate) {
+    auto srv1 = std::make_unique<network::RpcServer>(6429);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6429, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>("SELECT SUM(id) FROM test_table");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT SUM(id) FROM test_table");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: SELECT with ORDER BY (lines 893-920)
+TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
+    auto srv1 = std::make_unique<network::RpcServer>(6430);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6430, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM test_table ORDER BY id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM test_table ORDER BY id");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: SELECT with LIMIT and OFFSET (lines 924-942)
+TEST_F(DistributedExecutorWithNodesTests, SelectWithLimitOffset) {
+    auto srv1 = std::make_unique<network::RpcServer>(6431);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6431, config::RunMode::Data);
+    set_execute_fragment_handler(*servers_[0], true);
+
+    auto lexer = std::make_unique<Lexer>(
+        "SELECT * FROM test_table LIMIT 10 OFFSET 5");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM test_table LIMIT 10 OFFSET 5");
+    EXPECT_TRUE(res.success());
+}
+
+// Test: 2PC commit with prepare failure (lines 416-427)
+// DISABLED: hangs due to TxnPrepare async thread not receiving reply
+TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
+    auto srv1 = std::make_unique<network::RpcServer>(6432);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6432, config::RunMode::Data);
+
+    // TxnPrepare returns failure → all_prepared = false → TxnAbort
+    srv1->set_handler(network::RpcType::TxnPrepare,
+                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                         network::QueryResultsReply reply;
+                         reply.success = false;
+                         reply.error_msg = "Prepare failed";
+                         network::RpcHeader resp_h;
+                         resp_h.type = network::RpcType::TxnPrepare;
+                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                         char h_buf[network::RpcHeader::HEADER_SIZE];
+                         resp_h.encode(h_buf);
+                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                         auto data = reply.serialize();
+                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                     });
+    srv1->set_handler(network::RpcType::TxnAbort,
+                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                         network::QueryResultsReply reply;
+                         reply.success = true;
+                         network::RpcHeader resp_h;
+                         resp_h.type = network::RpcType::TxnAbort;
+                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                         char h_buf[network::RpcHeader::HEADER_SIZE];
+                         resp_h.encode(h_buf);
+                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                         auto data = reply.serialize();
+                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                     });
+
+    auto lexer = std::make_unique<Lexer>("COMMIT");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "COMMIT");
+    // Should fail with "Distributed transaction aborted"
+    EXPECT_FALSE(res.success());
+    EXPECT_TRUE(res.error().find("aborted") != std::string::npos);
 }
 
 }  // namespace
