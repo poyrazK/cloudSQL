@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -469,7 +470,7 @@ TEST(BufferPoolTests, PoolExhaustion) {
     bpm.unpin_page(file, id3, false);
 }
 
-TEST(BufferPoolTests, FetchPage_ReadFailure) {
+TEST(BufferPoolTests, FetchPageReadFailure) {
     // Create a file smaller than PAGE_SIZE (only 1 byte) at the correct path
     // before StorageManager opens it. When fetch_page tries to read page 0,
     // read_page sees gcount() < PAGE_SIZE and !eof && gcount > 0 -> returns false.
