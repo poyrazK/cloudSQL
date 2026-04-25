@@ -1016,6 +1016,83 @@ TEST_F(OperatorTests, AggregateWithNulls) {
     agg->close();
 }
 
+TEST_F(OperatorTests, Aggregate_DistinctDuplicate) {
+    // Test DISTINCT filters duplicate values — exercises distinct_seen tracking (lines 609-615)
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(10)}));
+    data.push_back(make_tuple({common::Value::make_int64(20)}));
+    data.push_back(make_tuple({common::Value::make_int64(10)}));  // duplicate
+    data.push_back(make_tuple({common::Value::make_int64(20)}));  // duplicate
+    data.push_back(make_tuple({common::Value::make_int64(30)}));  // unique
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg_distinct(AggregateType::Sum, "distinct_sum", col_expr("val")));
+    aggs.push_back(make_agg_distinct(AggregateType::Count, "distinct_cnt", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    // DISTINCT SUM: 10 + 20 + 30 = 60 (duplicates 10,20 skipped)
+    EXPECT_EQ(tuple.get(0).to_int64(), 60);
+    // DISTINCT COUNT: 3 unique values (10, 20, 30)
+    EXPECT_EQ(tuple.get(1).to_int64(), 3);
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
+TEST_F(OperatorTests, Aggregate_MinMaxNullInit) {
+    // Test min/max initialization when first value becomes min/max (lines 627-632)
+    // mins[i] and maxes[i] start as NULL — first non-null value should set both
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(5)}));   // first: mins=5, maxes=5
+    data.push_back(make_tuple({common::Value::make_int64(10)}));  // mins stays 5, maxes=10
+    data.push_back(make_tuple({common::Value::make_int64(3)}));   // mins=3, maxes stays 10
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg(AggregateType::Min, "min_val", col_expr("val")));
+    aggs.push_back(make_agg(AggregateType::Max, "max_val", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    EXPECT_EQ(tuple.get(0).to_int64(), 3);   // MIN
+    EXPECT_EQ(tuple.get(1).to_int64(), 10);  // MAX
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
+TEST_F(OperatorTests, Aggregate_AvgZeroCount) {
+    // Test AVG returns NULL when count is 0 (all values NULL) — exercises lines 658-660
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value()}));  // NULL
+    data.push_back(make_tuple({common::Value()}));  // NULL
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg(AggregateType::Avg, "avg_val", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    EXPECT_TRUE(tuple.get(0).is_null());  // AVG of all NULLs should be NULL
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
 TEST_F(OperatorTests, HashJoinRightOuter) {
     // Right table: values 2, 3, 4 (only 2 matches)
     Schema left_schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
