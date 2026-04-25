@@ -3,16 +3,16 @@
  * @brief Unit tests for BTreeIndex - B+ tree index storage
  */
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <memory>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -461,27 +461,26 @@ TEST_F(BTreeIndexNextLeafTests, ScanIterator_NextLeaf) {
 
     // NodeHeader layout: type(1) at offset 0, padding(1) at offset 1,
     // num_keys(2) at offset 2, parent_page(4) at offset 4, next_leaf(4) at offset 8
-    page0[0] = 0;                                          // type: Leaf
-    page0[2] = 2;                                          // num_keys low byte (LE)
-    page0[3] = 0;                                          // num_keys high byte
-    page0[8] = 1;                                          // next_leaf: page 1 (LE)
-    page0[9] = page0[10] = page0[11] = 0;                 // next_leaf high bytes
+    page0[0] = 0;                          // type: Leaf
+    page0[2] = 2;                          // num_keys low byte (LE)
+    page0[3] = 0;                          // num_keys high byte
+    page0[8] = 1;                          // next_leaf: page 1 (LE)
+    page0[9] = page0[10] = page0[11] = 0;  // next_leaf high bytes
 
-    page1[0] = 0;                                         // type: Leaf
-    page1[2] = 1;                                         // num_keys: 1 (LE)
-    page1[3] = 0;                                         // num_keys high byte
+    page1[0] = 0;  // type: Leaf
+    page1[2] = 1;  // num_keys: 1 (LE)
+    page1[3] = 0;  // num_keys high byte
     // next_leaf at offset 8 = 0 (terminal leaf)
 
     // Entry format: type|lexeme|page|slot| (10 bytes each, null-terminated string)
-    std::memcpy(page0 + 12, "5|999|1|0|", 10);            // page 0 entry 0
-    std::memcpy(page0 + 22, "5|111|1|1|", 10);            // page 0 entry 1
-    std::memcpy(page1 + 12, "5|888|2|0|", 10);            // page 1 entry 0
+    std::memcpy(page0 + 12, "5|999|1|0|", 10);  // page 0 entry 0
+    std::memcpy(page0 + 22, "5|111|1|1|", 10);  // page 0 entry 1
+    std::memcpy(page1 + 12, "5|888|2|0|", 10);  // page 1 entry 0
 
     // Use raw C I/O to write the linked structure. No BTreeIndex/BPM objects
     // own this file yet, so no dirty-page flush can corrupt our data.
     {
-        int fd = open("./test_nextleaf_data/linked_idx.idx",
-                      O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        int fd = open("./test_nextleaf_data/linked_idx.idx", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         ASSERT_TRUE(fd >= 0);
         ASSERT_EQ(write(fd, page0, Page::PAGE_SIZE), Page::PAGE_SIZE);
         ASSERT_EQ(write(fd, page1, Page::PAGE_SIZE), Page::PAGE_SIZE);
