@@ -569,18 +569,18 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_InsertRpcFailure) {
     cm_->register_node("node_1", "127.0.0.1", 6500, config::RunMode::Data);
     // Set handler for wrong type so ExecuteFragment call fails → line 509
     srv1->set_handler(network::RpcType::Heartbeat,
-                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                         network::QueryResultsReply reply;
-                         reply.success = true;
-                         network::RpcHeader resp_h;
-                         resp_h.type = network::RpcType::Heartbeat;
-                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                         char h_buf[network::RpcHeader::HEADER_SIZE];
-                         resp_h.encode(h_buf);
-                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                         auto data = reply.serialize();
-                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                     });
+                      [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                          network::QueryResultsReply reply;
+                          reply.success = true;
+                          network::RpcHeader resp_h;
+                          resp_h.type = network::RpcType::Heartbeat;
+                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                          char h_buf[network::RpcHeader::HEADER_SIZE];
+                          resp_h.encode(h_buf);
+                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                          auto data = reply.serialize();
+                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                      });
 
     auto lexer = std::make_unique<Lexer>("INSERT INTO shard_table VALUES (1, 'test')");
     Parser parser(std::move(lexer));
