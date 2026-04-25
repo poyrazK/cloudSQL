@@ -276,7 +276,8 @@ TEST_F(IndexScanOperatorTests, IndexScan_TxnVisibility) {
     // Create a transaction and scan with it
     Transaction txn(1, IsolationLevel::SERIALIZABLE);
     LockManager lock_mgr;
-    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(1), &txn, &lock_mgr);
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(1), &txn,
+                           &lock_mgr);
     ASSERT_TRUE(scan.init());
     ASSERT_TRUE(scan.open());
 
