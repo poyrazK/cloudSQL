@@ -15,12 +15,12 @@
 #include "common/value.hpp"
 #include "distributed/distributed_executor.hpp"
 #include "distributed/shard_manager.hpp"
-#include "parser/expression.hpp"
-#include "parser/lexer.hpp"
-#include "parser/parser.hpp"
 #include "network/rpc_client.hpp"
 #include "network/rpc_message.hpp"
 #include "network/rpc_server.hpp"
+#include "parser/expression.hpp"
+#include "parser/lexer.hpp"
+#include "parser/parser.hpp"
 
 using namespace cloudsql;
 using namespace cloudsql::executor;
@@ -393,31 +393,31 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
 
     // Set up a handler that returns successful QueryResultsReply
     void set_execute_fragment_handler(network::RpcServer& srv, bool success = true,
-                                       const std::string& error_msg = "") {
+                                      const std::string& error_msg = "") {
         srv.set_handler(network::RpcType::ExecuteFragment,
-                       [success, error_msg](const network::RpcHeader&, const std::vector<uint8_t>& payload,
-                                            int fd) {
-                           auto args = network::ExecuteFragmentArgs::deserialize(payload);
-                           (void)args;  // suppress unused warning
+                        [success, error_msg](const network::RpcHeader&,
+                                             const std::vector<uint8_t>& payload, int fd) {
+                            auto args = network::ExecuteFragmentArgs::deserialize(payload);
+                            (void)args;  // suppress unused warning
 
-                           network::QueryResultsReply reply;
-                           reply.success = success;
-                           reply.error_msg = error_msg;
-                           // Add schema with one column for result rows
-                           reply.schema.add_column("id", common::ValueType::TYPE_INT32);
+                            network::QueryResultsReply reply;
+                            reply.success = success;
+                            reply.error_msg = error_msg;
+                            // Add schema with one column for result rows
+                            reply.schema.add_column("id", common::ValueType::TYPE_INT32);
 
-                           // Send reply
-                           network::RpcHeader resp_h;
-                           resp_h.type = network::RpcType::QueryResults;
-                           resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                           char h_buf[network::RpcHeader::HEADER_SIZE];
-                           resp_h.encode(h_buf);
-                           send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                           auto data = reply.serialize();
-                           if (!data.empty()) {
-                               send(fd, data.data(), data.size(), 0);
-                           }
-                       });
+                            // Send reply
+                            network::RpcHeader resp_h;
+                            resp_h.type = network::RpcType::QueryResults;
+                            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                            char h_buf[network::RpcHeader::HEADER_SIZE];
+                            resp_h.encode(h_buf);
+                            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                            auto data = reply.serialize();
+                            if (!data.empty()) {
+                                send(fd, data.data(), data.size(), 0);
+                            }
+                        });
     }
 
     static std::atomic<uint16_t> next_port_;
@@ -529,32 +529,32 @@ TEST_F(DistributedExecutorWithNodesTests, CommitWithNodes) {
     cm_->register_node("node_1", "127.0.0.1", 6415, config::RunMode::Data);
 
     // Set up TxnPrepare and TxnCommit handlers that return success
-    servers_[0]->set_handler(network::RpcType::TxnPrepare,
-                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                         network::QueryResultsReply reply;
-                         reply.success = true;
-                         network::RpcHeader resp_h;
-                         resp_h.type = network::RpcType::TxnPrepare;
-                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                         char h_buf[network::RpcHeader::HEADER_SIZE];
-                         resp_h.encode(h_buf);
-                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                         auto data = reply.serialize();
-                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                     });
-    servers_[0]->set_handler(network::RpcType::TxnCommit,
-                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                         network::QueryResultsReply reply;
-                         reply.success = true;
-                         network::RpcHeader resp_h;
-                         resp_h.type = network::RpcType::TxnCommit;
-                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                         char h_buf[network::RpcHeader::HEADER_SIZE];
-                         resp_h.encode(h_buf);
-                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                         auto data = reply.serialize();
-                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                     });
+    servers_[0]->set_handler(network::RpcType::TxnPrepare, [](const network::RpcHeader&,
+                                                              const std::vector<uint8_t>&, int fd) {
+        network::QueryResultsReply reply;
+        reply.success = true;
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::TxnPrepare;
+        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        auto data = reply.serialize();
+        if (!data.empty()) send(fd, data.data(), data.size(), 0);
+    });
+    servers_[0]->set_handler(network::RpcType::TxnCommit, [](const network::RpcHeader&,
+                                                             const std::vector<uint8_t>&, int fd) {
+        network::QueryResultsReply reply;
+        reply.success = true;
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::TxnCommit;
+        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        auto data = reply.serialize();
+        if (!data.empty()) send(fd, data.data(), data.size(), 0);
+    });
 
     auto lexer = std::make_unique<Lexer>("COMMIT");
     Parser parser(std::move(lexer));
@@ -574,20 +574,20 @@ TEST_F(DistributedExecutorWithNodesTests, RollbackWithNodes) {
 
     cm_->register_node("node_1", "127.0.0.1", 6416, config::RunMode::Data);
     // ROLLBACK just fires async TxnAbort - no reply needed
-    servers_[0]->set_handler(network::RpcType::TxnAbort,
-                     [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                         // Send a response since client.call() waits for reply
-                         network::QueryResultsReply reply;
-                         reply.success = true;
-                         network::RpcHeader resp_h;
-                         resp_h.type = network::RpcType::TxnAbort;
-                         resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                         char h_buf[network::RpcHeader::HEADER_SIZE];
-                         resp_h.encode(h_buf);
-                         send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                         auto data = reply.serialize();
-                         if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                     });
+    servers_[0]->set_handler(network::RpcType::TxnAbort, [](const network::RpcHeader&,
+                                                            const std::vector<uint8_t>&, int fd) {
+        // Send a response since client.call() waits for reply
+        network::QueryResultsReply reply;
+        reply.success = true;
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::TxnAbort;
+        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        auto data = reply.serialize();
+        if (!data.empty()) send(fd, data.data(), data.size(), 0);
+    });
 
     auto lexer = std::make_unique<Lexer>("ROLLBACK");
     Parser parser(std::move(lexer));
