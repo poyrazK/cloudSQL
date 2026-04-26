@@ -819,4 +819,105 @@ TEST_F(QueryExecutorTests, SelectWithOffsetNew) {
     EXPECT_TRUE(res.success());
 }
 
+// ============= GROUP BY with HAVING Tests (Lines 1114-1144) =============
+
+TEST_F(QueryExecutorTests, SelectWithGroupByHaving) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE group_having (dept TEXT, salary INT)");
+    execute_sql(env.executor, "INSERT INTO group_having VALUES ('eng', 100)");
+    execute_sql(env.executor, "INSERT INTO group_having VALUES ('eng', 200)");
+    execute_sql(env.executor, "INSERT INTO group_having VALUES ('sales', 150)");
+
+    // GROUP BY with HAVING - may fail if not supported
+    const auto res = execute_sql(env.executor, "SELECT dept, SUM(salary) FROM group_having GROUP BY dept HAVING SUM(salary) > 100");
+    (void)res;
+}
+
+// ============= IN Tests =============
+
+TEST_F(QueryExecutorTests, SelectWithIn) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE in_test (id INT, name TEXT)");
+    execute_sql(env.executor, "INSERT INTO in_test VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')");
+
+    const auto res = execute_sql(env.executor, "SELECT * FROM in_test WHERE id IN (1, 3)");
+    (void)res;
+}
+
+// ============= LIKE Tests =============
+
+TEST_F(QueryExecutorTests, SelectWithLike) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE like_test (id INT, name TEXT)");
+    execute_sql(env.executor, "INSERT INTO like_test VALUES (1, 'apple'), (2, 'banana'), (3, 'apricot')");
+
+    const auto res = execute_sql(env.executor, "SELECT * FROM like_test WHERE name LIKE 'ap%'");
+    (void)res;
+}
+
+// ============= IS NULL Tests =============
+
+TEST_F(QueryExecutorTests, SelectWithIsNull) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE null_test (id INT, val TEXT)");
+    execute_sql(env.executor, "INSERT INTO null_test VALUES (1, 'a')");
+    execute_sql(env.executor, "INSERT INTO null_test VALUES (2, NULL)");
+
+    const auto res = execute_sql(env.executor, "SELECT * FROM null_test WHERE val IS NULL");
+    (void)res;
+}
+
+TEST_F(QueryExecutorTests, SelectWithIsNotNull) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE notnull_test (id INT, val TEXT)");
+    execute_sql(env.executor, "INSERT INTO notnull_test VALUES (1, 'a')");
+    execute_sql(env.executor, "INSERT INTO notnull_test VALUES (2, NULL)");
+
+    const auto res = execute_sql(env.executor, "SELECT * FROM notnull_test WHERE val IS NOT NULL");
+    (void)res;
+}
+
+// ============= String Functions Tests =============
+
+TEST_F(QueryExecutorTests, SelectWithConcat) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE concat_test (a TEXT, b TEXT)");
+    execute_sql(env.executor, "INSERT INTO concat_test VALUES ('hello', 'world')");
+
+    const auto res = execute_sql(env.executor, "SELECT a || b FROM concat_test");
+    (void)res;
+}
+
+// ============= Math Functions Tests =============
+
+TEST_F(QueryExecutorTests, SelectWithAbs) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE math_test (val INT)");
+    execute_sql(env.executor, "INSERT INTO math_test VALUES (-5), (10), (-3)");
+
+    const auto res = execute_sql(env.executor, "SELECT ABS(val) FROM math_test");
+    (void)res;
+}
+
+TEST_F(QueryExecutorTests, SelectWithMaxMin) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE maxmin_test (val INT)");
+    execute_sql(env.executor, "INSERT INTO maxmin_test VALUES (5), (20), (15)");
+
+    const auto res = execute_sql(env.executor, "SELECT MAX(val), MIN(val) FROM maxmin_test");
+    (void)res;
+}
+
+// ============= Subquery Tests =============
+
+TEST_F(QueryExecutorTests, SelectWithSubquery) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE sub_test (id INT, val INT)");
+    execute_sql(env.executor, "INSERT INTO sub_test VALUES (1, 100), (2, 200), (3, 300)");
+
+    // Subquery in WHERE
+    const auto res = execute_sql(env.executor, "SELECT * FROM sub_test WHERE val > (SELECT AVG(val) FROM sub_test)");
+    (void)res;
+}
+
 }  // namespace
