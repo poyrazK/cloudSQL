@@ -829,7 +829,9 @@ TEST_F(QueryExecutorTests, SelectWithGroupByHaving) {
     execute_sql(env.executor, "INSERT INTO group_having VALUES ('sales', 150)");
 
     // GROUP BY with HAVING - may fail if not supported
-    const auto res = execute_sql(env.executor, "SELECT dept, SUM(salary) FROM group_having GROUP BY dept HAVING SUM(salary) > 100");
+    const auto res = execute_sql(
+        env.executor,
+        "SELECT dept, SUM(salary) FROM group_having GROUP BY dept HAVING SUM(salary) > 100");
     (void)res;
 }
 
@@ -838,7 +840,8 @@ TEST_F(QueryExecutorTests, SelectWithGroupByHaving) {
 TEST_F(QueryExecutorTests, SelectWithIn) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE in_test (id INT, name TEXT)");
-    execute_sql(env.executor, "INSERT INTO in_test VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')");
+    execute_sql(env.executor,
+                "INSERT INTO in_test VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')");
 
     const auto res = execute_sql(env.executor, "SELECT * FROM in_test WHERE id IN (1, 3)");
     (void)res;
@@ -849,7 +852,8 @@ TEST_F(QueryExecutorTests, SelectWithIn) {
 TEST_F(QueryExecutorTests, SelectWithLike) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE like_test (id INT, name TEXT)");
-    execute_sql(env.executor, "INSERT INTO like_test VALUES (1, 'apple'), (2, 'banana'), (3, 'apricot')");
+    execute_sql(env.executor,
+                "INSERT INTO like_test VALUES (1, 'apple'), (2, 'banana'), (3, 'apricot')");
 
     const auto res = execute_sql(env.executor, "SELECT * FROM like_test WHERE name LIKE 'ap%'");
     (void)res;
@@ -916,7 +920,8 @@ TEST_F(QueryExecutorTests, SelectWithSubquery) {
     execute_sql(env.executor, "INSERT INTO sub_test VALUES (1, 100), (2, 200), (3, 300)");
 
     // Subquery in WHERE
-    const auto res = execute_sql(env.executor, "SELECT * FROM sub_test WHERE val > (SELECT AVG(val) FROM sub_test)");
+    const auto res = execute_sql(
+        env.executor, "SELECT * FROM sub_test WHERE val > (SELECT AVG(val) FROM sub_test)");
     (void)res;
 }
 
