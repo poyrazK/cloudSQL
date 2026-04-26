@@ -541,7 +541,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
  * @brief Hash bucket for streaming hash join
  */
 struct VectorizedHashBucket {
-    std::vector<common::Value> key_values;    // Key column values per row
+    std::vector<common::Value> key_values;    // Key column value for each row in this bucket
     std::vector<std::vector<common::Value>> payload_rows;  // Full right row values
 };
 
