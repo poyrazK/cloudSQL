@@ -931,8 +931,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
 }
 
 // Test: SELECT with MIN aggregate (lines 879-882)
-TEST_F(DistributedExecutorWithNodesTests, DISABLED_SelectWithMinAggregate) {
-    // DISABLED: inline lambda handler crashes when used in std::async context
+TEST_F(DistributedExecutorWithNodesTests, SelectWithMinAggregate) {
     auto srv1 = std::make_unique<network::RpcServer>(6435);
     srv1->start();
     servers_.push_back(std::move(srv1));
@@ -950,8 +949,7 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_SelectWithMinAggregate) {
 }
 
 // Test: SELECT with MAX aggregate
-TEST_F(DistributedExecutorWithNodesTests, DISABLED_SelectWithMaxAggregate) {
-    // DISABLED: inline lambda handler crashes
+TEST_F(DistributedExecutorWithNodesTests, SelectWithMaxAggregate) {
     auto srv1 = std::make_unique<network::RpcServer>(6436);
     srv1->start();
     servers_.push_back(std::move(srv1));
@@ -969,8 +967,7 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_SelectWithMaxAggregate) {
 }
 
 // Test: SELECT with AVG aggregate (line 844 - AVG detection branch)
-TEST_F(DistributedExecutorWithNodesTests, DISABLED_SelectWithAvgAggregate) {
-    // DISABLED: inline lambda handler crashes
+TEST_F(DistributedExecutorWithNodesTests, SelectWithAvgAggregate) {
     auto srv1 = std::make_unique<network::RpcServer>(6437);
     srv1->start();
     servers_.push_back(std::move(srv1));
