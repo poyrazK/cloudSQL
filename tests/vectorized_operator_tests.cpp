@@ -827,4 +827,515 @@ TEST_F(VectorizedGroupByTests, VerifyGroupKeyValues) {
     EXPECT_EQ(cnt_y, 1);
 }
 
+// Helper to create a VectorizedHashJoinOperator
+std::unique_ptr<VectorizedHashJoinOperator> make_vectorized_hash_join(
+    std::unique_ptr<VectorizedOperator> left, std::unique_ptr<VectorizedOperator> right,
+    const std::string& left_key, const std::string& right_key, JoinType join_type) {
+    // Build output schema: left columns + right columns
+    Schema out_schema;
+    const auto& left_schema = left->output_schema();
+    const auto& right_schema = right->output_schema();
+
+    for (size_t i = 0; i < left_schema.columns().size(); ++i) {
+        out_schema.add_column(left_schema.columns()[i].name(), left_schema.columns()[i].type());
+    }
+    for (size_t i = 0; i < right_schema.columns().size(); ++i) {
+        out_schema.add_column(right_schema.columns()[i].name(), right_schema.columns()[i].type());
+    }
+
+    return std::make_unique<VectorizedHashJoinOperator>(
+        std::move(left), std::move(right), std::make_unique<ColumnExpr>(left_key),
+        std::make_unique<ColumnExpr>(right_key), join_type, std::move(out_schema));
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeft) {
+    // Left table: id=1,2,3 | Right table: id=2,3,4
+    // LEFT join on id: expect (1,"A",NULL), (2,"B",2,20), (3,"C",3,30)
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+    left_schema.add_column("name", common::ValueType::TYPE_TEXT);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+    right_schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    // Left table
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1), common::Value::make_text("A")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_text("B")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_text("C")}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    // Right table
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_int64(20)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_int64(30)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(4), common::Value::make_int64(40)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Left);
+
+    auto result = VectorBatch::create(join->output_schema());
+    std::vector<std::tuple<int64_t, std::string, int64_t, int64_t>> matches;
+    int null_right_count = 0;
+
+    while (join->next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            int64_t left_id = result->get_column(0).get(i).as_int64();
+            std::string name = result->get_column(1).get(i).as_text();
+            if (result->get_column(2).get(i).is_null()) {
+                null_right_count++;
+            } else {
+                int64_t right_id = result->get_column(2).get(i).as_int64();
+                int64_t right_val = result->get_column(3).get(i).as_int64();
+                matches.push_back(std::make_tuple(left_id, name, right_id, right_val));
+            }
+        }
+        result->clear();
+    }
+
+    // LEFT join: id=1 has no match, should be emitted with NULLs
+    EXPECT_EQ(null_right_count, 1);
+    EXPECT_EQ(std::get<0>(matches[0]), 2);
+    EXPECT_EQ(std::get<2>(matches[0]), 2);
+    EXPECT_EQ(std::get<0>(matches[1]), 3);
+    EXPECT_EQ(std::get<2>(matches[1]), 3);
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinInner) {
+    // Left table: id=1,2,3 | Right table: id=2,3,4
+    // Inner join on id: expect (2,2), (3,3)
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+    left_schema.add_column("name", common::ValueType::TYPE_TEXT);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+    right_schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    // Left table
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1), common::Value::make_text("A")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_text("B")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_text("C")}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    // Right table
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_int64(20)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_int64(30)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(4), common::Value::make_int64(40)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
+
+    auto result = VectorBatch::create(join->output_schema());
+    std::vector<std::tuple<int64_t, std::string, int64_t, int64_t>> matches;
+
+    while (join->next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            matches.push_back(std::make_tuple(result->get_column(0).get(i).as_int64(),  // left.id
+                                              result->get_column(1).get(i).as_text(),   // left.name
+                                              result->get_column(2).get(i).as_int64(),  // right.id
+                                              result->get_column(3).get(i).as_int64()   // right.val
+                                              ));
+        }
+        result->clear();
+    }
+
+    // Inner join: (2,"B",2,20), (3,"C",3,30)
+    EXPECT_EQ(matches.size(), 2U);
+    EXPECT_EQ(std::get<0>(matches[0]), 2);
+    EXPECT_EQ(std::get<2>(matches[0]), 2);
+    EXPECT_EQ(std::get<0>(matches[1]), 3);
+    EXPECT_EQ(std::get<2>(matches[1]), 3);
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinNullKeys) {
+    // Test that NULL keys in either side don't produce matches
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hashjoin_null_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
+    left_batch->append_tuple(Tuple({common::Value::make_null()}));  // NULL key
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2)}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hashjoin_null_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
+    right_batch->append_tuple(Tuple({common::Value::make_null()}));  // NULL key
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_null_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_null_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int match_count = 0;
+
+    while (join->next_batch(*result)) {
+        match_count += result->row_count();
+        result->clear();
+    }
+
+    // INNER join with NULLs: only (1,1) and (2,2) should match
+    // NULL keys never match
+    EXPECT_EQ(match_count, 2);
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinEmptyRight) {
+    // Test LEFT join with empty right table - all left rows should emit with NULLs
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+    left_schema.add_column("name", common::ValueType::TYPE_TEXT);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+    right_schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    // Left table with 3 rows
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1), common::Value::make_text("A")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_text("B")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_text("C")}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    // Right table is EMPTY
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    // No rows added - right table is empty
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Left);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int total_rows = 0;
+    int null_count = 0;
+
+    while (join->next_batch(*result)) {
+        total_rows += result->row_count();
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            if (result->get_column(2).get(i).is_null()) {
+                null_count++;
+            }
+        }
+        result->clear();
+    }
+
+    // LEFT join with empty right: all 3 left rows with NULLs for right columns
+    EXPECT_EQ(total_rows, 3);
+    EXPECT_EQ(null_count, 3);  // All rows have NULL for right.id
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinEmptyLeft) {
+    // Test with empty left table
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    // Left table is EMPTY
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+
+    // Right table with rows
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int total_rows = 0;
+
+    while (join->next_batch(*result)) {
+        total_rows += result->row_count();
+        result->clear();
+    }
+
+    // Empty left table: 0 rows regardless of join type
+    EXPECT_EQ(total_rows, 0);
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultipleMatches) {
+    // Test when right has duplicate keys: id=1 appears twice
+    // Each left row should match ALL right rows with the same key
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2)}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(1)}));  // duplicate
+    right_batch->append_tuple(Tuple({common::Value::make_int64(1)}));  // duplicate
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
+
+    auto result = VectorBatch::create(join->output_schema());
+    std::vector<int64_t> left_ids;
+    std::vector<int64_t> right_ids;
+
+    while (join->next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            left_ids.push_back(result->get_column(0).get(i).as_int64());
+            right_ids.push_back(result->get_column(1).get(i).as_int64());
+        }
+        result->clear();
+    }
+
+    // INNER: left_id=1 matches 2 right rows, left_id=2 matches 1 right row = 3 total
+    EXPECT_EQ(left_ids.size(), 3);
+    EXPECT_EQ(right_ids.size(), 3);
+    EXPECT_EQ(left_ids[0], 1);
+    EXPECT_EQ(left_ids[1], 1);  // Second match for left id=1
+    EXPECT_EQ(left_ids[2], 2);
+    // Right-side: two rows with id=1 (matches for left_id=1), then one row with id=2 (match for left_id=2)
+    EXPECT_EQ(right_ids[0], 1);
+    EXPECT_EQ(right_ids[1], 1);  // Second right row with id=1
+    EXPECT_EQ(right_ids[2], 2);
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftNullKeys) {
+    // Test LEFT join with NULL keys in left table
+    // NULL key should NOT match anything, row should emit with NULLs for right
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_null()}));  // NULL key
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Left);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int total_rows = 0;
+    int null_count = 0;
+
+    while (join->next_batch(*result)) {
+        total_rows += result->row_count();
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            if (result->get_column(1).get(i).is_null()) {
+                null_count++;
+            }
+        }
+        result->clear();
+    }
+
+    // LEFT: NULL key emits with NULLs, id=1 matches right.id=1
+    EXPECT_EQ(total_rows, 2);
+    EXPECT_EQ(null_count, 1);  // One row with NULL for right.id
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinOutputValues) {
+    // Verify that actual column VALUES are correct, not just IDs
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+    left_schema.add_column("name", common::ValueType::TYPE_TEXT);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+    right_schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1), common::Value::make_text("A")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_text("B")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_text("C")}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_int64(20)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_int64(30)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(4), common::Value::make_int64(40)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
+
+    auto result = VectorBatch::create(join->output_schema());
+    std::vector<std::tuple<int64_t, std::string, int64_t, int64_t>> matches;
+
+    while (join->next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            matches.push_back(std::make_tuple(result->get_column(0).get(i).as_int64(),  // left.id
+                                              result->get_column(1).get(i).as_text(),   // left.name
+                                              result->get_column(2).get(i).as_int64(),  // right.id
+                                              result->get_column(3).get(i).as_int64()   // right.val
+                                              ));
+        }
+        result->clear();
+    }
+
+    // Inner join: (2,"B",2,20), (3,"C",3,30)
+    ASSERT_EQ(matches.size(), 2);
+
+    // Verify first match: id=2 should pair with name="B" and val=20
+    EXPECT_EQ(std::get<0>(matches[0]), 2);
+    EXPECT_EQ(std::get<1>(matches[0]), "B");
+    EXPECT_EQ(std::get<2>(matches[0]), 2);
+    EXPECT_EQ(std::get<3>(matches[0]), 20);
+
+    // Verify second match: id=3 should pair with name="C" and val=30
+    EXPECT_EQ(std::get<0>(matches[1]), 3);
+    EXPECT_EQ(std::get<1>(matches[1]), "C");
+    EXPECT_EQ(std::get<2>(matches[1]), 3);
+    EXPECT_EQ(std::get<3>(matches[1]), 30);
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultiBatch) {
+    // Test with >1024 rows to verify batch boundary handling
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hashjoin_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    for (int i = 0; i < 2000; ++i) {
+        left_batch->append_tuple(Tuple({common::Value::make_int64(i)}));
+    }
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hashjoin_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    for (int i = 0; i < 2000; ++i) {
+        right_batch->append_tuple(Tuple({common::Value::make_int64(i)}));
+    }
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Inner);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int64_t total_rows = 0;
+
+    while (join->next_batch(*result)) {
+        total_rows += result->row_count();
+        result->clear();
+    }
+
+    // 2000 rows on each side, all should match
+    EXPECT_EQ(total_rows, 2000);
+}
+
 }  // namespace

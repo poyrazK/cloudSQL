@@ -537,6 +537,310 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 };
 
+/**
+ * @brief Hash bucket for streaming hash join
+ */
+struct VectorizedHashBucket {
+    std::vector<common::Value> key_values;    // Key column values per row
+    std::vector<std::vector<common::Value>> payload_rows;  // Full right row values
+};
+
+/**
+ * @brief Vectorized hash join operator with streaming/chunked processing
+ *        to bound memory usage when handling large right tables.
+ */
+class VectorizedHashJoinOperator : public VectorizedOperator {
+   private:
+    std::unique_ptr<VectorizedOperator> left_;
+    std::unique_ptr<VectorizedOperator> right_;
+    std::unique_ptr<parser::Expression> left_key_;
+    std::unique_ptr<parser::Expression> right_key_;
+
+    // Hash bucket for right relation (only one chunk in memory at a time)
+    static constexpr size_t NUM_BUCKETS = 64;
+    std::vector<VectorizedHashBucket> buckets_;
+
+    // Processing state - streaming/chunked phases
+    enum class ProcessPhase {
+        LoadLeftBuffer,   // Load all left rows into buffer once
+        BuildRightChunk,  // Load next right chunk into hash buckets
+        ProbeChunk,       // Probe buffered left rows against current chunk
+        EmitUnmatched,    // For LEFT join: emit unmatched rows with NULLs
+        Done
+    };
+    ProcessPhase phase_ = ProcessPhase::LoadLeftBuffer;
+
+    // Reusable batch objects
+    std::unique_ptr<VectorBatch> left_batch_;
+    std::unique_ptr<VectorBatch> right_batch_;
+
+    // LEFT join: buffer all left rows for repeated probing across chunks
+    static constexpr size_t RIGHT_CHUNK_SIZE = 1024;
+    static constexpr size_t BATCH_SIZE = 1024;
+    std::vector<std::vector<std::vector<common::Value>>> left_rows_buffer_;  // All left rows (all columns)
+    std::vector<bool> left_row_matched_;  // Track if left row found any match across chunks
+    size_t left_buffer_row_count_ = 0;    // Number of rows in left buffer
+
+    // Probe state
+    size_t left_row_idx_ = 0;       // Current row within buffered left rows (for current probing)
+    bool right_exhausted_ = false;  // All right consumed
+
+    // For LEFT join: track unmatched rows across all chunks
+    std::vector<size_t> unmatched_indices_;
+
+    // Join type
+    JoinType join_type_;
+
+    // Key column indices (pre-resolved)
+    size_t left_key_col_idx_ = 0;
+    size_t right_key_col_idx_ = 0;
+
+    // Output column layout: left columns first, then right columns
+    size_t left_col_count_ = 0;
+    size_t right_col_count_ = 0;
+
+   public:
+    VectorizedHashJoinOperator(std::unique_ptr<VectorizedOperator> left,
+                               std::unique_ptr<VectorizedOperator> right,
+                               std::unique_ptr<parser::Expression> left_key,
+                               std::unique_ptr<parser::Expression> right_key, JoinType join_type,
+                               Schema output_schema)
+        : VectorizedOperator(std::move(output_schema)),
+          left_(std::move(left)),
+          right_(std::move(right)),
+          left_key_(std::move(left_key)),
+          right_key_(std::move(right_key)),
+          join_type_(join_type) {
+        buckets_.resize(NUM_BUCKETS);
+        left_batch_ = VectorBatch::create(left_->output_schema());
+        right_batch_ = VectorBatch::create(right_->output_schema());
+
+        // Pre-resolve key column indices
+        left_key_col_idx_ = left_->output_schema().find_column(left_key_->to_string());
+        right_key_col_idx_ = right_->output_schema().find_column(right_key_->to_string());
+        left_col_count_ = left_->output_schema().columns().size();
+        right_col_count_ = right_->output_schema().columns().size();
+
+        // Pre-allocate unmatched tracking
+        unmatched_indices_.reserve(BATCH_SIZE);
+    }
+
+    bool next_batch(VectorBatch& out_batch) override {
+        out_batch.clear();
+        if (out_batch.column_count() == 0) {
+            out_batch.init_from_schema(output_schema_);
+        }
+
+        switch (phase_) {
+            case ProcessPhase::LoadLeftBuffer:
+                load_left_into_buffer();
+                if (state_ == ExecState::Error) return false;
+                phase_ = ProcessPhase::BuildRightChunk;
+                [[fallthrough]];
+
+            case ProcessPhase::BuildRightChunk:
+                if (!load_next_right_chunk()) {
+                    // Right exhausted - check for unmatched left rows (LEFT join)
+                    if (join_type_ == JoinType::Left) {
+                        phase_ = ProcessPhase::EmitUnmatched;
+                        // Build unmatched list
+                        unmatched_indices_.clear();
+                        for (size_t i = 0; i < left_buffer_row_count_; ++i) {
+                            if (!left_row_matched_[i]) unmatched_indices_.push_back(i);
+                        }
+                        left_row_idx_ = 0;
+                    } else {
+                        phase_ = ProcessPhase::Done;
+                    }
+                    break;
+                }
+                // Fall through to ProbeChunk to process this chunk
+                [[fallthrough]];
+
+            case ProcessPhase::ProbeChunk: {
+                if (probe_left_against_chunk(out_batch)) return true;
+                // Chunk fully probed - load next chunk or finalize
+                if (right_exhausted_) {
+                    if (join_type_ == JoinType::Left) {
+                        phase_ = ProcessPhase::EmitUnmatched;
+                        // Build unmatched list
+                        unmatched_indices_.clear();
+                        for (size_t i = 0; i < left_buffer_row_count_; ++i) {
+                            if (!left_row_matched_[i]) unmatched_indices_.push_back(i);
+                        }
+                        left_row_idx_ = 0;
+                        return true;  // Call again to emit unmatched rows
+                    } else {
+                        phase_ = ProcessPhase::Done;
+                        return false;  // INNER join is done
+                    }
+                }
+                phase_ = ProcessPhase::BuildRightChunk;
+                return true;  // Call again to load next chunk
+            }
+
+            case ProcessPhase::EmitUnmatched:
+                if (emit_unmatched_left_rows(out_batch)) return true;
+                phase_ = ProcessPhase::Done;
+                return false;
+
+            case ProcessPhase::Done:
+            default:
+                return false;
+        }
+        // Fall-through cases: BuildRightChunk or ProbeChunk need to continue processing
+        // Return true to indicate more data is available and caller should call again
+        return true;
+    }
+
+   private:
+    void load_left_into_buffer() {
+        // Load all left rows into memory buffer for repeated probing across chunks
+        while (left_->next_batch(*left_batch_)) {
+            for (size_t r = 0; r < left_batch_->row_count(); ++r) {
+                std::vector<std::vector<common::Value>> row_values;
+                for (size_t c = 0; c < left_batch_->column_count(); ++c) {
+                    row_values.push_back({left_batch_->get_column(c).get(r)});
+                }
+                left_rows_buffer_.push_back(std::move(row_values));
+            }
+            left_batch_->clear();
+        }
+        left_buffer_row_count_ = left_rows_buffer_.size();
+        left_row_matched_.resize(left_buffer_row_count_, false);
+    }
+
+    bool load_next_right_chunk() {
+        // Clear previous chunk buckets
+        for (auto& bucket : buckets_) {
+            bucket.key_values.clear();
+            bucket.payload_rows.clear();
+        }
+
+        size_t chunk_rows = 0;
+        bool more_batches = true;
+        while (chunk_rows < RIGHT_CHUNK_SIZE && more_batches) {
+            right_batch_->clear();
+            more_batches = right_->next_batch(*right_batch_);
+            if (!more_batches) break;
+
+            for (size_t r = 0; r < right_batch_->row_count(); ++r) {
+                const auto& key_val = right_batch_->get_column(right_key_col_idx_).get(r);
+
+                // NULL keys go to special bucket (cannot match)
+                if (key_val.is_null()) {
+                    store_in_bucket(NUM_BUCKETS - 1, r);
+                } else {
+                    size_t bucket_idx = compute_bucket_idx(key_val);
+                    store_in_bucket(bucket_idx, r);
+                }
+                chunk_rows++;
+                if (chunk_rows >= RIGHT_CHUNK_SIZE) break;
+            }
+        }
+
+        // If we loaded a chunk, right is not exhausted yet (there may be more chunks)
+        // If we loaded nothing (chunk_rows == 0) AND more_batches is false, right is exhausted
+        if (chunk_rows == 0) {
+            right_exhausted_ = true;
+        }
+        return chunk_rows > 0;
+    }
+
+    size_t compute_bucket_idx(const common::Value& key_val) {
+        std::string key_str = key_val.to_string();
+        size_t hash = std::hash<std::string>{}(key_str);
+        return hash % (NUM_BUCKETS - 1);
+    }
+
+    void store_in_bucket(size_t bucket_idx, size_t row_idx) {
+        auto& bucket = buckets_[bucket_idx];
+
+        // Store only the key column value
+        common::Value key_val = right_batch_->get_column(right_key_col_idx_).get(row_idx);
+        bucket.key_values.push_back(key_val);
+
+        // Store full row for payload
+        std::vector<common::Value> payload;
+        for (size_t c = 0; c < right_batch_->column_count(); ++c) {
+            payload.push_back(right_batch_->get_column(c).get(row_idx));
+        }
+        bucket.payload_rows.push_back(std::move(payload));
+    }
+
+    bool probe_left_against_chunk(VectorBatch& out_batch) {
+        for (size_t left_idx = 0; left_idx < left_buffer_row_count_; ++left_idx) {
+            if (out_batch.row_count() >= BATCH_SIZE) {
+                return true;  // Batch is full
+            }
+
+            // For INNER join, skip already matched rows
+            if (join_type_ == JoinType::Inner && left_row_matched_[left_idx]) {
+                continue;
+            }
+
+            const auto& key_val = left_rows_buffer_[left_idx][left_key_col_idx_][0];
+
+            if (key_val.is_null()) {
+                continue;  // NULL keys never match
+            }
+
+            size_t bucket_idx = compute_bucket_idx(key_val);
+            auto& bucket = buckets_[bucket_idx];
+
+            // Search for match in this bucket
+            for (size_t i = 0; i < bucket.key_values.size(); ++i) {
+                if (out_batch.row_count() >= BATCH_SIZE) {
+                    return true;  // Batch is full
+                }
+
+                const auto& bucket_key = bucket.key_values[i];
+                if (bucket_key == key_val) {
+                    emit_joined_row(out_batch, left_idx, bucket.payload_rows[i]);
+                    // Set matched flag for this left row (used for cross-chunk deduplication)
+                    left_row_matched_[left_idx] = true;
+                    // Note: do NOT break here - we must find ALL matches within this chunk
+                    // The matched flag is set so we skip this left row in subsequent chunks
+                }
+            }
+        }
+        return false;  // Return false so state machine continues to next chunk or unmatched emission
+    }
+
+    void emit_joined_row(VectorBatch& out_batch, size_t left_buffer_idx,
+                         const std::vector<common::Value>& right_row) {
+        // Append left columns from buffer
+        for (size_t c = 0; c < left_col_count_; ++c) {
+            out_batch.get_column(c).append(left_rows_buffer_[left_buffer_idx][c][0]);
+        }
+        // Append right columns
+        for (size_t c = 0; c < right_row.size(); ++c) {
+            out_batch.get_column(left_col_count_ + c).append(right_row[c]);
+        }
+        out_batch.set_row_count(out_batch.row_count() + 1);
+    }
+
+    bool emit_unmatched_left_rows(VectorBatch& out_batch) {
+        while (left_row_idx_ < unmatched_indices_.size()) {
+            if (out_batch.row_count() >= BATCH_SIZE) {
+                return true;  // Batch is full
+            }
+            size_t idx = unmatched_indices_[left_row_idx_];
+            // Append left columns from buffer
+            for (size_t c = 0; c < left_col_count_; ++c) {
+                out_batch.get_column(c).append(left_rows_buffer_[idx][c][0]);
+            }
+            // Append NULLs for right columns
+            for (size_t c = 0; c < right_col_count_; ++c) {
+                out_batch.get_column(left_col_count_ + c).append(common::Value::make_null());
+            }
+            out_batch.set_row_count(out_batch.row_count() + 1);
+            left_row_idx_++;
+        }
+        return out_batch.row_count() > 0;
+    }
+};
+
 }  // namespace cloudsql::executor
 
 #endif  // CLOUDSQL_EXECUTOR_VECTORIZED_OPERATOR_HPP
