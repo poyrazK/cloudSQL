@@ -482,6 +482,10 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithShardRouting) {
     set_execute_fragment_handler(*servers_[0], true);
     set_execute_fragment_handler(*servers_[1], true);
 
+    // Set leader for shard 2 (since shard_idx = hash(1) % 2, which may vary)
+    // Use shard_idx + 1 = 2 as group_id
+    cm_->set_leader(2, "node_1");
+
     auto lexer = std::make_unique<Lexer>("SELECT * FROM test_table WHERE id = 1");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
