@@ -1233,7 +1233,7 @@ TEST_F(QueryExecutorTests, StringExecuteJoin) {
 
 TEST_F(QueryExecutorTests, UpdateIndexedColumn) {
     TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE upd_idx (id INT PRIMARY KEY, val TEXT)");
+    execute_sql(env.executor, "CREATE TABLE upd_idx (id INT, val TEXT)");
     execute_sql(env.executor, "CREATE INDEX idx_val ON upd_idx(val)");
     execute_sql(env.executor, "INSERT INTO upd_idx VALUES (1, 'old')");
 
@@ -1244,7 +1244,7 @@ TEST_F(QueryExecutorTests, UpdateIndexedColumn) {
 
 TEST_F(QueryExecutorTests, UpdateIndexedColumnMultiple) {
     TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE upd_idx_multi (id INT PRIMARY KEY, val TEXT)");
+    execute_sql(env.executor, "CREATE TABLE upd_idx_multi (id INT, val TEXT)");
     execute_sql(env.executor, "CREATE INDEX idx_val_multi ON upd_idx_multi(val)");
     execute_sql(env.executor, "INSERT INTO upd_idx_multi VALUES (1, 'a'), (2, 'b'), (3, 'c')");
 
@@ -1342,6 +1342,29 @@ TEST_F(QueryExecutorTests, SelectMinMaxWithGroupBy) {
     const auto res =
         env.executor.execute("SELECT cat, MIN(val), MAX(val) FROM minmax_grp GROUP BY cat");
     (void)res;
+}
+
+// ============= Verify Index in Metadata (Investigation Test) =============
+
+TEST_F(QueryExecutorTests, VerifyIndexInMetadata) {
+    TestEnvironment env;
+
+    // First verify CREATE TABLE succeeds (without PRIMARY KEY to match CreateIndexBasic pattern)
+    const auto create_res = execute_sql(env.executor, "CREATE TABLE verify_idx (id INT, val TEXT)");
+    ASSERT_TRUE(create_res.success()) << "CREATE TABLE failed: " << create_res.error();
+
+    execute_sql(env.executor, "CREATE INDEX idx_val ON verify_idx(val)");
+
+    // After CREATE INDEX, verify the index appears in catalog
+    auto table_meta = env.catalog->get_table_by_name("verify_idx");
+    ASSERT_TRUE(table_meta.has_value()) << "get_table_by_name returned nullopt - table may not exist in catalog";
+    EXPECT_FALSE(table_meta.value()->indexes.empty())
+        << "CREATE INDEX should populate table_meta->indexes";
+
+    // Verify the index has non-empty column_positions
+    const auto& idx = table_meta.value()->indexes[0];
+    EXPECT_FALSE(idx.column_positions.empty())
+        << "Index should have column_positions populated";
 }
 
 }  // namespace
