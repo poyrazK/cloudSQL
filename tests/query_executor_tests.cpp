@@ -1342,7 +1342,8 @@ TEST_F(QueryExecutorTests, SelectMinMaxWithGroupBy) {
     execute_sql(env.executor, "INSERT INTO minmax_grp VALUES ('A', 10), ('A', 20), ('B', 5)");
 
     // MIN/MAX with GROUP BY
-    const auto res = env.executor.execute("SELECT cat, MIN(val), MAX(val) FROM minmax_grp GROUP BY cat");
+    const auto res =
+        env.executor.execute("SELECT cat, MIN(val), MAX(val) FROM minmax_grp GROUP BY cat");
     (void)res;
 }
 
