@@ -1340,7 +1340,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinMultiBatch) {
 }
 
 TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
-    // Test LEFT join with >1024 right rows spanning multiple chunks
+    // Test LEFT join with >BATCH_SIZE (1024) right rows requiring multiple batches
     // Left: id=1,2,3 (3 rows) | Right: id=1 (1500 rows)
     // LEFT id=1 matches all 1500 right rows
     // LEFT id=2,3 have NO match - should emit with NULLs
@@ -1363,7 +1363,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
     ASSERT_TRUE(right_table.create());
     ASSERT_TRUE(right_table.open());
     auto right_batch = VectorBatch::create(right_schema);
-    // Right: 1500 rows ALL with id=1 (forces multi-chunk with RIGHT_CHUNK_SIZE=1024)
+    // Right: 1500 rows ALL with id=1 (forces multi-batch processing with BATCH_SIZE=1024)
     for (int i = 0; i < 1500; ++i) {
         right_batch->append_tuple(Tuple({common::Value::make_int64(1)}));
     }
@@ -1380,11 +1380,19 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
     auto result = VectorBatch::create(join->output_schema());
     int64_t total_rows = 0;
     int64_t rows_with_nulls = 0;  // LEFT id=2,3 should emit with NULLs
+    std::vector<int64_t> null_left_ids;  // Track which left ids had null right
 
     while (join->next_batch(*result)) {
         for (size_t i = 0; i < result->row_count(); ++i) {
+            int64_t left_id = result->get_column(0).get(i).as_int64();
             if (result->get_column(1).get(i).is_null()) {
                 rows_with_nulls++;
+                null_left_ids.push_back(left_id);
+            } else {
+                int64_t right_id = result->get_column(1).get(i).as_int64();
+                // Every non-null row should be left.id=1 matched with right.id=1
+                EXPECT_EQ(left_id, 1);
+                EXPECT_EQ(right_id, 1);
             }
         }
         total_rows += result->row_count();
@@ -1394,6 +1402,11 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
     // LEFT join: id=1 matches 1500 rows, id=2,3 emit with NULLs
     EXPECT_EQ(total_rows, 1502);    // 1500 matches + 2 unmatched with NULLs
     EXPECT_EQ(rows_with_nulls, 2);  // id=2 and id=3 have no match
+    // Verify the two null rows are for left ids 2 and 3
+    EXPECT_EQ(null_left_ids.size(), 2);
+    std::sort(null_left_ids.begin(), null_left_ids.end());
+    EXPECT_EQ(null_left_ids[0], 2);
+    EXPECT_EQ(null_left_ids[1], 3);
 }
 
 }  // namespace
