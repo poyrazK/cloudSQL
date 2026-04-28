@@ -48,6 +48,12 @@ class HeapTableTests : public ::testing::Test {
         // Cleanup test files (both test_table and test_table2 created in tests)
         std::remove("./test_data/test_table.heap");
         std::remove("./test_data/test_table2.heap");
+        // Auxiliary tables created by individual tests
+        std::remove("./test_data/bool_table.heap");
+        std::remove("./test_data/float_table.heap");
+        std::remove("./test_data/float_view_table.heap");
+        std::remove("./test_data/mapped_table.heap");
+        std::remove("./test_data/big_table.heap");
     }
 
     std::unique_ptr<StorageManager> disk_manager_;
@@ -694,6 +700,264 @@ TEST_F(HeapTableTests, Remove_WhenTupleNotOnCachedPage) {
     const uint64_t before_count = table_->tuple_count();
     ASSERT_TRUE(table_->remove(later_rid, 1));
     EXPECT_EQ(table_->tuple_count(), before_count - 1);
+}
+
+// ============= Insert + Retrieve with Different Types =============
+
+TEST_F(HeapTableTests, InsertAndRetrieveBool) {
+    ASSERT_TRUE(table_->create());
+
+    // Build a schema with BOOL column
+    auto bool_schema = std::make_unique<Schema>();
+    bool_schema->add_column("id", ValueType::TYPE_INT64, false);
+    bool_schema->add_column("flag", ValueType::TYPE_BOOL, false);
+
+    HeapTable bool_table("bool_table", *bpm_, *bool_schema);
+    ASSERT_TRUE(bool_table.create());
+
+    // Insert true and false
+    auto tuple_true = Tuple({Value::make_int64(1), Value::make_bool(true)});
+    auto tuple_false = Tuple({Value::make_int64(2), Value::make_bool(false)});
+
+    auto rid_true = bool_table.insert(tuple_true);
+    auto rid_false = bool_table.insert(tuple_false);
+
+    EXPECT_FALSE(rid_true.is_null());
+    EXPECT_FALSE(rid_false.is_null());
+
+    Tuple out_true;
+    Tuple out_false;
+    ASSERT_TRUE(bool_table.get(rid_true, out_true));
+    ASSERT_TRUE(bool_table.get(rid_false, out_false));
+
+    EXPECT_TRUE(out_true.get(1).as_bool());
+    EXPECT_FALSE(out_false.get(1).as_bool());
+
+    // Scan verifies both
+    auto it = bool_table.scan();
+    int count = 0;
+    Tuple t;
+    while (it.next(t)) {
+        count++;
+    }
+    EXPECT_EQ(count, 2);
+    // Note: bool_table.heap cleanup handled by TearDown
+}
+
+TEST_F(HeapTableTests, InsertAndRetrieveFloat) {
+    ASSERT_TRUE(table_->create());
+
+    // Build a schema with FLOAT64 column
+    auto float_schema = std::make_unique<Schema>();
+    float_schema->add_column("id", ValueType::TYPE_INT64, false);
+    float_schema->add_column("value", ValueType::TYPE_FLOAT64, false);
+
+    HeapTable float_table("float_table", *bpm_, *float_schema);
+    ASSERT_TRUE(float_table.create());
+
+    auto tuple1 = Tuple({Value::make_int64(1), Value::make_float64(3.14159)});
+    auto tuple2 = Tuple({Value::make_int64(2), Value::make_float64(2.71828)});
+
+    auto rid1 = float_table.insert(tuple1);
+    auto rid2 = float_table.insert(tuple2);
+
+    EXPECT_FALSE(rid1.is_null());
+    EXPECT_FALSE(rid2.is_null());
+
+    Tuple out1;
+    Tuple out2;
+    ASSERT_TRUE(float_table.get(rid1, out1));
+    ASSERT_TRUE(float_table.get(rid2, out2));
+
+    EXPECT_DOUBLE_EQ(out1.get(1).as_float64(), 3.14159);
+    EXPECT_DOUBLE_EQ(out2.get(1).as_float64(), 2.71828);
+    // Note: float_table.heap cleanup handled by TearDown
+}
+
+TEST_F(HeapTableTests, TupleView_GetFloatValue) {
+    ASSERT_TRUE(table_->create());
+
+    auto float_schema = std::make_unique<Schema>();
+    float_schema->add_column("id", ValueType::TYPE_INT64, false);
+    float_schema->add_column("score", ValueType::TYPE_FLOAT64, false);
+
+    HeapTable float_table("float_view_table", *bpm_, *float_schema);
+    ASSERT_TRUE(float_table.create());
+
+    auto tuple = Tuple({Value::make_int64(99), Value::make_float64(1.41421)});
+    float_table.insert(tuple);
+
+    auto it = float_table.scan();
+    HeapTable::TupleView view;
+    ASSERT_TRUE(it.next_view(view));
+
+    // Verify xmin/xmax are 0 (no MVCC)
+    EXPECT_EQ(view.xmin, 0U);
+    EXPECT_EQ(view.xmax, 0U);
+
+    // get_value on column 1 (FLOAT64)
+    auto val = view.get_value(1);
+    EXPECT_DOUBLE_EQ(val.as_float64(), 1.41421);
+    // Note: float_view_table.heap cleanup handled by TearDown
+}
+
+// ============= write_page() Non-Cached Path =============
+
+TEST_F(HeapTableTests, WritePage_NonCachedPath) {
+    ASSERT_TRUE(table_->create());
+    // Insert a tuple to cache page 0
+    table_->insert(make_test_tuple(1, "Cached"));
+
+    // write_page(page 1, ...) with no prior insert to page 1
+    // should go through the non-cached path (bpm_.new_page or fetch + write)
+    char buffer[Page::PAGE_SIZE];
+    std::memset(buffer, 0, Page::PAGE_SIZE);
+
+    // Write a custom page 1 with page header
+    HeapTable::PageHeader hdr{};
+    hdr.next_page = 0;
+    hdr.num_slots = 1;
+    hdr.free_space_offset = sizeof(HeapTable::PageHeader) + 32;
+    hdr.flags = 0;
+    std::memcpy(buffer, &hdr, sizeof(HeapTable::PageHeader));
+
+    EXPECT_TRUE(table_->write_page(1, buffer));
+
+    // Verify we can read it back
+    char read_buf[Page::PAGE_SIZE];
+    ASSERT_TRUE(table_->read_page(1, read_buf));
+
+    HeapTable::PageHeader out_hdr;
+    std::memcpy(&out_hdr, read_buf, sizeof(HeapTable::PageHeader));
+    EXPECT_EQ(out_hdr.num_slots, 1U);
+}
+
+// ============= physical_remove Non-Cached Page =============
+
+TEST_F(HeapTableTests, PhysicalRemove_NonCachedPage) {
+    ASSERT_TRUE(table_->create());
+    // Insert enough tuples to span pages (150 tuples × ~40 bytes each ≈ 6000 bytes per page)
+    std::vector<HeapTable::TupleId> rids;
+    for (int i = 0; i < 160; ++i) {
+        rids.push_back(table_->insert(make_test_tuple(i, "User" + std::to_string(i))));
+    }
+    EXPECT_EQ(table_->tuple_count(), 160U);
+
+    // rids[0] is on page 0; rids[150+] likely on page 1+
+    // Find an RID with page_num > 0
+    HeapTable::TupleId later_rid;
+    for (const auto& rid : rids) {
+        if (rid.page_num > 0) {
+            later_rid = rid;
+            break;
+        }
+    }
+    // Fallback: if all on page 0 (small tuples), use an extreme slot
+    if (later_rid.is_null()) {
+        later_rid = rids.back();  // Last inserted
+    }
+
+    // Unpin it by scanning to advance past it, then physical_remove
+    auto it = table_->scan();
+    Tuple tmp;
+    while (it.next(tmp)) {
+        (void)tmp;
+    }
+    (void)later_rid;  // suppress unused warning in non-page>0 case
+
+    // Actually, just use page 0 with slot 0 if later_rid is the only one
+    const auto before_count = table_->tuple_count();
+    EXPECT_TRUE(table_->physical_remove(later_rid));
+    EXPECT_EQ(table_->tuple_count(), before_count - 1);
+}
+
+// ============= TupleView column_mapping path =============
+
+// Exercises heap_table.cpp lines 65-75: when column_mapping is set,
+// get_value resolves logical col_index through the mapping to get
+// the physical column index, then walks the payload accordingly.
+// This branch is only reachable when a TupleView has a non-null column_mapping,
+// which normally comes from ProjectOperator. We test it directly here.
+TEST_F(HeapTableTests, TupleView_GetValue_WithColumnMapping) {
+    ASSERT_TRUE(table_->create());
+    // Physical table: col0=id(INT64), col1=name(TEXT), col2=flag(BOOL)
+    auto phys_schema = std::make_unique<Schema>();
+    phys_schema->add_column("id", ValueType::TYPE_INT64, false);
+    phys_schema->add_column("name", ValueType::TYPE_TEXT, false);
+    phys_schema->add_column("flag", ValueType::TYPE_BOOL, false);
+
+    HeapTable mapped_table("mapped_table", *bpm_, *phys_schema);
+    ASSERT_TRUE(mapped_table.create());
+
+    // Insert a tuple: (id=99, name="Test", flag=true)
+    auto tuple = Tuple({Value::make_int64(99), Value::make_text("Test"), Value::make_bool(true)});
+    mapped_table.insert(tuple);
+
+    // Get a TupleView and manually set column_mapping to test the mapping path.
+    // column_mapping = {2, 0} means: logical col0 → physical col2, logical col1 → physical col0
+    // This exercises the column_mapping branch in get_value (line 73-74)
+    // NOTE: view.payload_data points into a page pinned by the iterator. The iterator
+    // must remain alive and not be advanced until all view.get_value() calls complete,
+    // otherwise the payload_data pointer becomes invalid (dangling).
+    auto it = mapped_table.scan();
+    HeapTable::TupleView view;
+    ASSERT_TRUE(it.next_view(view));
+
+    // Build a column mapping: logical col0 points to physical col2 (flag),
+    // logical col1 points to physical col0 (id).
+    // view.schema is a 3-column physical schema, but column_mapping has only 2 entries,
+    // so get_value() uses mapping.size() (2) as the logical column count (line 65-67).
+    std::vector<size_t> mapping = {2, 0};
+    view.column_mapping = &mapping;
+    view.schema = phys_schema.get();
+
+    // get_value(0) should resolve through mapping to physical col2 (BOOL=true)
+    auto val0 = view.get_value(0);
+    EXPECT_TRUE(val0.as_bool());
+
+    // get_value(1) should resolve through mapping to physical col0 (INT64=99)
+    auto val1 = view.get_value(1);
+    EXPECT_EQ(val1.as_int64(), 99);
+    // Note: mapped_table.heap cleanup handled by TearDown
+}
+
+// ============= Insert Large Tuple (heap_payload assign) =============
+
+// Exercises heap_table.cpp lines 330-333: when serialized tuple exceeds
+// 1024-byte stack_buf, ensure_capacity triggers heap_payload.assign()
+// which copies stack data to heap and switches to heap serialization.
+TEST_F(HeapTableTests, Insert_LargeTuple_HeapPayloadAssign) {
+    ASSERT_TRUE(table_->create());
+
+    // Build a table with a TEXT column. Inserting a string > 900 bytes
+    // ensures the serialized tuple exceeds the 1024-byte stack buffer
+    // (≈18 bytes header + 1 type byte + 4 length prefix + ~950+ content).
+    auto big_schema = std::make_unique<Schema>();
+    big_schema->add_column("id", ValueType::TYPE_INT64, false);
+    big_schema->add_column("data", ValueType::TYPE_TEXT, false);
+
+    HeapTable big_table("big_table", *bpm_, *big_schema);
+    ASSERT_TRUE(big_table.create());
+
+    // 950-character string to exceed stack buffer after header overhead
+    std::string large_text(950, 'X');
+    auto tuple = Tuple({Value::make_int64(1), Value::make_text(large_text)});
+    auto rid = big_table.insert(tuple);
+    EXPECT_FALSE(rid.is_null());
+
+    // Verify the tuple was inserted and retrieved correctly
+    Tuple out;
+    ASSERT_TRUE(big_table.get(rid, out));
+    EXPECT_EQ(out.get(0).as_int64(), 1);
+    EXPECT_EQ(out.get(1).as_text(), large_text);
+
+    // Verify scan also works (iterates through PageHeader::next_page chain)
+    auto it = big_table.scan();
+    Tuple scan_out;
+    ASSERT_TRUE(it.next(scan_out));
+    EXPECT_EQ(scan_out.get(0).as_int64(), 1);
+    EXPECT_EQ(scan_out.get(1).as_text(), large_text);
+    // Note: big_table.heap cleanup handled by TearDown
 }
 
 }  // namespace

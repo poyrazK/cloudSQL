@@ -12,10 +12,20 @@
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "parser/expression.hpp"
+#include "storage/btree_index.hpp"
+#include "storage/buffer_pool_manager.hpp"
+#include "storage/heap_table.hpp"
+#include "storage/storage_manager.hpp"
+#include "transaction/lock_manager.hpp"
+#include "transaction/transaction.hpp"
 
 using namespace cloudsql;
+using namespace cloudsql::common;
+using namespace cloudsql::storage;
+using cloudsql::config::Config;
 using namespace cloudsql::executor;
 using namespace cloudsql::parser;
+using namespace cloudsql::transaction;
 
 namespace {
 
@@ -126,6 +136,40 @@ class OperatorTests : public ::testing::Test {
     void TearDown() override {}
 };
 
+class IndexScanOperatorTests : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        // Use unique directory per test run to avoid stale file collisions
+        test_dir_ = std::string("./test_idx_data_") + std::to_string(getpid());
+        disk_manager_ = std::make_unique<StorageManager>(test_dir_);
+        disk_manager_->create_dir_if_not_exists();
+        bpm_ = std::make_unique<BufferPoolManager>(10, *disk_manager_);
+        schema_ = std::make_unique<Schema>();
+        schema_->add_column("id", common::ValueType::TYPE_INT64, false);
+        schema_->add_column("name", common::ValueType::TYPE_TEXT, true);
+        table_ = std::make_shared<HeapTable>("test_table", *bpm_, *schema_);
+        table_->create();
+        index_ = std::make_unique<BTreeIndex>("test_index", *bpm_, ValueType::TYPE_INT64);
+    }
+
+    void TearDown() override {
+        index_.reset();
+        table_.reset();
+        bpm_.reset();
+        disk_manager_.reset();
+        std::remove((test_dir_ + "/test_table.heap").c_str());
+        std::remove((test_dir_ + "/test_index.idx").c_str());
+        std::remove(test_dir_.c_str());
+    }
+
+    std::unique_ptr<StorageManager> disk_manager_;
+    std::unique_ptr<BufferPoolManager> bpm_;
+    std::shared_ptr<HeapTable> table_;
+    std::unique_ptr<BTreeIndex> index_;
+    std::unique_ptr<Schema> schema_;
+    std::string test_dir_;
+};
+
 TEST_F(OperatorTests, BufferScanBasic) {
     Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
     std::vector<Tuple> data;
@@ -173,6 +217,103 @@ TEST_F(OperatorTests, BufferScanExhausted) {
     EXPECT_FALSE(scan->next(tuple));
     EXPECT_FALSE(scan->next(tuple));
     scan->close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_Basic) {
+    // Insert 3 tuples with indexed INT64 key column
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(1), common::Value::make_text("alice")});
+    Tuple t2 = make_tuple({common::Value::make_int64(2), common::Value::make_text("bob")});
+    Tuple t3 = make_tuple({common::Value::make_int64(3), common::Value::make_text("charlie")});
+    auto rid1 = table_->insert(t1);
+    auto rid2 = table_->insert(t2);
+    auto rid3 = table_->insert(t3);
+
+    // Index on first column (id)
+    index_->insert(t1.values()[0], rid1);
+    index_->insert(t2.values()[0], rid2);
+    index_->insert(t3.values()[0], rid3);
+
+    // Search for key = 2
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(2));
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    int count = 0;
+    while (scan.next(tuple)) {
+        count++;
+    }
+    EXPECT_EQ(count, 1);
+    scan.close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_NotFound) {
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(10), common::Value::make_null()});
+    Tuple t2 = make_tuple({common::Value::make_int64(20), common::Value::make_null()});
+    auto rid1 = table_->insert(t1);
+    auto rid2 = table_->insert(t2);
+
+    index_->insert(t1.values()[0], rid1);
+    index_->insert(t2.values()[0], rid2);
+
+    // Search for non-existent key = 99
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(99));
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    EXPECT_FALSE(scan.next(tuple));
+    scan.close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_TxnVisibility) {
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(1), common::Value::make_null()});
+    auto rid1 = table_->insert(t1);
+
+    index_->insert(t1.values()[0], rid1);
+
+    // Create a transaction and scan with it
+    Transaction txn(1, IsolationLevel::SERIALIZABLE);
+    LockManager lock_mgr;
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(1), &txn,
+                           &lock_mgr);
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    EXPECT_TRUE(scan.next(tuple));
+    EXPECT_FALSE(scan.next(tuple));
+    scan.close();
+}
+
+TEST_F(IndexScanOperatorTests, IndexScan_DeletedTuple) {
+    ASSERT_TRUE(index_->create());
+
+    Tuple t1 = make_tuple({common::Value::make_int64(1), common::Value::make_null()});
+    Tuple t2 = make_tuple({common::Value::make_int64(2), common::Value::make_null()});
+    auto rid1 = table_->insert(t1);
+    auto rid2 = table_->insert(t2);
+
+    index_->insert(t1.values()[0], rid1);
+    index_->insert(t2.values()[0], rid2);
+
+    // Delete tuple with id=1
+    table_->remove(rid1, 1);
+
+    // Search for key = 1 (should not be found)
+    IndexScanOperator scan(table_, std::move(index_), common::Value::make_int64(1));
+    ASSERT_TRUE(scan.init());
+    ASSERT_TRUE(scan.open());
+
+    Tuple tuple;
+    EXPECT_FALSE(scan.next(tuple));
+    scan.close();
 }
 
 TEST_F(OperatorTests, LimitBasic) {
@@ -876,6 +1017,83 @@ TEST_F(OperatorTests, AggregateWithNulls) {
     EXPECT_EQ(tuple.get(0).to_int64(), 30);
     // COUNT should skip NULL: only 2 non-null values
     EXPECT_EQ(tuple.get(1).to_int64(), 2);
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
+TEST_F(OperatorTests, Aggregate_DistinctDuplicate) {
+    // Test DISTINCT filters duplicate values — exercises distinct_seen tracking (lines 609-615)
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(10)}));
+    data.push_back(make_tuple({common::Value::make_int64(20)}));
+    data.push_back(make_tuple({common::Value::make_int64(10)}));  // duplicate
+    data.push_back(make_tuple({common::Value::make_int64(20)}));  // duplicate
+    data.push_back(make_tuple({common::Value::make_int64(30)}));  // unique
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg_distinct(AggregateType::Sum, "distinct_sum", col_expr("val")));
+    aggs.push_back(make_agg_distinct(AggregateType::Count, "distinct_cnt", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    // DISTINCT SUM: 10 + 20 + 30 = 60 (duplicates 10,20 skipped)
+    EXPECT_EQ(tuple.get(0).to_int64(), 60);
+    // DISTINCT COUNT: 3 unique values (10, 20, 30)
+    EXPECT_EQ(tuple.get(1).to_int64(), 3);
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
+TEST_F(OperatorTests, Aggregate_MinMaxNullInit) {
+    // Test min/max initialization when first value becomes min/max (lines 627-632)
+    // mins[i] and maxes[i] start as NULL — first non-null value should set both
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(5)}));   // first: mins=5, maxes=5
+    data.push_back(make_tuple({common::Value::make_int64(10)}));  // mins stays 5, maxes=10
+    data.push_back(make_tuple({common::Value::make_int64(3)}));   // mins=3, maxes stays 10
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg(AggregateType::Min, "min_val", col_expr("val")));
+    aggs.push_back(make_agg(AggregateType::Max, "max_val", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    EXPECT_EQ(tuple.get(0).to_int64(), 3);   // MIN
+    EXPECT_EQ(tuple.get(1).to_int64(), 10);  // MAX
+    EXPECT_FALSE(agg->next(tuple));
+    agg->close();
+}
+
+TEST_F(OperatorTests, Aggregate_AvgZeroCount) {
+    // Test AVG returns NULL when count is 0 (all values NULL) — exercises lines 658-660
+    Schema schema = make_schema({{"val", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value()}));  // NULL
+    data.push_back(make_tuple({common::Value()}));  // NULL
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    std::vector<AggregateInfo> aggs;
+    aggs.push_back(make_agg(AggregateType::Avg, "avg_val", col_expr("val")));
+    auto agg = make_agg_op(std::move(scan), {}, std::move(aggs));
+
+    ASSERT_TRUE(agg->init());
+    ASSERT_TRUE(agg->open());
+
+    Tuple tuple;
+    EXPECT_TRUE(agg->next(tuple));
+    EXPECT_TRUE(tuple.get(0).is_null());  // AVG of all NULLs should be NULL
     EXPECT_FALSE(agg->next(tuple));
     agg->close();
 }
