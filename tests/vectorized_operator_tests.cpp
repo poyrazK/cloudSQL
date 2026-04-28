@@ -1375,7 +1375,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
         "hashjoin_right", std::make_shared<ColumnarTable>(right_table));
 
     auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
-                                        JoinType::Left);
+                                          JoinType::Left);
 
     auto result = VectorBatch::create(join->output_schema());
     int64_t total_rows = 0;
