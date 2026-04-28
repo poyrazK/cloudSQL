@@ -1357,14 +1357,14 @@ TEST_F(QueryExecutorTests, VerifyIndexInMetadata) {
 
     // After CREATE INDEX, verify the index appears in catalog
     auto table_meta = env.catalog->get_table_by_name("verify_idx");
-    ASSERT_TRUE(table_meta.has_value()) << "get_table_by_name returned nullopt - table may not exist in catalog";
+    ASSERT_TRUE(table_meta.has_value())
+        << "get_table_by_name returned nullopt - table may not exist in catalog";
     EXPECT_FALSE(table_meta.value()->indexes.empty())
         << "CREATE INDEX should populate table_meta->indexes";
 
     // Verify the index has non-empty column_positions
     const auto& idx = table_meta.value()->indexes[0];
-    EXPECT_FALSE(idx.column_positions.empty())
-        << "Index should have column_positions populated";
+    EXPECT_FALSE(idx.column_positions.empty()) << "Index should have column_positions populated";
 }
 
 }  // namespace
