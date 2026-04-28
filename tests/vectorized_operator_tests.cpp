@@ -1379,7 +1379,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
 
     auto result = VectorBatch::create(join->output_schema());
     int64_t total_rows = 0;
-    int64_t rows_with_nulls = 0;  // LEFT id=2,3 should emit with NULLs
+    int64_t rows_with_nulls = 0;         // LEFT id=2,3 should emit with NULLs
     std::vector<int64_t> null_left_ids;  // Track which left ids had null right
 
     while (join->next_batch(*result)) {
