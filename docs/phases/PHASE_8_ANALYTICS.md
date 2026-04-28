@@ -36,6 +36,15 @@ Added `VectorizedGroupByOperator` for hash-based grouped aggregation.
 - **Collision-Safe Key Encoding**: Group keys use length-prefixed encoding with dedicated NULL markers, preventing key collisions from string concatenation ambiguities.
 - **Pre-resolved Column Indices**: Group-by column indices computed once in constructor to avoid repeated lookups.
 
+### 6. Vectorized Hash Join (`VectorizedHashJoinOperator`)
+Implemented a vectorized hash join with graceful partitioning and batch-based processing.
+- **Graceful Hash Partitioning**: Right table is partitioned into 64 hash buckets (`NUM_BUCKETS`) for collision-safe key-based partitioning.
+- **Two-Phase Processing**: `BuildRight` phase constructs hash table from right relation; `ProbeLeft` phase probes with left rows.
+- **Resumable Bucket Scanning**: Uses `resuming_bucket_scan_`, `resumed_bucket_idx_`, `resumed_entry_idx_`, and `resumed_key_val_` to resume interrupted bucket scans when batch capacity is reached, preventing batch overflow during multi-match probes.
+- **Batch Size**: Output batches use `BATCH_SIZE` (1024 rows) for memory-efficient processing.
+- **Join Type Support**: INNER and LEFT joins supported; LEFT join emits unmatched left rows with NULLs for right columns.
+- **Matched Row Tracking**: `left_matched_in_batch_` tracks matched rows within the current batch for LEFT join unmatched emission.
+
 ## Recent Improvements (Engine Benchmarking)
 As of our latest sprint, we have established a high-performance baseline for the engine's core scanning logic:
 - **Baseline Speed**: 181M rows/s (Sequential Scan).
