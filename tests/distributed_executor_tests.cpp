@@ -414,7 +414,8 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
                         [success, error_msg](const network::RpcHeader&,
                                              const std::vector<uint8_t>& payload, int fd) {
                             // Args deserialized to validate payload; values not needed for mock
-                            [[maybe_unused]] auto args = network::ExecuteFragmentArgs::deserialize(payload);
+                            [[maybe_unused]] auto args =
+                                network::ExecuteFragmentArgs::deserialize(payload);
 
                             network::QueryResultsReply reply;
                             reply.success = success;
