@@ -358,6 +358,15 @@ TEST(NullSafetyTests, ExecuteWithEmptyCluster) {
 
 // ============= Node Registration with Mock RpcServer Tests =============
 
+/**
+ * @brief Branch coverage tests for distributed executor RPC paths
+ *
+ * These tests exercise distributed execution code paths using in-process
+ * mock RPC servers. Weak assertions are intentional — we verify code
+ * executes without crashing, not behavioral correctness.
+ *
+ * Note: 3 tests are DISABLED due to async timing issues (see individual tests).
+ */
 class DistributedExecutorWithNodesTests : public ::testing::Test {
    protected:
     void SetUp() override {
