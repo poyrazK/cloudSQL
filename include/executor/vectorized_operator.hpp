@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "parser/expression.hpp"
 #include "storage/columnar_table.hpp"
@@ -21,18 +22,19 @@ namespace cloudsql::executor {
 /**
  * @brief Base class for vectorized operators (Batch-at-a-time)
  */
-class VectorizedOperator {
+class VectorizedOperator : public Operator {
    protected:
     ExecState state_ = ExecState::Init;
     std::string error_message_;
     Schema output_schema_;
 
    public:
-    explicit VectorizedOperator(Schema schema) : output_schema_(std::move(schema)) {}
+    explicit VectorizedOperator(Schema schema)
+        : Operator(OperatorType::Result), output_schema_(std::move(schema)) {}
     virtual ~VectorizedOperator() = default;
 
-    virtual bool init() { return true; }
-    virtual bool open() { return true; }
+    bool init() override { return true; }
+    bool open() override { return true; }
 
     /**
      * @brief Produce the next batch of results
@@ -40,9 +42,9 @@ class VectorizedOperator {
      */
     virtual bool next_batch(VectorBatch& out_batch) = 0;
 
-    virtual void close() {}
+    void close() override {}
 
-    [[nodiscard]] Schema& output_schema() { return output_schema_; }
+    [[nodiscard]] Schema& output_schema() override { return output_schema_; }
     [[nodiscard]] ExecState state() const { return state_; }
     [[nodiscard]] const std::string& error() const { return error_message_; }
 
