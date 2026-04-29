@@ -32,3 +32,11 @@ Enabled inter-node data movement.
 
 ## Status: 100% Test Pass
 All scenarios, including distributed transactions (2PC) and join orchestration, have been verified with automated integration tests.
+
+### Phase 5 Completion: QueryExecutor Integration
+The vectorized execution engine was wired into `QueryExecutor` via `set_parallel(true)` mode, enabling SELECT queries to optionally use the vectorized batch path:
+- `QueryExecutor::set_parallel(true)` — enables vectorized batch execution
+- `QueryExecutor::set_storage_manager()` — provides StorageManager for ColumnarTable lookups
+- `build_vectorized_plan()` — constructs operator tree (Scan → Filter → HashJoin → GroupBy → Project)
+- `execute_select()` — branches on `use_vectorized` flag between Volcano (tuple) and vectorized (batch) paths
+- **Constraint**: Sort/Limit queries fall back to Volcano path since SortOperator/LimitOperator don't inherit from VectorizedOperator
