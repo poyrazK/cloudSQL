@@ -14,10 +14,13 @@
 #include "common/cluster_manager.hpp"
 #include "distributed/raft_types.hpp"
 #include "executor/operator.hpp"
+#include "executor/thread_pool.hpp"
 #include "executor/types.hpp"
+#include "executor/vectorized_operator.hpp"
 #include "parser/statement.hpp"
 #include "recovery/log_manager.hpp"
 #include "storage/buffer_pool_manager.hpp"
+#include "storage/storage_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
@@ -115,6 +118,19 @@ class QueryExecutor {
     std::unique_ptr<Operator> build_plan(const parser::SelectStatement& stmt,
                                          transaction::Transaction* txn);
 
+    /**
+     * @brief Enable or disable parallel vectorized query execution.
+     * Requires StorageManager to be set via set_storage_manager().
+     */
+    void set_parallel(bool v) { parallel_ = v; }
+    bool is_parallel() const { return parallel_; }
+
+    /**
+     * @brief Set the storage manager for parallel vectorized execution.
+     * Required before enabling parallel mode.
+     */
+    void set_storage_manager(storage::StorageManager* sm) { storage_manager_ = sm; }
+
    private:
     Catalog& catalog_;
     storage::BufferPoolManager& bpm_;
@@ -127,6 +143,11 @@ class QueryExecutor {
     bool is_local_only_ = false;
     bool batch_insert_mode_ = false;
 
+    // Parallel execution state
+    bool parallel_ = false;
+    std::shared_ptr<ThreadPool> thread_pool_;
+    storage::StorageManager* storage_manager_ = nullptr;
+
     // Bound parameters for the current execution
     const std::vector<common::Value>* current_params_ = nullptr;
 
@@ -138,6 +159,10 @@ class QueryExecutor {
     static std::mutex cache_mutex_;
 
     QueryResult execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn);
+
+    std::unique_ptr<VectorizedOperator> build_vectorized_plan(const parser::SelectStatement& stmt,
+                                                    transaction::Transaction* txn,
+                                                    bool has_sort_or_limit);
     QueryResult execute_create_table(const parser::CreateTableStatement& stmt);
     QueryResult execute_create_index(const parser::CreateIndexStatement& stmt);
     QueryResult execute_drop_table(const parser::DropTableStatement& stmt);

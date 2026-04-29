@@ -26,6 +26,7 @@
 #include "distributed/shard_manager.hpp"
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
+#include "executor/vectorized_operator.hpp"
 #include "network/rpc_message.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
@@ -385,7 +386,18 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     QueryResult result;
 
     /* Build execution plan */
-    auto root = build_plan(stmt, txn);
+    std::unique_ptr<Operator> root;
+    std::unique_ptr<VectorizedOperator> vec_root;
+    bool has_sort_or_limit = !stmt.order_by().empty() || stmt.has_limit() || stmt.has_offset();
+    bool use_vectorized = parallel_ && storage_manager_ && !has_sort_or_limit;
+
+    if (use_vectorized) {
+        vec_root = build_vectorized_plan(stmt, txn, has_sort_or_limit);
+        root = std::move(vec_root);
+    } else {
+        root = build_plan(stmt, txn);
+    }
+
     if (!root) {
         result.set_error("Failed to build execution plan (check table existence and FROM clause)");
         return result;
@@ -402,11 +414,25 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     /* Set result schema */
     result.set_schema(root->output_schema());
 
-    /* Pull tuples (Volcano model) */
-    Tuple tuple;
-    while (root->next(tuple)) {
-        // MUST deep-copy tuple to default allocator (heap) so it outlives the arena reset
-        result.add_row(Tuple(tuple.values(), nullptr));
+    if (use_vectorized) {
+        /* Vectorized batch iteration */
+        auto batch = VectorBatch::create(root->output_schema());
+        while (vec_root->next_batch(*batch)) {
+            for (size_t r = 0; r < batch->row_count(); ++r) {
+                Tuple tuple;
+                for (size_t c = 0; c < batch->column_count(); ++c) {
+                    tuple.set(c, batch->get_column(c).get(r));
+                }
+                result.add_row(Tuple(tuple.values(), nullptr));
+            }
+        }
+    } else {
+        /* Pull tuples (Volcano model) */
+        Tuple tuple;
+        while (root->next(tuple)) {
+            // MUST deep-copy tuple to default allocator (heap) so it outlives the arena reset
+            result.add_row(Tuple(tuple.values(), nullptr));
+        }
     }
 
     root->close();
@@ -1180,6 +1206,222 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         limit_op->set_params(current_params_);
         current_root = std::move(limit_op);
     }
+
+    return current_root;
+}
+
+std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
+    const parser::SelectStatement& stmt, transaction::Transaction* txn, bool has_sort_or_limit) {
+    (void)txn;  // Vectorized path doesn't use txn yet
+
+    if (!stmt.from()) {
+        return nullptr;
+    }
+
+    const std::string base_table_name = stmt.from()->to_string();
+
+    /* Build base scan using ColumnarTable */
+    auto base_table_meta_opt = catalog_.get_table_by_name(base_table_name);
+    if (!base_table_meta_opt.has_value()) {
+        return nullptr;
+    }
+    const auto* base_table_meta = base_table_meta_opt.value();
+
+    executor::Schema base_schema;
+    for (const auto& col : base_table_meta->columns) {
+        base_schema.add_column(col.name, col.type, col.nullable);
+    }
+
+    auto col_table = std::make_shared<storage::ColumnarTable>(base_table_name, *storage_manager_, base_schema);
+    if (!col_table->open()) {
+        return nullptr;  // Table not found or not columnar
+    }
+
+    std::unique_ptr<VectorizedOperator> current_root = std::make_unique<VectorizedSeqScanOperator>(
+        base_table_name, col_table);
+
+    /* Add JOINs (VectorizedHashJoinOperator) */
+    for (const auto& join : stmt.joins()) {
+        const std::string join_table_name = join.table->to_string();
+
+        auto join_table_meta_opt = catalog_.get_table_by_name(join_table_name);
+        if (!join_table_meta_opt.has_value()) {
+            return nullptr;
+        }
+        const auto* join_table_meta = join_table_meta_opt.value();
+
+        executor::Schema join_schema;
+        for (const auto& col : join_table_meta->columns) {
+            join_schema.add_column(col.name, col.type, col.nullable);
+        }
+
+        auto join_col_table = std::make_shared<storage::ColumnarTable>(
+            join_table_name, *storage_manager_, join_schema);
+        if (!join_col_table->open()) {
+            return nullptr;
+        }
+
+        std::unique_ptr<VectorizedOperator> right_scan = std::make_unique<VectorizedSeqScanOperator>(
+            join_table_name, join_col_table);
+
+        bool use_hash_join = false;
+        std::unique_ptr<parser::Expression> left_key = nullptr;
+        std::unique_ptr<parser::Expression> right_key = nullptr;
+
+        if (join.condition && join.condition->type() == parser::ExprType::Binary) {
+            const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(join.condition.get());
+            if (bin_expr != nullptr && bin_expr->op() == parser::TokenType::Eq) {
+                const auto& left_schema = current_root->output_schema();
+                const auto& right_schema = right_scan->output_schema();
+
+                const std::string left_col_name = bin_expr->left().to_string();
+                const std::string right_col_name = bin_expr->right().to_string();
+
+                bool left_in_left = (left_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                bool right_in_right = (right_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+
+                if (left_in_left && right_in_right) {
+                    use_hash_join = true;
+                    left_key = bin_expr->left().clone();
+                    right_key = bin_expr->right().clone();
+                } else {
+                    bool left_in_right = (right_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                    bool right_in_left = (left_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+                    if (left_in_right && right_in_left) {
+                        use_hash_join = true;
+                        left_key = bin_expr->right().clone();
+                        right_key = bin_expr->left().clone();
+                    }
+                }
+            }
+        }
+
+        if (!use_hash_join) {
+            return nullptr;  // Vectorized path only supports equi-joins
+        }
+
+        executor::JoinType exec_join_type = executor::JoinType::Inner;
+        if (join.type == parser::SelectStatement::JoinType::Left) {
+            exec_join_type = executor::JoinType::Left;
+        } else if (join.type == parser::SelectStatement::JoinType::Right) {
+            exec_join_type = executor::JoinType::Right;
+        } else if (join.type == parser::SelectStatement::JoinType::Full) {
+            exec_join_type = executor::JoinType::Full;
+        }
+
+        executor::Schema output_schema;
+        for (const auto& col : current_root->output_schema().columns()) {
+            output_schema.add_column(col.name(), col.type(), col.nullable());
+        }
+        for (const auto& col : right_scan->output_schema().columns()) {
+            output_schema.add_column(col.name(), col.type(), col.nullable());
+        }
+
+        auto join_op = std::make_unique<VectorizedHashJoinOperator>(
+            std::move(current_root), std::move(right_scan),
+            std::move(left_key), std::move(right_key),
+            exec_join_type, output_schema);
+
+        current_root = std::move(join_op);
+    }
+
+    /* Filter (WHERE) */
+    if (stmt.where()) {
+        auto filter_op = std::make_unique<VectorizedFilterOperator>(
+            std::move(current_root), stmt.where()->clone());
+        current_root = std::move(filter_op);
+    }
+
+    /* Aggregate (GROUP BY) */
+    bool has_aggregates = false;
+    std::vector<VectorizedAggregateInfo> agg_infos;
+    for (const auto& col : stmt.columns()) {
+        if (col->type() == parser::ExprType::Function) {
+            const auto* func = dynamic_cast<const parser::FunctionExpr*>(col.get());
+            if (func == nullptr) continue;
+            std::string name = func->name();
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" || name == "AVG") {
+                has_aggregates = true;
+                VectorizedAggregateInfo info;
+                if (name == "COUNT") info.type = AggregateType::Count;
+                else if (name == "SUM") info.type = AggregateType::Sum;
+                else if (name == "MIN") info.type = AggregateType::Min;
+                else if (name == "MAX") info.type = AggregateType::Max;
+                else info.type = AggregateType::Avg;
+                info.input_col_idx = -1;  // default
+                agg_infos.push_back(info);
+            }
+        }
+    }
+
+    if (!stmt.group_by().empty() || has_aggregates) {
+        std::vector<std::unique_ptr<parser::Expression>> group_by;
+        for (const auto& gb : stmt.group_by()) {
+            group_by.push_back(gb->clone());
+        }
+
+        executor::Schema output_schema;
+        for (const auto& gb : stmt.group_by()) {
+            const auto& gb_name = gb->to_string();
+            size_t idx = current_root->output_schema().find_column(gb_name);
+            if (idx != static_cast<size_t>(-1)) {
+                output_schema.add_column(
+                    current_root->output_schema().get_column(idx).name(),
+                    current_root->output_schema().get_column(idx).type(),
+                    current_root->output_schema().get_column(idx).nullable());
+            }
+        }
+        for (size_t i = 0; i < agg_infos.size(); ++i) {
+            output_schema.add_column("agg_" + std::to_string(i), common::ValueType::TYPE_FLOAT64, false);
+        }
+
+        auto agg_op = std::make_unique<VectorizedGroupByOperator>(
+            std::move(current_root), std::move(group_by), std::move(agg_infos),
+            output_schema);
+        current_root = std::move(agg_op);
+
+        if (stmt.having()) {
+            auto having_filter = std::make_unique<VectorizedFilterOperator>(
+                std::move(current_root), stmt.having()->clone());
+            current_root = std::move(having_filter);
+        }
+    }
+
+    /* Project (SELECT columns) - before Sort/Limit since they are Volcano operators */
+    if (!stmt.columns().empty()) {
+        std::vector<std::unique_ptr<parser::Expression>> projection;
+        for (const auto& col : stmt.columns()) {
+            projection.push_back(col->clone());
+        }
+
+        executor::Schema proj_schema;
+        for (const auto& col : stmt.columns()) {
+            if (col->type() == parser::ExprType::Column) {
+                const auto& col_name = col->to_string();
+                size_t idx = current_root->output_schema().find_column(col_name);
+                if (idx != static_cast<size_t>(-1)) {
+                    proj_schema.add_column(
+                        current_root->output_schema().get_column(idx).name(),
+                        current_root->output_schema().get_column(idx).type(),
+                        current_root->output_schema().get_column(idx).nullable());
+                }
+            } else {
+                proj_schema.add_column("expr", common::ValueType::TYPE_TEXT, true);
+            }
+        }
+
+        auto project_op = std::make_unique<VectorizedProjectOperator>(
+            std::move(current_root), proj_schema, std::move(projection));
+        current_root = std::move(project_op);
+    }
+
+    /* Sort and Limit are NOT created here in the vectorized path.
+       When has_sort_or_limit is true, use_vectorized is false so this function
+       is only called for pure vectorized queries (no ORDER BY, no LIMIT).
+       The Volcano path handles Sort/Limit via build_plan(). */
+    (void)has_sort_or_limit;  // Suppress unused warning
 
     return current_root;
 }
