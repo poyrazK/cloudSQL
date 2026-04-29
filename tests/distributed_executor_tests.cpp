@@ -413,8 +413,8 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
         srv.set_handler(network::RpcType::ExecuteFragment,
                         [success, error_msg](const network::RpcHeader&,
                                              const std::vector<uint8_t>& payload, int fd) {
-                            auto args = network::ExecuteFragmentArgs::deserialize(payload);
-                            (void)args;  // suppress unused warning
+                            // Args deserialized to validate payload; values not needed for mock
+                            [[maybe_unused]] auto args = network::ExecuteFragmentArgs::deserialize(payload);
 
                             network::QueryResultsReply reply;
                             reply.success = success;
@@ -446,8 +446,8 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
 
 std::atomic<uint16_t> DistributedExecutorWithNodesTests::next_port_{6410};
 
-// Test: Execute SELECT with registered data nodes but no RpcServer running (connect failure)
-// This exercises the RPC failure path in query_futures (lines 582-597)
+// Test: Execute SELECT with registered data nodes but no RpcServer running
+// Verifies graceful handling of connection failures
 TEST_F(DistributedExecutorWithNodesTests, SelectWithNodesButNoServer) {
     // Register nodes but don't start servers - connect will fail
     register_mock_node("node_1", 6411, false /* no server */);
@@ -464,7 +464,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithNodesButNoServer) {
 }
 
 // Test: Execute SELECT with a sharding key and working RpcServer
-// This exercises shard routing with leader (lines 541-558)
+// Verifies shard routing with leader node selection
 TEST_F(DistributedExecutorWithNodesTests, SelectWithShardRouting) {
     // Start RpcServers on two ports
     auto srv1 = std::make_unique<network::RpcServer>(6411);
@@ -495,8 +495,8 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithShardRouting) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: DDL forwarding to data nodes (lines 156-163)
-// DDL should forward to data nodes for catalog sync
+// Test: DDL forwarding to data nodes
+// Verifies DDL statements are forwarded to data nodes for catalog sync
 TEST_F(DistributedExecutorWithNodesTests, DDLForwardsToNodes) {
     // Start RpcServer for node1
     auto srv1 = std::make_unique<network::RpcServer>(6413);
@@ -517,7 +517,7 @@ TEST_F(DistributedExecutorWithNodesTests, DDLForwardsToNodes) {
 }
 
 // Test: INSERT with sharding key routed to correct node
-// Exercises INSERT shard routing (lines 454-519)
+// Verifies INSERT statements are routed based on sharding key
 TEST_F(DistributedExecutorWithNodesTests, InsertShardRouting) {
     // Start server for node1 only
     auto srv1 = std::make_unique<network::RpcServer>(6414);
@@ -539,16 +539,14 @@ TEST_F(DistributedExecutorWithNodesTests, InsertShardRouting) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: INSERT with connect failure (lines 511-512)
-// Register node but don't start server → client.connect() returns false
+// Test: INSERT with connect failure
+// Verifies error handling when node has no active server
 TEST_F(DistributedExecutorWithNodesTests, InsertConnectFailure) {
     // Register node but NO server → connect fails
     cm_->register_node("node_fail", "127.0.0.1", 6499, config::RunMode::Data);
     // data_nodes.size() = 1, shard_idx for value 1 is 1 % 1 = 0 (in bounds)
-    // But node_fail has no server → connect() fails → line 512 error
-    // This sets has_error_ = true → success() returns false
-    // lines 516-518: if (!errors.empty()) res.set_error(errors);
-    // res.set_rows_affected(0) is still called
+    // But node_fail has no server → connect() fails → sets has_error_ = true
+    // success() returns false, rows_affected = 0
 
     auto lexer = std::make_unique<Lexer>("INSERT INTO shard_table VALUES (1, 'test')");
     Parser parser(std::move(lexer));
@@ -561,7 +559,7 @@ TEST_F(DistributedExecutorWithNodesTests, InsertConnectFailure) {
     EXPECT_FALSE(res.error().empty());
 }
 
-// Test: INSERT with RPC call failure (lines 509-510)
+// Test: INSERT with RPC call failure
 // Start server but handler for ExecuteFragment causes call to fail/timeout
 TEST_F(DistributedExecutorWithNodesTests, DISABLED_InsertRpcFailure) {
     // DISABLED: RpcClient.call() hangs with no handler for ExecuteFragment
@@ -595,7 +593,8 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_InsertRpcFailure) {
     EXPECT_EQ(res.rows_affected(), 0ULL);
 }
 
-// Test: COMMIT with working nodes (2PC prepare/commit paths - lines 388-449)
+// Test: COMMIT with working nodes
+// Verifies 2PC prepare/commit paths with active data nodes
 TEST_F(DistributedExecutorWithNodesTests, CommitWithNodes) {
     auto srv1 = std::make_unique<network::RpcServer>(6415);
     srv1->start();
@@ -641,7 +640,8 @@ TEST_F(DistributedExecutorWithNodesTests, CommitWithNodes) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: ROLLBACK with nodes (lines 366-386)
+// Test: ROLLBACK with nodes
+// Verifies transaction abort handling across data nodes
 TEST_F(DistributedExecutorWithNodesTests, RollbackWithNodes) {
     auto srv1 = std::make_unique<network::RpcServer>(6416);
     srv1->start();
@@ -694,7 +694,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectBroadcastNoShardKey) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: INNER JOIN shuffle (lines 195-360)
+// Test: INNER JOIN shuffle
 // Exercises: Phase 1 ShuffleFragment, BloomFilterBits aggregation, BloomFilterPush, Phase 2
 TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle) {
     auto srv1 = std::make_unique<network::RpcServer>(6420);
@@ -800,7 +800,7 @@ TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: FULL JOIN triggers Phase 3-5 coordinator-side processing (lines 616-823)
+// Test: FULL JOIN triggers Phase 3-5 coordinator-side processing
 TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     auto srv1 = std::make_unique<network::RpcServer>(6426);
     auto srv2 = std::make_unique<network::RpcServer>(6427);
@@ -843,7 +843,7 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: SELECT with COUNT aggregate (lines 831-892)
+// Test: SELECT with COUNT aggregate
 TEST_F(DistributedExecutorWithNodesTests, SelectWithCountAggregate) {
     auto srv1 = std::make_unique<network::RpcServer>(6428);
     srv1->start();
@@ -879,7 +879,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithSumAggregate) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: UPDATE with sharding key (lines 535-536)
+// Test: UPDATE with sharding key
 TEST_F(DistributedExecutorWithNodesTests, UpdateWithShardKey) {
     auto srv1 = std::make_unique<network::RpcServer>(6433);
     srv1->start();
@@ -897,7 +897,7 @@ TEST_F(DistributedExecutorWithNodesTests, UpdateWithShardKey) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: DELETE with sharding key (lines 537-538)
+// Test: DELETE with sharding key
 TEST_F(DistributedExecutorWithNodesTests, DeleteWithShardKey) {
     auto srv1 = std::make_unique<network::RpcServer>(6434);
     srv1->start();
@@ -915,7 +915,7 @@ TEST_F(DistributedExecutorWithNodesTests, DeleteWithShardKey) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: SELECT with ORDER BY (lines 893-920)
+// Test: SELECT with ORDER BY
 TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
     auto srv1 = std::make_unique<network::RpcServer>(6430);
     srv1->start();
@@ -933,7 +933,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithOrderBy) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: SELECT with MIN aggregate (lines 879-882)
+// Test: SELECT with MIN aggregate
 TEST_F(DistributedExecutorWithNodesTests, SelectWithMinAggregate) {
     auto srv1 = std::make_unique<network::RpcServer>(6435);
     srv1->start();
@@ -987,7 +987,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithAvgAggregate) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: SELECT with LIMIT and OFFSET (lines 924-942)
+// Test: SELECT with LIMIT and OFFSET
 TEST_F(DistributedExecutorWithNodesTests, SelectWithLimitOffset) {
     auto srv1 = std::make_unique<network::RpcServer>(6431);
     srv1->start();
@@ -1005,7 +1005,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithLimitOffset) {
     EXPECT_TRUE(res.success());
 }
 
-// Test: 2PC commit with prepare failure (lines 416-427)
+// Test: 2PC commit with prepare failure
 // DISABLED: TxnPrepare client.call() hangs even with reply handler set
 TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
     auto srv1 = std::make_unique<network::RpcServer>(6432);
@@ -1029,7 +1029,7 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
                           auto data = reply.serialize();
                           if (!data.empty()) send(fd, data.data(), data.size(), 0);
                       });
-    // TxnAbort: no reply needed (lines 429-441 use std::async without client.call response check)
+    // TxnAbort: fire and forget - no reply needed
     srv1->set_handler(network::RpcType::TxnAbort,
                       [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
                           // No response needed for abort - fire and forget

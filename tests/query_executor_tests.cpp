@@ -567,7 +567,7 @@ TEST_F(QueryExecutorTests, SqlCachingSecondCall) {
     const auto res1 = execute_sql(env.executor, "SELECT * FROM cache_test WHERE id = 1");
     EXPECT_TRUE(res1.success());
 
-    // Second call - should hit cache (lines 248-277)
+    // Second call - should hit cache
     const auto res2 = execute_sql(env.executor, "SELECT * FROM cache_test WHERE id = 1");
     EXPECT_TRUE(res2.success());
 }
@@ -587,7 +587,7 @@ TEST_F(QueryExecutorTests, SqlCachingDifferentQueries) {
     EXPECT_TRUE(res3.success());
 }
 
-// ============= INSERT/PreparedStatement Tests (Lines 133-171) =============
+// ============= INSERT/PreparedStatement Tests =============
 
 TEST_F(QueryExecutorTests, PrepareInsertStatement) {
     TestEnvironment env;
@@ -598,7 +598,7 @@ TEST_F(QueryExecutorTests, PrepareInsertStatement) {
     auto prep1 = env.executor.prepare("INSERT INTO prep_test VALUES (2, 'second')");
     ASSERT_NE(prep1, nullptr);
 
-    // Execute the prepared INSERT - this covers lines 202-239
+    // Execute the prepared INSERT
     auto res1 = env.executor.execute(*prep1, {});
     // May succeed or fail - just verify no crash
     (void)res1;
@@ -655,7 +655,7 @@ TEST_F(QueryExecutorTests, UpdateWithIndexRebuild) {
     execute_sql(env.executor, "CREATE INDEX idx_val ON idx_update(val)");
     execute_sql(env.executor, "INSERT INTO idx_update VALUES (1, 'old')");
 
-    // UPDATE that triggers index rebuild (lines 822-848)
+    // UPDATE that triggers index rebuild
     const auto res = execute_sql(env.executor, "UPDATE idx_update SET val = 'new' WHERE id = 1");
     // May fail due to index rebuild - just verify no crash
     (void)res;
@@ -940,7 +940,7 @@ TEST_F(QueryExecutorTests, StringExecuteWithCacheMiss) {
     TestEnvironment env;
     execute_sql(env.executor, "CREATE TABLE str_exec (id INT, val TEXT)");
 
-    // Call execute with string directly - first call is cache miss (lines 259-268)
+    // Call execute with string directly - first call is cache miss
     const auto res1 = env.executor.execute("INSERT INTO str_exec VALUES (1, 'first')");
     EXPECT_TRUE(res1.success());
 
@@ -957,7 +957,7 @@ TEST_F(QueryExecutorTests, StringExecuteWithCacheHit) {
     const auto res1 = env.executor.execute("INSERT INTO cache_hit VALUES (1, 'a')");
     EXPECT_TRUE(res1.success());
 
-    // Second call with SAME SQL - should hit cache (lines 253-256)
+    // Second call with SAME SQL - should hit cache
     const auto res2 = env.executor.execute("INSERT INTO cache_hit VALUES (2, 'b')");
     EXPECT_TRUE(res2.success());
 }
@@ -973,7 +973,7 @@ TEST_F(QueryExecutorTests, StringExecuteSelectWithCacheHit) {
     const auto res1 = env.executor.execute("SELECT * FROM sel_cache WHERE id = 10");
     EXPECT_TRUE(res1.success());
 
-    // Second SELECT - should hit cache (lines 253-256)
+    // Second SELECT - should hit cache
     const auto res2 = env.executor.execute("SELECT * FROM sel_cache WHERE id = 10");
     EXPECT_TRUE(res2.success());
 }
@@ -981,7 +981,7 @@ TEST_F(QueryExecutorTests, StringExecuteSelectWithCacheHit) {
 TEST_F(QueryExecutorTests, StringExecuteWithParseFailure) {
     TestEnvironment env;
 
-    // Malformed SQL - should return error (lines 270-274)
+    // Malformed SQL - should return error
     const auto res = env.executor.execute("SELECT * FROM");
     EXPECT_FALSE(res.success());
     EXPECT_FALSE(res.error().empty());
@@ -1001,7 +1001,7 @@ TEST_F(QueryExecutorTests, CreateTableLocalOnlyMode) {
     TestEnvironment env;
     env.executor.set_local_only(true);
 
-    // CREATE TABLE with local_only mode (lines 440-441)
+    // CREATE TABLE with local_only mode
     const auto res = env.executor.execute("CREATE TABLE local_tab (id INT, val TEXT)");
     // In local_only mode, should use create_table_local path
     // Either success or failure is acceptable - verify no crash
@@ -1033,7 +1033,7 @@ TEST_F(QueryExecutorTests, DeleteWithIndexMaintenanceFailure) {
     execute_sql(env.executor, "CREATE INDEX idx_del_err ON del_err(val)");
     execute_sql(env.executor, "INSERT INTO del_err VALUES (1, 'a')");
 
-    // DELETE with index - triggers index maintenance (lines 728-734)
+    // DELETE with index - triggers index maintenance
     const auto res = env.executor.execute("DELETE FROM del_err WHERE id = 1");
     // May succeed or fail - verify behavior is logged
     (void)res;
@@ -1048,7 +1048,7 @@ TEST_F(QueryExecutorTests, UpdateIndexRebuildFailure) {
     execute_sql(env.executor, "CREATE INDEX idx_upd_err ON upd_err(val)");
     execute_sql(env.executor, "INSERT INTO upd_err VALUES (1, 'old')");
 
-    // UPDATE val column which has an index - triggers index rebuild (lines 816-848)
+    // UPDATE val column which has an index - triggers index rebuild
     const auto res = env.executor.execute("UPDATE upd_err SET val = 'new' WHERE id = 1");
     // Verify UPDATE executed (success or documented failure)
     (void)res;
@@ -1237,7 +1237,7 @@ TEST_F(QueryExecutorTests, UpdateIndexedColumn) {
     execute_sql(env.executor, "CREATE INDEX idx_val ON upd_idx(val)");
     execute_sql(env.executor, "INSERT INTO upd_idx VALUES (1, 'old')");
 
-    // UPDATE val column which is indexed - triggers index rebuild (lines 816-848)
+    // UPDATE val column which is indexed - triggers index rebuild
     const auto res = env.executor.execute("UPDATE upd_idx SET val = 'new' WHERE id = 1");
     (void)res;
 }
@@ -1257,7 +1257,7 @@ TEST_F(QueryExecutorTests, UpdateIndexedColumnMultiple) {
 
 TEST_F(QueryExecutorTests, SelectFromNonexistentTable) {
     TestEnvironment env;
-    // SELECT from non-existent table triggers plan init failure (lines 397-399)
+    // SELECT from non-existent table triggers plan init failure
     const auto res = execute_sql(env.executor, "SELECT * FROM nonexistent_table_xyz");
     EXPECT_FALSE(res.success());
     EXPECT_FALSE(res.error().empty());
