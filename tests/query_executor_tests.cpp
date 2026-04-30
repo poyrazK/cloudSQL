@@ -185,6 +185,34 @@ TEST_F(QueryExecutorTests, InsertIntoNonExistentTable) {
     EXPECT_FALSE(res.success());
 }
 
+TEST_F(QueryExecutorTests, InsertBatchModeSkipsLockAcquisition) {
+    // Test batch_insert_mode=true skips lock acquisition (line 217)
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE test_table (id INT, val INT)");
+
+    // Enable batch insert mode - skips lock acquisition per line 217
+    env.executor.set_batch_insert_mode(true);
+
+    // BEGIN transaction
+    execute_sql(env.executor, "BEGIN");
+
+    // Multi-row INSERT - should succeed without lock acquisition
+    const auto res = execute_sql(
+        env.executor, "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.rows_affected(), 3U);
+
+    // COMMIT
+    execute_sql(env.executor, "COMMIT");
+
+    // Verify data was inserted
+    const auto select_res = execute_sql(env.executor, "SELECT * FROM test_table");
+    EXPECT_EQ(select_res.row_count(), 3U);
+
+    // Cleanup
+    env.executor.set_batch_insert_mode(false);
+}
+
 // ============= SELECT Tests =============
 
 TEST_F(QueryExecutorTests, SelectStarFromEmptyTable) {
