@@ -55,10 +55,15 @@ struct TestEnvironment {
     }
 
     ~TestEnvironment() {
-        // Cleanup test tables
-        std::remove("./test_data/test_table.heap");
-        std::remove("./test_data/table_a.heap");
-        std::remove("./test_data/table_b.heap");
+        // Cleanup all test data artifacts
+        std::error_code ec;
+        if (std::filesystem::exists("./test_data", ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator("./test_data", ec)) {
+                if (entry.is_regular_file(ec)) {
+                    std::remove(entry.path().c_str());
+                }
+            }
+        }
     }
 };
 
@@ -479,8 +484,9 @@ TEST_F(QueryExecutorTests, TransactionIsolationReadBeforeCommit) {
     execute_sql(env.executor, "BEGIN");
     execute_sql(env.executor, "UPDATE test_table SET val = 99 WHERE id = 1");
 
-    // Create a new executor (same catalog) to verify isolation
+    // Create a new executor with its own transaction context to verify isolation
     QueryExecutor exec2(*env.catalog, env.bpm, env.lock_manager, env.txn_manager);
+    execute_sql(exec2, "BEGIN");
     const auto res = execute_sql(exec2, "SELECT val FROM test_table WHERE id = 1");
     EXPECT_TRUE(res.success());
     EXPECT_STREQ(res.rows()[0].get(0).to_string().c_str(), "10");
@@ -959,11 +965,12 @@ TEST_F(QueryExecutorTests, StringExecuteWithCacheHit) {
     execute_sql(env.executor, "CREATE TABLE cache_hit (id INT, val TEXT)");
 
     // First call - cache miss
-    const auto res1 = env.executor.execute("INSERT INTO cache_hit VALUES (1, 'a')");
+    const std::string sql = "INSERT INTO cache_hit VALUES (1, 'a')";
+    const auto res1 = env.executor.execute(sql);
     EXPECT_TRUE(res1.success());
 
     // Second call with SAME SQL - should hit cache
-    const auto res2 = env.executor.execute("INSERT INTO cache_hit VALUES (2, 'b')");
+    const auto res2 = env.executor.execute(sql);
     EXPECT_TRUE(res2.success());
 }
 
@@ -1024,9 +1031,8 @@ TEST_F(QueryExecutorTests, CreateCompositeIndexNotSupported) {
     // Try composite index on multiple columns (line 473)
     const auto res = env.executor.execute("CREATE INDEX comp_idx_ab ON comp_idx(a, b)");
     // Composite indexes not supported - should fail
-    if (!res.success()) {
-        EXPECT_FALSE(res.error().empty());
-    }
+    EXPECT_FALSE(res.success());
+    EXPECT_FALSE(res.error().empty());
 }
 
 // ============= DELETE Error Path Tests (Lines 718-720) =============
