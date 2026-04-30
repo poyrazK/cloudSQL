@@ -197,8 +197,8 @@ TEST_F(QueryExecutorTests, InsertBatchModeSkipsLockAcquisition) {
     execute_sql(env.executor, "BEGIN");
 
     // Multi-row INSERT - should succeed without lock acquisition
-    const auto res = execute_sql(
-        env.executor, "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
+    const auto res =
+        execute_sql(env.executor, "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
     EXPECT_TRUE(res.success());
     EXPECT_EQ(res.rows_affected(), 3U);
 

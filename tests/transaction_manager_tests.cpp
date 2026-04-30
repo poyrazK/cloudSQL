@@ -1558,9 +1558,9 @@ TEST(TransactionManagerTests, UndoUpdatePhysicalRemoveFailure) {
 
     // UPDATE then ROLLBACK with fault injection
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("UPDATE upd_phys_rm SET val = 999 WHERE id = 1"))
-                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE upd_phys_rm SET val = 999 WHERE id = 1"))
+             .parse_statement()));
 
     // Arm fault for physical_remove failure during UPDATE undo
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_PHYSICAL_REMOVE);
@@ -1599,9 +1599,9 @@ TEST(TransactionManagerTests, UndoUpdateUndoRemoveFailure) {
 
     // UPDATE then ROLLBACK with fault injection for undo_remove
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
-    static_cast<void>(
-        exec.execute(*Parser(std::make_unique<Lexer>("UPDATE upd_undo_rm SET val = 999 WHERE id = 1"))
-                          .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE upd_undo_rm SET val = 999 WHERE id = 1"))
+             .parse_statement()));
 
     // Arm fault for undo_remove failure during UPDATE undo (old_rid restore)
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_UNDO_REMOVE);
