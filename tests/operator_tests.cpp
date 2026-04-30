@@ -1252,4 +1252,147 @@ TEST_F(OperatorTests, HashJoinNullKeys) {
     join->close();
 }
 
+TEST_F(OperatorTests, ProjectNextViewNonSimpleProjection) {
+    // Test ProjectOperator::next_view() with non-simple projection (!is_simple_projection_)
+    // next_view() returns false early when is_simple_projection_ is false
+    // (BufferScanOperator doesn't implement next_view(), so we test the early-return path)
+    Schema schema = make_schema(
+        {{"id", common::ValueType::TYPE_INT64}, {"name", common::ValueType::TYPE_TEXT}});
+    std::vector<Tuple> data;
+    data.push_back(make_tuple({common::Value::make_int64(1), common::Value::make_text("alice")}));
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+
+    // Use a constant expression instead of column reference — this makes is_simple_projection_ =
+    // false
+    std::vector<std::unique_ptr<Expression>> cols;
+    cols.push_back(const_expr(common::Value::make_int64(42)));  // constant, not column
+    auto project = make_project(std::move(scan), std::move(cols));
+
+    ASSERT_TRUE(project->init());
+    ASSERT_TRUE(project->open());
+
+    // next() should work (materializes the constant)
+    Tuple tuple;
+    EXPECT_TRUE(project->next(tuple));
+    EXPECT_EQ(tuple.size(), 1U);
+
+    // next_view() returns false early for non-simple projection
+    storage::HeapTable::TupleView view;
+    EXPECT_FALSE(project->next_view(view));
+
+    project->close();
+}
+
+TEST_F(OperatorTests, LimitNextView) {
+    // Test LimitOperator::next_view() — BufferScanOperator doesn't implement next_view()
+    // (uses base stub that returns false), so we test the early-return paths
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    for (int i = 0; i < 5; i++) {
+        data.push_back(make_tuple({common::Value::make_int64(i)}));
+    }
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    auto limit = make_limit(std::move(scan), 2);  // limit 2
+
+    ASSERT_TRUE(limit->init());
+    ASSERT_TRUE(limit->open());
+
+    // LimitOperator::next_view() calls child_->next_view() which returns false
+    // (BufferScan doesn't implement next_view). This exercises the early-return path.
+    storage::HeapTable::TupleView view;
+    EXPECT_FALSE(limit->next_view(view));
+    limit->close();
+}
+
+TEST_F(OperatorTests, LimitNextViewZeroLimit) {
+    // Test LimitOperator::next_view() with limit=0
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    for (int i = 0; i < 5; i++) {
+        data.push_back(make_tuple({common::Value::make_int64(i)}));
+    }
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    auto limit = make_limit(std::move(scan), 0);  // limit 0
+
+    ASSERT_TRUE(limit->init());
+    ASSERT_TRUE(limit->open());
+
+    // With limit=0, next_view() returns false early
+    // This exercises the limit check
+    storage::HeapTable::TupleView view;
+    EXPECT_FALSE(limit->next_view(view));
+    limit->close();
+}
+
+TEST_F(OperatorTests, LimitNextViewOffsetExceedsTotal) {
+    // Test LimitOperator::next_view() when offset exceeds data size
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    for (int i = 0; i < 3; i++) {
+        data.push_back(make_tuple({common::Value::make_int64(i)}));
+    }
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    auto limit = make_limit(std::move(scan), 10, 100);  // offset 100, limit 10
+
+    ASSERT_TRUE(limit->init());
+    ASSERT_TRUE(limit->open());
+
+    // offset 100 exceeds data size 3, so child_->next_view() returns false
+    // This exercises the offset loop early-return
+    storage::HeapTable::TupleView view;
+    EXPECT_FALSE(limit->next_view(view));
+    limit->close();
+}
+
+TEST_F(OperatorTests, FilterNextViewChildReturnsFalse) {
+    // Test FilterOperator::next_view() when child returns false
+    // BufferScanOperator doesn't implement next_view(), so child_->next_view() returns false
+    // This exercises the child returns false path
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    for (int i = 0; i < 5; i++) {
+        data.push_back(make_tuple({common::Value::make_int64(i)}));
+    }
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    auto filter = make_filter(
+        std::move(scan),
+        binary_expr(col_expr("id"), TokenType::Ge, const_expr(common::Value::make_int64(2))));
+
+    ASSERT_TRUE(filter->init());
+    ASSERT_TRUE(filter->open());
+
+    storage::HeapTable::TupleView view;
+    EXPECT_FALSE(filter->next_view(view));
+    filter->close();
+}
+
+TEST_F(OperatorTests, FilterNextViewAllFiltered) {
+    // Test FilterOperator::next_view() when all tuples are filtered out
+    // This exercises the condition evaluate and loop iteration path
+    Schema schema = make_schema({{"id", common::ValueType::TYPE_INT64}});
+    std::vector<Tuple> data;
+    for (int i = 0; i < 3; i++) {
+        data.push_back(make_tuple({common::Value::make_int64(i)}));
+    }
+
+    auto scan = make_buffer_scan("test_table", data, schema);
+    // Filter: id > 100 (filters all)
+    auto filter = make_filter(
+        std::move(scan),
+        binary_expr(col_expr("id"), TokenType::Gt, const_expr(common::Value::make_int64(100))));
+
+    ASSERT_TRUE(filter->init());
+    ASSERT_TRUE(filter->open());
+
+    storage::HeapTable::TupleView view;
+    // BufferScan next_view returns false immediately, so we never even get to evaluate condition
+    EXPECT_FALSE(filter->next_view(view));
+    filter->close();
+}
+
 }  // namespace

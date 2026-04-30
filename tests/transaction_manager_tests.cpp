@@ -1508,4 +1508,110 @@ TEST(TransactionManagerTests, UndoLogUnknownType) {
     static_cast<void>(std::remove("./test_data/unknown_test.heap"));
 }
 
+TEST(TransactionManagerTests, UndoDeleteTableNotFound) {
+    // Test table metadata not found branch in DELETE undo path
+    // Manually add DELETE undo log for non-existent table, call abort()
+    auto catalog = Catalog::create();
+    storage::StorageManager disk_manager("./test_data");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE,
+                                   disk_manager);
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, bpm.get_log_manager());
+
+    Transaction* txn = tm.begin();
+    ASSERT_NE(txn, nullptr);
+
+    // Add DELETE undo log for non-existent table
+    txn->add_undo_log(UndoLog::Type::DELETE, "nonexistent_delete_table",
+                      HeapTable::TupleId(99, 99));
+
+    // abort() should hit table metadata lookup failure
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
+}
+
+TEST(TransactionManagerTests, UndoUpdatePhysicalRemoveFailure) {
+    // Test FAULT_PHYSICAL_REMOVE branch in UPDATE undo
+    storage::StorageManager disk_manager("./test_data");
+    disk_manager.create_dir_if_not_exists();
+    recovery::LogManager log_mgr("./test_data/upd_phys_rm_fault.dat");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, &log_mgr);
+    executor::QueryExecutor exec(*catalog, bpm, lm, tm);
+
+    static_cast<void>(std::remove("./test_data/upd_phys_rm.heap"));
+    static_cast<void>(std::remove("./test_data/upd_phys_rm.idx"));
+
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_phys_rm (id INT, val INT)"))
+                          .parse_statement()));
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_upr ON upd_phys_rm (val)"))
+                          .parse_statement()));
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_phys_rm VALUES (1, 100)"))
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+
+    // UPDATE then ROLLBACK with fault injection
+    Transaction* txn = tm.begin();
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE upd_phys_rm SET val = 999 WHERE id = 1"))
+             .parse_statement()));
+
+    // Arm fault for physical_remove failure during UPDATE undo
+    cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_PHYSICAL_REMOVE);
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
+    cloudsql::common::FaultInjection::instance().clear();
+
+    static_cast<void>(std::remove("./test_data/upd_phys_rm.heap"));
+    static_cast<void>(std::remove("./test_data/upd_phys_rm.idx"));
+}
+
+TEST(TransactionManagerTests, UndoUpdateUndoRemoveFailure) {
+    // Test FAULT_UNDO_REMOVE branch in UPDATE undo old_rid restore
+    storage::StorageManager disk_manager("./test_data");
+    disk_manager.create_dir_if_not_exists();
+    recovery::LogManager log_mgr("./test_data/upd_undo_rm_fault.dat");
+    storage::BufferPoolManager bpm(cloudsql::config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager,
+                                   &log_mgr);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, bpm, &log_mgr);
+    executor::QueryExecutor exec(*catalog, bpm, lm, tm);
+
+    static_cast<void>(std::remove("./test_data/upd_undo_rm.heap"));
+    static_cast<void>(std::remove("./test_data/upd_undo_rm.idx"));
+
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE upd_undo_rm (id INT, val INT)"))
+                          .parse_statement()));
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("CREATE INDEX idx_uur ON upd_undo_rm (val)"))
+                          .parse_statement()));
+    static_cast<void>(
+        exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO upd_undo_rm VALUES (1, 100)"))
+                          .parse_statement()));
+    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
+
+    // UPDATE then ROLLBACK with fault injection for undo_remove
+    Transaction* txn = tm.begin();
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("UPDATE upd_undo_rm SET val = 999 WHERE id = 1"))
+             .parse_statement()));
+
+    // Arm fault for undo_remove failure during UPDATE undo (old_rid restore)
+    cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_UNDO_REMOVE);
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
+    cloudsql::common::FaultInjection::instance().clear();
+
+    static_cast<void>(std::remove("./test_data/upd_undo_rm.heap"));
+    static_cast<void>(std::remove("./test_data/upd_undo_rm.idx"));
+}
+
 }  // namespace
