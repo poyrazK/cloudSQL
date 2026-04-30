@@ -1263,7 +1263,8 @@ TEST_F(OperatorTests, ProjectNextViewNonSimpleProjection) {
 
     auto scan = make_buffer_scan("test_table", data, schema);
 
-    // Use a constant expression instead of column reference — this makes is_simple_projection_ = false
+    // Use a constant expression instead of column reference — this makes is_simple_projection_ =
+    // false
     std::vector<std::unique_ptr<Expression>> cols;
     cols.push_back(const_expr(common::Value::make_int64(42)));  // constant, not column
     auto project = make_project(std::move(scan), std::move(cols));
