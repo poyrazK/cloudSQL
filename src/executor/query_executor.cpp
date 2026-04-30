@@ -417,7 +417,26 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     if (use_vectorized) {
         /* Vectorized batch iteration */
         auto batch = VectorBatch::create(root->output_schema());
-        while (vec_root->next_batch(*batch)) {
+        // root is a VectorizedOperator (wrapped in Operator*) - use static_cast safely
+        auto* vec_op = static_cast<VectorizedOperator*>(root.get());
+
+        while (true) {
+            bool has_more = false;
+            try {
+                has_more = vec_op->next_batch(*batch);
+            } catch (const std::out_of_range& e) {
+                result.set_error(std::string("vector access error in next_batch: ") + e.what() +
+                    " batch_cols=" + std::to_string(batch->column_count()) +
+                    " batch_rows=" + std::to_string(batch->row_count()));
+                break;
+            } catch (const std::exception& e) {
+                result.set_error(std::string("next_batch error: ") + e.what());
+                break;
+            } catch (...) {
+                result.set_error("next_batch error: unknown exception type");
+                break;
+            }
+            if (!has_more) break;
             for (size_t r = 0; r < batch->row_count(); ++r) {
                 Tuple tuple;
                 for (size_t c = 0; c < batch->column_count(); ++c) {
@@ -1233,6 +1252,29 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
     }
 
     auto col_table = std::make_shared<storage::ColumnarTable>(base_table_name, *storage_manager_, base_schema);
+
+    /* Migrate HeapTable data to ColumnarTable if needed.
+       INSERT writes to HeapTable, but vectorized path reads from ColumnarTable.
+       We need to check if HeapTable has data and copy it to ColumnarTable. */
+    storage::HeapTable heap_table(base_table_name, bpm_, base_schema);
+    uint64_t count = heap_table.tuple_count();
+    if (count > 0) {
+        col_table->create();
+        auto batch = executor::VectorBatch::create(base_schema);
+        auto iter = heap_table.scan();
+        executor::Tuple tuple;
+        while (iter.next(tuple)) {
+            batch->append_tuple(tuple);
+            if (batch->row_count() >= 1024) {
+                col_table->append_batch(*batch);
+                batch->clear();
+            }
+        }
+        if (batch->row_count() > 0) {
+            col_table->append_batch(*batch);
+        }
+    }
+
     if (!col_table->open()) {
         return nullptr;  // Table not found or not columnar
     }
@@ -1257,6 +1299,27 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
 
         auto join_col_table = std::make_shared<storage::ColumnarTable>(
             join_table_name, *storage_manager_, join_schema);
+
+        /* Migrate HeapTable data to ColumnarTable for join table */
+        storage::HeapTable join_heap_table(join_table_name, bpm_, join_schema);
+        uint64_t join_count = join_heap_table.tuple_count();
+        if (join_count > 0) {
+            join_col_table->create();
+            auto batch = executor::VectorBatch::create(join_schema);
+            auto iter = join_heap_table.scan();
+            executor::Tuple tuple;
+            while (iter.next(tuple)) {
+                batch->append_tuple(tuple);
+                if (batch->row_count() >= 1024) {
+                    join_col_table->append_batch(*batch);
+                    batch->clear();
+                }
+            }
+            if (batch->row_count() > 0) {
+                join_col_table->append_batch(*batch);
+            }
+        }
+
         if (!join_col_table->open()) {
             return nullptr;
         }
@@ -1391,9 +1454,9 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
 
     /* Project (SELECT columns) - before Sort/Limit since they are Volcano operators */
     if (!stmt.columns().empty()) {
-        std::vector<std::unique_ptr<parser::Expression>> projection;
+        std::vector<std::unique_ptr<parser::Expression>> proj_exprs;
         for (const auto& col : stmt.columns()) {
-            projection.push_back(col->clone());
+            proj_exprs.push_back(col->clone());
         }
 
         executor::Schema proj_schema;
@@ -1413,7 +1476,7 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         }
 
         auto project_op = std::make_unique<VectorizedProjectOperator>(
-            std::move(current_root), proj_schema, std::move(projection));
+            std::move(current_root), proj_schema, std::move(proj_exprs));
         current_root = std::move(project_op);
     }
 

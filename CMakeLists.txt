@@ -61,6 +61,7 @@ set(CORE_SOURCES
     src/parser/expression.cpp
     src/executor/operator.cpp
     src/executor/query_executor.cpp
+    src/executor/thread_pool.cpp
     src/network/rpc_client.cpp
     src/network/rpc_server.cpp
     src/network/server.cpp

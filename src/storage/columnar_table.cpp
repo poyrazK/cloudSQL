@@ -67,9 +67,33 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
         if (type == common::ValueType::TYPE_INT64) {
             auto& num_vec = dynamic_cast<executor::NumericVector<int64_t>&>(col_vec);
             d_out.write(reinterpret_cast<const char*>(num_vec.raw_data()), batch.row_count() * 8);
+        } else if (type == common::ValueType::TYPE_INT32 || type == common::ValueType::TYPE_INT16 ||
+                   type == common::ValueType::TYPE_INT8) {
+            // Promote smaller int types to int64_t for storage
+            auto& num_vec = dynamic_cast<executor::NumericVector<int64_t>&>(col_vec);
+            std::vector<int64_t> promoted(batch.row_count());
+            for (size_t r = 0; r < batch.row_count(); ++r) {
+                promoted[r] = num_vec.get(r).is_null() ? 0 : num_vec.get(r).to_int64();
+            }
+            d_out.write(reinterpret_cast<const char*>(promoted.data()), batch.row_count() * 8);
         } else if (type == common::ValueType::TYPE_FLOAT64) {
             auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(col_vec);
             d_out.write(reinterpret_cast<const char*>(num_vec.raw_data()), batch.row_count() * 8);
+        } else if (type == common::ValueType::TYPE_FLOAT32 || type == common::ValueType::TYPE_DECIMAL) {
+            // Promote float32/decimal to float64 for storage
+            auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(col_vec);
+            std::vector<double> promoted(batch.row_count());
+            for (size_t r = 0; r < batch.row_count(); ++r) {
+                promoted[r] = num_vec.get(r).is_null() ? 0.0 : num_vec.get(r).to_float64();
+            }
+            d_out.write(reinterpret_cast<const char*>(promoted.data()), batch.row_count() * 8);
+        } else if (type == common::ValueType::TYPE_BOOL) {
+            auto& num_vec = dynamic_cast<executor::NumericVector<bool>&>(col_vec);
+            std::vector<uint8_t> data(batch.row_count());
+            for (size_t r = 0; r < batch.row_count(); ++r) {
+                data[r] = num_vec.get(r).is_null() ? 0 : (num_vec.get(r).as_bool() ? 1 : 0);
+            }
+            d_out.write(reinterpret_cast<const char*>(data.data()), batch.row_count());
         } else if (type == common::ValueType::TYPE_TEXT ||
                    type == common::ValueType::TYPE_VARCHAR ||
                    type == common::ValueType::TYPE_CHAR) {
@@ -129,6 +153,30 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
                     num_vec.append(common::Value::make_null());
                 } else {
                     num_vec.append(common::Value::make_int64(data[r]));
+                }
+            }
+        } else if (type == common::ValueType::TYPE_INT32 || type == common::ValueType::TYPE_INT16 ||
+                   type == common::ValueType::TYPE_INT8) {
+            // Read as int64_t and demote to appropriate type
+            auto& num_vec = dynamic_cast<executor::NumericVector<int64_t>&>(target_col);
+
+            n_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
+            std::vector<uint8_t> nulls(actual_rows);
+            n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
+
+            d_in.seekg(static_cast<std::streamoff>(start_row * 8), std::ios::beg);
+            std::vector<int64_t> data(actual_rows);
+            d_in.read(reinterpret_cast<char*>(data.data()), actual_rows * 8);
+
+            for (uint32_t r = 0; r < actual_rows; ++r) {
+                if (nulls[r] != 0U) {
+                    num_vec.append(common::Value::make_null());
+                } else if (type == common::ValueType::TYPE_INT32) {
+                    num_vec.append(common::Value(static_cast<int32_t>(data[r])));
+                } else if (type == common::ValueType::TYPE_INT16) {
+                    num_vec.append(common::Value(static_cast<int16_t>(data[r])));
+                } else {
+                    num_vec.append(common::Value(static_cast<int8_t>(data[r])));
                 }
             }
         } else if (type == common::ValueType::TYPE_FLOAT64) {

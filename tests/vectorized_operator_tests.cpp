@@ -1411,3 +1411,61 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
 }
 
 }  // namespace
+
+// ============= ThreadPool Tests =============
+
+#include "executor/thread_pool.hpp"
+
+using namespace cloudsql::executor;
+
+class ThreadPoolTests : public ::testing::Test {
+protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(ThreadPoolTests, Constructor) {
+    ThreadPool pool(4);
+    EXPECT_EQ(pool.num_threads(), 4U);
+}
+
+TEST_F(ThreadPoolTests, SubmitAndWait) {
+    ThreadPool pool(4);
+    std::atomic<int> counter{0};
+
+    for (int i = 0; i < 10; ++i) {
+        pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    }
+    pool.wait();
+
+    EXPECT_EQ(counter.load(), 10);
+}
+
+TEST_F(ThreadPoolTests, MultipleWait) {
+    ThreadPool pool(2);
+    std::atomic<int> counter{0};
+
+    pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    pool.wait();
+    EXPECT_EQ(counter.load(), 1);
+
+    pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    pool.wait();
+    EXPECT_EQ(counter.load(), 3);
+}
+
+TEST_F(ThreadPoolTests, DefaultConstructor) {
+    ThreadPool pool;  // Uses hardware_concurrency
+    EXPECT_GE(pool.num_threads(), 1U);
+}
+
+TEST_F(ThreadPoolTests, FutureResults) {
+    ThreadPool pool(2);
+    auto f1 = pool.submit([]() { return 42; });
+    auto f2 = pool.submit([]() { return std::string("hello"); });
+    pool.wait();
+
+    EXPECT_EQ(f1.get(), 42);
+    EXPECT_EQ(f2.get(), "hello");
+}
