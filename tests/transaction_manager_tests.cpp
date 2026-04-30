@@ -724,7 +724,7 @@ TEST(TransactionManagerTests, UndoPhysicalRemoveFailure) {
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("CREATE TABLE phys_fault (id INT, val INT)"))
                           .parse_statement()));
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    Transaction* txn = tm.begin();
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("INSERT INTO phys_fault VALUES (1, 100)"))
                           .parse_statement()));
@@ -733,7 +733,8 @@ TEST(TransactionManagerTests, UndoPhysicalRemoveFailure) {
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_PHYSICAL_REMOVE);
 
     // ROLLBACK — should hit the error branch inside undo_transaction
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
 
     // Clear fault
     cloudsql::common::FaultInjection::instance().clear();
@@ -768,13 +769,14 @@ TEST(TransactionManagerTests, UndoIndexInsertFailure) {
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Delete + ROLLBACK with index insert fault
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    Transaction* txn = tm.begin();
     static_cast<void>(
         exec.execute(*Parser(std::make_unique<Lexer>("DELETE FROM idx_ins_fault WHERE id = 1"))
                           .parse_statement()));
 
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_INDEX_INSERT);
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/idx_ins_fault.heap"));
@@ -807,13 +809,14 @@ TEST(TransactionManagerTests, UndoIndexRemoveFailure) {
                           .parse_statement()));
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    Transaction* txn = tm.begin();
     static_cast<void>(exec.execute(
         *Parser(std::make_unique<Lexer>("UPDATE idx_rm_fault SET val = 999 WHERE id = 1"))
              .parse_statement()));
 
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_INDEX_REMOVE);
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/idx_rm_fault.heap"));
@@ -1095,14 +1098,15 @@ TEST(TransactionManagerTests, UpdateUndoWithIndexInsertFault) {
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // Begin + UPDATE (creates new version with old_rid pointing to original)
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    Transaction* txn = tm.begin();
     static_cast<void>(exec.execute(
         *Parser(std::make_unique<Lexer>("UPDATE upd_ii_fault SET val = 999 WHERE id = 1"))
              .parse_statement()));
 
     // Fault inject index insert for old_rid restore during abort
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_INDEX_INSERT);
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/upd_ii_fault.heap"));
