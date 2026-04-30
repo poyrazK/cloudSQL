@@ -570,28 +570,16 @@ TEST_F(DistributedExecutorWithNodesTests, InsertConnectFailure) {
 }
 
 // Test: INSERT with RPC call failure
-// Start server but handler for ExecuteFragment causes call to fail/timeout
-TEST_F(DistributedExecutorWithNodesTests, DISABLED_InsertRpcFailure) {
-    // DISABLED: RpcClient.call() hangs with no handler for ExecuteFragment
+// Verifies error handling when ExecuteFragment RPC fails
+TEST_F(DistributedExecutorWithNodesTests, InsertRpcFailure) {
     auto srv1 = std::make_unique<network::RpcServer>(6500);
     srv1->start();
-    servers_.push_back(std::move(srv1));
 
     cm_->register_node("node_1", "127.0.0.1", 6500, config::RunMode::Data);
-    // Set handler for wrong type so ExecuteFragment call fails → line 509
-    srv1->set_handler(network::RpcType::Heartbeat,
-                      [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                          network::QueryResultsReply reply;
-                          reply.success = true;
-                          network::RpcHeader resp_h;
-                          resp_h.type = network::RpcType::Heartbeat;
-                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                          char h_buf[network::RpcHeader::HEADER_SIZE];
-                          resp_h.encode(h_buf);
-                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                          auto data = reply.serialize();
-                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                      });
+    // Set ExecuteFragment handler that returns failure response
+    set_execute_fragment_handler(*srv1, false, "ExecuteFragment failed in mock");
+
+    servers_.push_back(std::move(srv1));
 
     auto lexer = std::make_unique<Lexer>("INSERT INTO shard_table VALUES (1, 'test')");
     Parser parser(std::move(lexer));
@@ -811,6 +799,11 @@ TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle) {
 }
 
 // Test: FULL JOIN triggers Phase 3-5 coordinator-side processing
+// Verifies coordinator handles unmatched rows from both sides
+// DISABLED: hangs in Phase 3-5 std::async RPC calls despite proper handler setup
+// Issue: RpcClient.call() appears to hang in Phase 3-5 async futures, even when
+// handlers are correctly set. Root cause appears to be in the async coordination
+// between coordinator and data nodes during unmatched row collection.
 TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     auto srv1 = std::make_unique<network::RpcServer>(6426);
     auto srv2 = std::make_unique<network::RpcServer>(6427);
@@ -822,27 +815,97 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     cm_->register_node("node_1", "127.0.0.1", 6426, config::RunMode::Data);
     cm_->register_node("node_2", "127.0.0.1", 6427, config::RunMode::Data);
 
-    auto success_h = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+    // Handler for ShuffleFragment, ExecuteFragment, PushData
+    auto basic_handler = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
         send_success_reply(fd);
     };
 
+    // Handler for UnmatchedRowsReport - returns UnmatchedRowsReportArgs
+    auto unmatched_report_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+        auto args = network::UnmatchedRowsReportArgs::deserialize(p);
+        network::UnmatchedRowsReportArgs reply;
+        reply.context_id = args.context_id;
+        reply.right_table = args.right_table;
+        // Empty unmatched_keys = all rows matched
+
+        auto resp_p = reply.serialize();
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        send(fd, resp_p.data(), resp_p.size(), 0);
+    };
+
+    // Handler for FetchUnmatchedRows - returns UnmatchedRowsPushArgs
+    auto fetch_unmatched_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+        auto args = network::FetchUnmatchedRowsArgs::deserialize(p);
+        network::UnmatchedRowsPushArgs reply;
+        reply.context_id = args.context_id;
+        reply.unmatched_rows = {};  // Empty for test
+
+        auto resp_p = reply.serialize();
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        send(fd, resp_p.data(), resp_p.size(), 0);
+    };
+
+    // Handler for UnmatchedLeftRowsReport - returns UnmatchedLeftRowsReportArgs
+    auto unmatched_left_report_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+        auto args = network::UnmatchedLeftRowsReportArgs::deserialize(p);
+        network::UnmatchedLeftRowsReportArgs reply;
+        reply.context_id = args.context_id;
+        reply.left_table = args.left_table;
+
+        auto resp_p = reply.serialize();
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        send(fd, resp_p.data(), resp_p.size(), 0);
+    };
+
+    // Handler for FetchUnmatchedLeftRows - returns UnmatchedRowsPushArgs (same as RIGHT)
+    auto fetch_unmatched_left_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+        auto args = network::FetchUnmatchedLeftRowsArgs::deserialize(p);
+        network::UnmatchedRowsPushArgs reply;
+        reply.context_id = args.context_id;
+        reply.unmatched_rows = {};
+
+        auto resp_p = reply.serialize();
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(resp_p.size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        send(fd, resp_p.data(), resp_p.size(), 0);
+    };
+
     // All handlers needed for FULL JOIN path
-    servers_[0]->set_handler(network::RpcType::ShuffleFragment, success_h);
-    servers_[1]->set_handler(network::RpcType::ShuffleFragment, success_h);
-    servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
-    servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
+    servers_[0]->set_handler(network::RpcType::ShuffleFragment, basic_handler);
+    servers_[1]->set_handler(network::RpcType::ShuffleFragment, basic_handler);
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment, basic_handler);
+    servers_[1]->set_handler(network::RpcType::ExecuteFragment, basic_handler);
 
     // Phase 3-5 handlers for RIGHT-side
-    servers_[0]->set_handler(network::RpcType::UnmatchedRowsReport, success_h);
-    servers_[1]->set_handler(network::RpcType::UnmatchedRowsReport, success_h);
-    servers_[0]->set_handler(network::RpcType::FetchUnmatchedRows, success_h);
-    servers_[1]->set_handler(network::RpcType::FetchUnmatchedRows, success_h);
+    servers_[0]->set_handler(network::RpcType::UnmatchedRowsReport, unmatched_report_handler);
+    servers_[1]->set_handler(network::RpcType::UnmatchedRowsReport, unmatched_report_handler);
+    servers_[0]->set_handler(network::RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
+    servers_[1]->set_handler(network::RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
 
     // Phase 3-5 handlers for LEFT-side
-    servers_[0]->set_handler(network::RpcType::UnmatchedLeftRowsReport, success_h);
-    servers_[1]->set_handler(network::RpcType::UnmatchedLeftRowsReport, success_h);
-    servers_[0]->set_handler(network::RpcType::FetchUnmatchedLeftRows, success_h);
-    servers_[1]->set_handler(network::RpcType::FetchUnmatchedLeftRows, success_h);
+    servers_[0]->set_handler(network::RpcType::UnmatchedLeftRowsReport, unmatched_left_report_handler);
+    servers_[1]->set_handler(network::RpcType::UnmatchedLeftRowsReport, unmatched_left_report_handler);
+    servers_[0]->set_handler(network::RpcType::FetchUnmatchedLeftRows, fetch_unmatched_left_handler);
+    servers_[1]->set_handler(network::RpcType::FetchUnmatchedLeftRows, fetch_unmatched_left_handler);
 
     auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 FULL JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
@@ -1016,11 +1079,10 @@ TEST_F(DistributedExecutorWithNodesTests, SelectWithLimitOffset) {
 }
 
 // Test: 2PC commit with prepare failure
-// DISABLED: TxnPrepare client.call() hangs even with reply handler set
-TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
+// Verifies transaction abort when TxnPrepare fails
+TEST_F(DistributedExecutorWithNodesTests, CommitPrepareFailure) {
     auto srv1 = std::make_unique<network::RpcServer>(6432);
     srv1->start();
-    servers_.push_back(std::move(srv1));
 
     cm_->register_node("node_1", "127.0.0.1", 6432, config::RunMode::Data);
 
@@ -1039,11 +1101,22 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_CommitPrepareFailure) {
                           auto data = reply.serialize();
                           if (!data.empty()) send(fd, data.data(), data.size(), 0);
                       });
-    // TxnAbort: fire and forget - no reply needed
+    // TxnAbort: must send response (RpcClient.call() always waits for reply)
     srv1->set_handler(network::RpcType::TxnAbort,
                       [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-                          // No response needed for abort - fire and forget
+                          network::QueryResultsReply reply;
+                          reply.success = true;
+                          network::RpcHeader resp_h;
+                          resp_h.type = network::RpcType::QueryResults;
+                          resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                          char h_buf[network::RpcHeader::HEADER_SIZE];
+                          resp_h.encode(h_buf);
+                          send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                          auto data = reply.serialize();
+                          if (!data.empty()) send(fd, data.data(), data.size(), 0);
                       });
+
+    servers_.push_back(std::move(srv1));
 
     auto lexer = std::make_unique<Lexer>("COMMIT");
     Parser parser(std::move(lexer));
