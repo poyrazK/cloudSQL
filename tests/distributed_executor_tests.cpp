@@ -448,18 +448,19 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
 
     // Set up a handler that returns successful QueryResultsReply for any RpcType
     void set_success_reply_handler(network::RpcServer& srv, network::RpcType in_type) {
-        srv.set_handler(in_type, [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-            network::QueryResultsReply reply;
-            reply.success = true;
-            auto data = reply.serialize();
-            network::RpcHeader resp_h;
-            resp_h.type = network::RpcType::QueryResults;
-            resp_h.payload_len = static_cast<uint16_t>(data.size());
-            char h_buf[network::RpcHeader::HEADER_SIZE];
-            resp_h.encode(h_buf);
-            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-            if (!data.empty()) send(fd, data.data(), data.size(), 0);
-        });
+        srv.set_handler(in_type,
+                        [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                            network::QueryResultsReply reply;
+                            reply.success = true;
+                            auto data = reply.serialize();
+                            network::RpcHeader resp_h;
+                            resp_h.type = network::RpcType::QueryResults;
+                            resp_h.payload_len = static_cast<uint16_t>(data.size());
+                            char h_buf[network::RpcHeader::HEADER_SIZE];
+                            resp_h.encode(h_buf);
+                            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                        });
     }
 
     static std::atomic<uint16_t> next_port_;
