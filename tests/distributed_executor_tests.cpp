@@ -446,6 +446,22 @@ class DistributedExecutorWithNodesTests : public ::testing::Test {
                         });
     }
 
+    // Set up a handler that returns successful QueryResultsReply for any RpcType
+    void set_success_reply_handler(network::RpcServer& srv, network::RpcType in_type) {
+        srv.set_handler(in_type, [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            network::QueryResultsReply reply;
+            reply.success = true;
+            auto data = reply.serialize();
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(data.size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
+    }
+
     static std::atomic<uint16_t> next_port_;
     std::shared_ptr<Catalog> catalog_;
     config::Config config_;
@@ -601,32 +617,8 @@ TEST_F(DistributedExecutorWithNodesTests, CommitWithNodes) {
     cm_->register_node("node_1", "127.0.0.1", 6415, config::RunMode::Data);
 
     // Set up TxnPrepare and TxnCommit handlers that return success
-    servers_[0]->set_handler(network::RpcType::TxnPrepare, [](const network::RpcHeader&,
-                                                              const std::vector<uint8_t>&, int fd) {
-        network::QueryResultsReply reply;
-        reply.success = true;
-        network::RpcHeader resp_h;
-        resp_h.type = network::RpcType::TxnPrepare;
-        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-        char h_buf[network::RpcHeader::HEADER_SIZE];
-        resp_h.encode(h_buf);
-        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-        auto data = reply.serialize();
-        if (!data.empty()) send(fd, data.data(), data.size(), 0);
-    });
-    servers_[0]->set_handler(network::RpcType::TxnCommit, [](const network::RpcHeader&,
-                                                             const std::vector<uint8_t>&, int fd) {
-        network::QueryResultsReply reply;
-        reply.success = true;
-        network::RpcHeader resp_h;
-        resp_h.type = network::RpcType::TxnCommit;
-        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-        char h_buf[network::RpcHeader::HEADER_SIZE];
-        resp_h.encode(h_buf);
-        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-        auto data = reply.serialize();
-        if (!data.empty()) send(fd, data.data(), data.size(), 0);
-    });
+    set_success_reply_handler(*servers_[0], network::RpcType::TxnPrepare);
+    set_success_reply_handler(*servers_[0], network::RpcType::TxnCommit);
 
     auto lexer = std::make_unique<Lexer>("COMMIT");
     Parser parser(std::move(lexer));
@@ -646,21 +638,8 @@ TEST_F(DistributedExecutorWithNodesTests, RollbackWithNodes) {
     servers_.push_back(std::move(srv1));
 
     cm_->register_node("node_1", "127.0.0.1", 6416, config::RunMode::Data);
-    // ROLLBACK just fires async TxnAbort - no reply needed
-    servers_[0]->set_handler(network::RpcType::TxnAbort, [](const network::RpcHeader&,
-                                                            const std::vector<uint8_t>&, int fd) {
-        // Send a response since client.call() waits for reply
-        network::QueryResultsReply reply;
-        reply.success = true;
-        network::RpcHeader resp_h;
-        resp_h.type = network::RpcType::TxnAbort;
-        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-        char h_buf[network::RpcHeader::HEADER_SIZE];
-        resp_h.encode(h_buf);
-        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-        auto data = reply.serialize();
-        if (!data.empty()) send(fd, data.data(), data.size(), 0);
-    });
+    // TxnAbort requires a response since client.call() waits for reply
+    set_success_reply_handler(*servers_[0], network::RpcType::TxnAbort);
 
     auto lexer = std::make_unique<Lexer>("ROLLBACK");
     Parser parser(std::move(lexer));
