@@ -1557,14 +1557,15 @@ TEST(TransactionManagerTests, UndoUpdatePhysicalRemoveFailure) {
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // UPDATE then ROLLBACK with fault injection
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    Transaction* txn = tm.begin();
     static_cast<void>(exec.execute(
         *Parser(std::make_unique<Lexer>("UPDATE upd_phys_rm SET val = 999 WHERE id = 1"))
              .parse_statement()));
 
     // Arm fault for physical_remove failure during UPDATE undo
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_PHYSICAL_REMOVE);
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/upd_phys_rm.heap"));
@@ -1598,14 +1599,15 @@ TEST(TransactionManagerTests, UndoUpdateUndoRemoveFailure) {
     static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("COMMIT")).parse_statement()));
 
     // UPDATE then ROLLBACK with fault injection for undo_remove
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("BEGIN")).parse_statement()));
+    Transaction* txn = tm.begin();
     static_cast<void>(exec.execute(
         *Parser(std::make_unique<Lexer>("UPDATE upd_undo_rm SET val = 999 WHERE id = 1"))
              .parse_statement()));
 
     // Arm fault for undo_remove failure during UPDATE undo (old_rid restore)
     cloudsql::common::FaultInjection::instance().set_fault(cloudsql::common::FAULT_UNDO_REMOVE);
-    static_cast<void>(exec.execute(*Parser(std::make_unique<Lexer>("ROLLBACK")).parse_statement()));
+    tm.abort(txn);
+    EXPECT_EQ(txn->get_state(), TransactionState::ABORTED);
     cloudsql::common::FaultInjection::instance().clear();
 
     static_cast<void>(std::remove("./test_data/upd_undo_rm.heap"));
