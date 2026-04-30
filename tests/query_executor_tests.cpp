@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <utility>
@@ -56,13 +57,15 @@ struct TestEnvironment {
 
     ~TestEnvironment() {
         // Cleanup all test data artifacts
-        std::error_code ec;
-        if (std::filesystem::exists("./test_data", ec)) {
-            for (const auto& entry : std::filesystem::directory_iterator("./test_data", ec)) {
-                if (entry.is_regular_file(ec)) {
-                    std::remove(entry.path().c_str());
-                }
-            }
+        std::remove("./test_data/test_table.heap");
+        std::remove("./test_data/table_a.heap");
+        std::remove("./test_data/table_b.heap");
+        // Remove any .heap files in test_data directory
+        for (const char* fname : {"query_exec.heap", "cache_hit.heap", "str_exec.heap",
+                                  "comp_idx.heap", "del_err.heap", "local_tab.heap"}) {
+            std::string path = "./test_data/";
+            path += fname;
+            std::remove(path.c_str());
         }
     }
 };
