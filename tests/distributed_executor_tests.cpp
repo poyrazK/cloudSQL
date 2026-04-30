@@ -821,7 +821,8 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     };
 
     // Handler for UnmatchedRowsReport - returns UnmatchedRowsReportArgs
-    auto unmatched_report_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+    auto unmatched_report_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p,
+                                       int fd) {
         auto args = network::UnmatchedRowsReportArgs::deserialize(p);
         network::UnmatchedRowsReportArgs reply;
         reply.context_id = args.context_id;
@@ -839,7 +840,8 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     };
 
     // Handler for FetchUnmatchedRows - returns UnmatchedRowsPushArgs
-    auto fetch_unmatched_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+    auto fetch_unmatched_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p,
+                                      int fd) {
         auto args = network::FetchUnmatchedRowsArgs::deserialize(p);
         network::UnmatchedRowsPushArgs reply;
         reply.context_id = args.context_id;
@@ -856,7 +858,8 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     };
 
     // Handler for UnmatchedLeftRowsReport - returns UnmatchedLeftRowsReportArgs
-    auto unmatched_left_report_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+    auto unmatched_left_report_handler = [](const network::RpcHeader&,
+                                            const std::vector<uint8_t>& p, int fd) {
         auto args = network::UnmatchedLeftRowsReportArgs::deserialize(p);
         network::UnmatchedLeftRowsReportArgs reply;
         reply.context_id = args.context_id;
@@ -873,7 +876,8 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     };
 
     // Handler for FetchUnmatchedLeftRows - returns UnmatchedRowsPushArgs (same as RIGHT)
-    auto fetch_unmatched_left_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p, int fd) {
+    auto fetch_unmatched_left_handler = [](const network::RpcHeader&, const std::vector<uint8_t>& p,
+                                           int fd) {
         auto args = network::FetchUnmatchedLeftRowsArgs::deserialize(p);
         network::UnmatchedRowsPushArgs reply;
         reply.context_id = args.context_id;
@@ -902,10 +906,14 @@ TEST_F(DistributedExecutorWithNodesTests, DISABLED_FullJoinPhase3_5) {
     servers_[1]->set_handler(network::RpcType::FetchUnmatchedRows, fetch_unmatched_handler);
 
     // Phase 3-5 handlers for LEFT-side
-    servers_[0]->set_handler(network::RpcType::UnmatchedLeftRowsReport, unmatched_left_report_handler);
-    servers_[1]->set_handler(network::RpcType::UnmatchedLeftRowsReport, unmatched_left_report_handler);
-    servers_[0]->set_handler(network::RpcType::FetchUnmatchedLeftRows, fetch_unmatched_left_handler);
-    servers_[1]->set_handler(network::RpcType::FetchUnmatchedLeftRows, fetch_unmatched_left_handler);
+    servers_[0]->set_handler(network::RpcType::UnmatchedLeftRowsReport,
+                             unmatched_left_report_handler);
+    servers_[1]->set_handler(network::RpcType::UnmatchedLeftRowsReport,
+                             unmatched_left_report_handler);
+    servers_[0]->set_handler(network::RpcType::FetchUnmatchedLeftRows,
+                             fetch_unmatched_left_handler);
+    servers_[1]->set_handler(network::RpcType::FetchUnmatchedLeftRows,
+                             fetch_unmatched_left_handler);
 
     auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 FULL JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
