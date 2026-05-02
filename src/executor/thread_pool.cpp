@@ -48,7 +48,9 @@ void ThreadPool::shutdown() {
 
 void ThreadPool::wait() {
     std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [this] { return tasks_.empty() && pending_tasks_.load(std::memory_order_acquire) == 0; });
+    cv_.wait(lock, [this] {
+        return tasks_.empty() && pending_tasks_.load(std::memory_order_acquire) == 0;
+    });
 }
 
 }  // namespace cloudsql::executor

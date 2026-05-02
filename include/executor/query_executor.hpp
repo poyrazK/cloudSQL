@@ -161,8 +161,8 @@ class QueryExecutor {
     QueryResult execute_select(const parser::SelectStatement& stmt, transaction::Transaction* txn);
 
     std::unique_ptr<VectorizedOperator> build_vectorized_plan(const parser::SelectStatement& stmt,
-                                                    transaction::Transaction* txn,
-                                                    bool has_sort_or_limit);
+                                                              transaction::Transaction* txn,
+                                                              bool has_sort_or_limit);
     QueryResult execute_create_table(const parser::CreateTableStatement& stmt);
     QueryResult execute_create_index(const parser::CreateIndexStatement& stmt);
     QueryResult execute_drop_table(const parser::DropTableStatement& stmt);

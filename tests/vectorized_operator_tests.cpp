@@ -1459,8 +1459,10 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinRight) {
             // Check if this is an unmatched right row (NULL left columns)
             if (result->get_column(0).get(i).is_null()) {
                 // Unmatched right row - should have id=4, val=40 in right columns
-                ASSERT_FALSE(result->get_column(2).get(i).is_null()) << "right.id should not be null";
-                ASSERT_FALSE(result->get_column(3).get(i).is_null()) << "right.val should not be null";
+                ASSERT_FALSE(result->get_column(2).get(i).is_null())
+                    << "right.id should not be null";
+                ASSERT_FALSE(result->get_column(3).get(i).is_null())
+                    << "right.val should not be null";
                 EXPECT_EQ(result->get_column(2).get(i).as_int64(), 4);
                 EXPECT_EQ(result->get_column(3).get(i).as_int64(), 40);
                 null_left_count++;
@@ -1473,7 +1475,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinRight) {
     }
 
     // RIGHT join: 2 matched rows + 1 unmatched right row = 3 total
-    EXPECT_EQ(matched_count, 2);  // (2,2,20) and (3,3,30)
+    EXPECT_EQ(matched_count, 2);    // (2,2,20) and (3,3,30)
     EXPECT_EQ(null_left_count, 1);  // (4,NULL,NULL,40) - right.id=4 unmatched
 }
 
@@ -1550,7 +1552,7 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinFull) {
 using namespace cloudsql::executor;
 
 class ThreadPoolTests : public ::testing::Test {
-protected:
+   protected:
     void SetUp() override {}
     void TearDown() override {}
 };

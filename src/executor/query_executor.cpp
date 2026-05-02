@@ -426,8 +426,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                 has_more = vec_op->next_batch(*batch);
             } catch (const std::out_of_range& e) {
                 result.set_error(std::string("vector access error in next_batch: ") + e.what() +
-                    " batch_cols=" + std::to_string(batch->column_count()) +
-                    " batch_rows=" + std::to_string(batch->row_count()));
+                                 " batch_cols=" + std::to_string(batch->column_count()) +
+                                 " batch_rows=" + std::to_string(batch->row_count()));
                 break;
             } catch (const std::exception& e) {
                 result.set_error(std::string("next_batch error: ") + e.what());
@@ -1251,7 +1251,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         base_schema.add_column(col.name, col.type, col.nullable);
     }
 
-    auto col_table = std::make_shared<storage::ColumnarTable>(base_table_name, *storage_manager_, base_schema);
+    auto col_table =
+        std::make_shared<storage::ColumnarTable>(base_table_name, *storage_manager_, base_schema);
 
     /* Migrate HeapTable data to ColumnarTable if needed.
        INSERT writes to HeapTable, but vectorized path reads from ColumnarTable.
@@ -1279,8 +1280,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         return nullptr;  // Table not found or not columnar
     }
 
-    std::unique_ptr<VectorizedOperator> current_root = std::make_unique<VectorizedSeqScanOperator>(
-        base_table_name, col_table);
+    std::unique_ptr<VectorizedOperator> current_root =
+        std::make_unique<VectorizedSeqScanOperator>(base_table_name, col_table);
 
     /* Add JOINs (VectorizedHashJoinOperator) */
     for (const auto& join : stmt.joins()) {
@@ -1324,8 +1325,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             return nullptr;
         }
 
-        std::unique_ptr<VectorizedOperator> right_scan = std::make_unique<VectorizedSeqScanOperator>(
-            join_table_name, join_col_table);
+        std::unique_ptr<VectorizedOperator> right_scan =
+            std::make_unique<VectorizedSeqScanOperator>(join_table_name, join_col_table);
 
         bool use_hash_join = false;
         std::unique_ptr<parser::Expression> left_key = nullptr;
@@ -1340,16 +1341,20 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                 const std::string left_col_name = bin_expr->left().to_string();
                 const std::string right_col_name = bin_expr->right().to_string();
 
-                bool left_in_left = (left_schema.find_column(left_col_name) != static_cast<size_t>(-1));
-                bool right_in_right = (right_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+                bool left_in_left =
+                    (left_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                bool right_in_right =
+                    (right_schema.find_column(right_col_name) != static_cast<size_t>(-1));
 
                 if (left_in_left && right_in_right) {
                     use_hash_join = true;
                     left_key = bin_expr->left().clone();
                     right_key = bin_expr->right().clone();
                 } else {
-                    bool left_in_right = (right_schema.find_column(left_col_name) != static_cast<size_t>(-1));
-                    bool right_in_left = (left_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+                    bool left_in_right =
+                        (right_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                    bool right_in_left =
+                        (left_schema.find_column(right_col_name) != static_cast<size_t>(-1));
                     if (left_in_right && right_in_left) {
                         use_hash_join = true;
                         left_key = bin_expr->right().clone();
@@ -1381,17 +1386,16 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         }
 
         auto join_op = std::make_unique<VectorizedHashJoinOperator>(
-            std::move(current_root), std::move(right_scan),
-            std::move(left_key), std::move(right_key),
-            exec_join_type, output_schema);
+            std::move(current_root), std::move(right_scan), std::move(left_key),
+            std::move(right_key), exec_join_type, output_schema);
 
         current_root = std::move(join_op);
     }
 
     /* Filter (WHERE) */
     if (stmt.where()) {
-        auto filter_op = std::make_unique<VectorizedFilterOperator>(
-            std::move(current_root), stmt.where()->clone());
+        auto filter_op = std::make_unique<VectorizedFilterOperator>(std::move(current_root),
+                                                                    stmt.where()->clone());
         current_root = std::move(filter_op);
     }
 
@@ -1405,14 +1409,20 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             std::string name = func->name();
             std::transform(name.begin(), name.end(), name.begin(),
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-            if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" || name == "AVG") {
+            if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" ||
+                name == "AVG") {
                 has_aggregates = true;
                 VectorizedAggregateInfo info;
-                if (name == "COUNT") info.type = AggregateType::Count;
-                else if (name == "SUM") info.type = AggregateType::Sum;
-                else if (name == "MIN") info.type = AggregateType::Min;
-                else if (name == "MAX") info.type = AggregateType::Max;
-                else info.type = AggregateType::Avg;
+                if (name == "COUNT")
+                    info.type = AggregateType::Count;
+                else if (name == "SUM")
+                    info.type = AggregateType::Sum;
+                else if (name == "MIN")
+                    info.type = AggregateType::Min;
+                else if (name == "MAX")
+                    info.type = AggregateType::Max;
+                else
+                    info.type = AggregateType::Avg;
                 info.input_col_idx = -1;  // default
                 agg_infos.push_back(info);
             }
@@ -1430,24 +1440,23 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             const auto& gb_name = gb->to_string();
             size_t idx = current_root->output_schema().find_column(gb_name);
             if (idx != static_cast<size_t>(-1)) {
-                output_schema.add_column(
-                    current_root->output_schema().get_column(idx).name(),
-                    current_root->output_schema().get_column(idx).type(),
-                    current_root->output_schema().get_column(idx).nullable());
+                output_schema.add_column(current_root->output_schema().get_column(idx).name(),
+                                         current_root->output_schema().get_column(idx).type(),
+                                         current_root->output_schema().get_column(idx).nullable());
             }
         }
         for (size_t i = 0; i < agg_infos.size(); ++i) {
-            output_schema.add_column("agg_" + std::to_string(i), common::ValueType::TYPE_FLOAT64, false);
+            output_schema.add_column("agg_" + std::to_string(i), common::ValueType::TYPE_FLOAT64,
+                                     false);
         }
 
         auto agg_op = std::make_unique<VectorizedGroupByOperator>(
-            std::move(current_root), std::move(group_by), std::move(agg_infos),
-            output_schema);
+            std::move(current_root), std::move(group_by), std::move(agg_infos), output_schema);
         current_root = std::move(agg_op);
 
         if (stmt.having()) {
-            auto having_filter = std::make_unique<VectorizedFilterOperator>(
-                std::move(current_root), stmt.having()->clone());
+            auto having_filter = std::make_unique<VectorizedFilterOperator>(std::move(current_root),
+                                                                            stmt.having()->clone());
             current_root = std::move(having_filter);
         }
     }

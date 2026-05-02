@@ -23,7 +23,7 @@ namespace cloudsql::executor {
  * submit() returns a std::future for the caller's result.
  */
 class ThreadPool {
-public:
+   public:
     /**
      * @brief Construct a thread pool with the given number of workers.
      * @param num_threads Number of worker threads. Defaults to hardware
@@ -75,7 +75,7 @@ public:
     /** @brief Number of worker threads in the pool. */
     size_t num_threads() const { return workers_.size(); }
 
-private:
+   private:
     std::vector<std::thread> workers_;
     std::queue<std::function<void()>> tasks_;
     std::mutex mutex_;

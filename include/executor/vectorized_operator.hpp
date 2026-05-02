@@ -545,7 +545,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 struct VectorizedHashBucket {
     std::vector<std::vector<common::Value>> key_values;    // Key column values per row
     std::vector<std::vector<common::Value>> payload_rows;  // Full right row values
-    std::vector<size_t> right_row_indices;  // Global indices into right_bucket_rows_ for unmatched tracking
+    std::vector<size_t>
+        right_row_indices;  // Global indices into right_bucket_rows_ for unmatched tracking
 };
 
 /**
@@ -655,7 +656,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 [[fallthrough]];
             case ProcessPhase::Done:
                 // Emit unmatched right rows for RIGHT/FULL joins
-                if (!emitted_unmatched_right_ && (join_type_ == JoinType::Right || join_type_ == JoinType::Full)) {
+                if (!emitted_unmatched_right_ &&
+                    (join_type_ == JoinType::Right || join_type_ == JoinType::Full)) {
                     // Build unmatched_right_rows_ from right_matched_ (unmatched = false)
                     for (size_t i = 0; i < right_matched_.size(); ++i) {
                         if (!right_matched_[i]) {
@@ -665,7 +667,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                     if (emit_unmatched_right_rows(out_batch)) {
                         return true;  // Batch is full, more to emit later
                     }
-                    // We emitted rows but batch wasn't full - return true so caller can process them
+                    // We emitted rows but batch wasn't full - return true so caller can process
+                    // them
                     if (out_batch.row_count() > 0) {
                         emitted_unmatched_right_ = true;
                         return true;
@@ -733,7 +736,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
             // Get next left batch if needed
             if (left_row_idx_ >= left_batch_->row_count()) {
                 // For LEFT/FULL join: if there are unmatched rows, emit them FIRST
-                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) && !unmatched_left_indices_.empty()) {
+                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                    !unmatched_left_indices_.empty()) {
                     // First, emit all unmatched rows before any matched rows
                     if (emit_unmatched_left_rows(out_batch)) {
                         return true;  // Batch is full
@@ -846,7 +850,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 }
 
                 // Track unmatched for LEFT/FULL join
-                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) && !found_match) {
+                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                    !found_match) {
                     unmatched_left_indices_.push_back(left_row_idx_);
                 }
 

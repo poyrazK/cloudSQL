@@ -79,7 +79,8 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
         } else if (type == common::ValueType::TYPE_FLOAT64) {
             auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(col_vec);
             d_out.write(reinterpret_cast<const char*>(num_vec.raw_data()), batch.row_count() * 8);
-        } else if (type == common::ValueType::TYPE_FLOAT32 || type == common::ValueType::TYPE_DECIMAL) {
+        } else if (type == common::ValueType::TYPE_FLOAT32 ||
+                   type == common::ValueType::TYPE_DECIMAL) {
             // Promote float32/decimal to float64 for storage
             auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(col_vec);
             std::vector<double> promoted(batch.row_count());
