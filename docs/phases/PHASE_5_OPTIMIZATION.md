@@ -39,4 +39,5 @@ The vectorized execution engine was wired into `QueryExecutor` via `set_parallel
 - `QueryExecutor::set_storage_manager()` — provides StorageManager for ColumnarTable lookups
 - `build_vectorized_plan()` — constructs operator tree (Scan → Filter → HashJoin → GroupBy → Project)
 - `execute_select()` — branches on `use_vectorized` flag between Volcano (tuple) and vectorized (batch) paths
+- **Join type support**: `VectorizedHashJoinOperator` supports INNER, LEFT, RIGHT, and FULL outer joins via `JoinType` enum. RIGHT and FULL outer joins use `right_matched_` bitmap and `emit_unmatched_right_rows()` to emit unmatched right rows at end of probe.
 - **Constraint**: Sort/Limit queries fall back to Volcano path since SortOperator/LimitOperator don't inherit from VectorizedOperator

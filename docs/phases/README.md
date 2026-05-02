@@ -54,6 +54,7 @@ This directory contains the technical documentation for the lifecycle of the clo
 - Native Columnar storage implementation with binary persistence.
 - Batch-at-a-time vectorized execution model (Scan, Filter, Project, Aggregate).
 - High-performance `NumericVector` and `VectorBatch` data structures.
+- `VectorizedHashJoinOperator` supports INNER, LEFT, RIGHT, and FULL outer joins.
 
 ### Phase 9 — Stability & Testing Refinement
 **Focus**: Engine Robustness & E2E Validation.
