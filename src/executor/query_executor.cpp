@@ -417,8 +417,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     if (use_vectorized) {
         /* Vectorized batch iteration */
         auto batch = VectorBatch::create(root->output_schema());
-        // root is a VectorizedOperator (wrapped in Operator*) - use static_cast safely
-        auto* vec_op = static_cast<VectorizedOperator*>(root.get());
+        auto* vec_op = dynamic_cast<VectorizedOperator*>(root.get());
+        assert(vec_op && "root must be a VectorizedOperator when use_vectorized is true");
 
         while (true) {
             bool has_more = false;
@@ -1232,7 +1232,7 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
     const parser::SelectStatement& stmt, [[maybe_unused]] transaction::Transaction* txn,
     [[maybe_unused]] bool has_sort_or_limit) {
-    // Reserved for transaction-aware and sort/limit vectorized operations in future
+    // Currently unused — reserved for vectorized sort/limit support
 
     if (!stmt.from()) {
         return nullptr;
