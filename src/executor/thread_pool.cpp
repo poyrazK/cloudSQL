@@ -24,6 +24,7 @@ ThreadPool::ThreadPool(size_t num_threads) {
                 }
                 task();
                 pending_tasks_.fetch_sub(1, std::memory_order_acq_rel);
+                cv_.notify_all();
             }
         });
     }
