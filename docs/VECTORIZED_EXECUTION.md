@@ -45,7 +45,7 @@ class VectorizedOperator : public Operator {
 
 ### Class Hierarchy
 
-```
+```text
 Operator (base)
 ├── SeqScanOperator, IndexScanOperator, FilterOperator, ...
 ├── SortOperator, LimitOperator
@@ -69,7 +69,7 @@ class VectorBatch {
 };
 ```
 
-A `VectorBatch` contains one `ColumnVector` per output column, with `row_count_` indicating active rows. ColumnVectors can be `NumericVector<T>`, `StringVector`, or `BoolVector` depending on data type.
+A `VectorBatch` contains one `ColumnVector` per output column, with `row_count_` indicating active rows. ColumnVectors can be `NumericVector<T>`, `StringVector`, or `NumericVector<bool>` for booleans.
 
 ### QueryExecutor Integration
 

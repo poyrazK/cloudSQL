@@ -796,8 +796,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                     // Finished scanning this bucket
                     resuming_bucket_scan_ = false;
 
-                    // Track unmatched for LEFT join
-                    if (join_type_ == JoinType::Left && !found_match) {
+                    // Track unmatched for LEFT/FULL join
+                    if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) && !found_match) {
                         unmatched_left_indices_.push_back(left_row_idx_);
                     }
 
@@ -808,8 +808,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 const auto& key_val = left_batch_->get_column(left_key_col_idx_).get(left_row_idx_);
 
                 if (key_val.is_null()) {
-                    // NULL keys never match - mark as unmatched for LEFT join
-                    if (join_type_ == JoinType::Left) {
+                    // NULL keys never match - mark as unmatched for LEFT/FULL join
+                    if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
                         unmatched_left_indices_.push_back(left_row_idx_);
                     }
                     left_row_idx_++;

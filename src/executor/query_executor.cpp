@@ -1257,10 +1257,19 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
 
     /* Migrate HeapTable data to ColumnarTable if needed.
        INSERT writes to HeapTable, but vectorized path reads from ColumnarTable.
-       We need to check if HeapTable has data and copy it to ColumnarTable. */
+       We only migrate when ColumnarTable is empty (first time or after clear). */
     storage::HeapTable heap_table(base_table_name, bpm_, base_schema);
     uint64_t count = heap_table.tuple_count();
-    if (count > 0) {
+    bool needs_migration = (count > 0);
+    if (needs_migration) {
+        // Check if already migrated by trying to open existing columnar table
+        auto existing_col_table = std::make_shared<storage::ColumnarTable>(
+            base_table_name, *storage_manager_, base_schema);
+        if (existing_col_table->open() && existing_col_table->row_count() > 0) {
+            needs_migration = false;  // Already migrated, skip
+        }
+    }
+    if (needs_migration) {
         col_table->create();
         auto batch = executor::VectorBatch::create(base_schema);
         auto iter = heap_table.scan();
@@ -1481,7 +1490,13 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                         current_root->output_schema().get_column(idx).nullable());
                 }
             } else {
-                proj_schema.add_column("expr", common::ValueType::TYPE_TEXT, true);
+                // Infer expression result type from constant value, fallback to TYPE_TEXT
+                common::ValueType expr_type = common::ValueType::TYPE_TEXT;
+                if (col->type() == parser::ExprType::Constant) {
+                    const auto* const_expr = static_cast<const parser::ConstantExpr*>(col.get());
+                    expr_type = const_expr->value().type();
+                }
+                proj_schema.add_column("expr", expr_type, true);
             }
         }
 

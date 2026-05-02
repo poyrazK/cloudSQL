@@ -145,6 +145,8 @@ class QueryExecutor {
 
     // Parallel execution state
     bool parallel_ = false;
+    // TODO: Initialize thread_pool_ when parallel query execution is implemented.
+    // Currently unused — parallel vectorized ops use a local ThreadPool per query.
     std::shared_ptr<ThreadPool> thread_pool_;
     storage::StorageManager* storage_manager_ = nullptr;
 

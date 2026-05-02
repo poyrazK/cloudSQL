@@ -54,8 +54,8 @@ class ThreadPool {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             tasks_.emplace([task]() { (*task)(); });
+            pending_tasks_.fetch_add(1, std::memory_order_acq_rel);
         }
-        pending_tasks_.fetch_add(1, std::memory_order_acq_rel);
         cv_.notify_one();
         return result;
     }

@@ -198,6 +198,60 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
                     num_vec.append(common::Value::make_float64(data[r]));
                 }
             }
+        } else if (type == common::ValueType::TYPE_FLOAT32) {
+            auto& num_vec = dynamic_cast<executor::NumericVector<float>&>(target_col);
+
+            n_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
+            std::vector<uint8_t> nulls(actual_rows);
+            n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
+
+            d_in.seekg(static_cast<std::streamoff>(start_row * 8), std::ios::beg);
+            std::vector<double> data(actual_rows);
+            d_in.read(reinterpret_cast<char*>(data.data()), actual_rows * 8);
+
+            for (uint32_t r = 0; r < actual_rows; ++r) {
+                if (nulls[r] != 0U) {
+                    num_vec.append(common::Value::make_null());
+                } else {
+                    num_vec.append(common::Value(static_cast<float>(data[r])));
+                }
+            }
+        } else if (type == common::ValueType::TYPE_DECIMAL) {
+            auto& num_vec = dynamic_cast<executor::NumericVector<double>&>(target_col);
+
+            n_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
+            std::vector<uint8_t> nulls(actual_rows);
+            n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
+
+            d_in.seekg(static_cast<std::streamoff>(start_row * 8), std::ios::beg);
+            std::vector<double> data(actual_rows);
+            d_in.read(reinterpret_cast<char*>(data.data()), actual_rows * 8);
+
+            for (uint32_t r = 0; r < actual_rows; ++r) {
+                if (nulls[r] != 0U) {
+                    num_vec.append(common::Value::make_null());
+                } else {
+                    num_vec.append(common::Value::make_float64(data[r]));
+                }
+            }
+        } else if (type == common::ValueType::TYPE_BOOL) {
+            auto& num_vec = dynamic_cast<executor::NumericVector<bool>&>(target_col);
+
+            n_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
+            std::vector<uint8_t> nulls(actual_rows);
+            n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
+
+            d_in.seekg(static_cast<std::streamoff>(start_row), std::ios::beg);
+            std::vector<uint8_t> data(actual_rows);
+            d_in.read(reinterpret_cast<char*>(data.data()), actual_rows);
+
+            for (uint32_t r = 0; r < actual_rows; ++r) {
+                if (nulls[r] != 0U) {
+                    num_vec.append(common::Value::make_null());
+                } else {
+                    num_vec.append(common::Value(data[r] != 0));
+                }
+            }
         } else if (type == common::ValueType::TYPE_TEXT ||
                    type == common::ValueType::TYPE_VARCHAR ||
                    type == common::ValueType::TYPE_CHAR) {
