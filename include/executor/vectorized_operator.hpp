@@ -797,7 +797,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                     resuming_bucket_scan_ = false;
 
                     // Track unmatched for LEFT/FULL join
-                    if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) && !found_match) {
+                    if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                        !found_match) {
                         unmatched_left_indices_.push_back(left_row_idx_);
                     }
 
