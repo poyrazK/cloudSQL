@@ -1230,8 +1230,9 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
 }
 
 std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
-    const parser::SelectStatement& stmt, transaction::Transaction* txn, bool has_sort_or_limit) {
-    (void)txn;  // Vectorized path doesn't use txn yet
+    const parser::SelectStatement& stmt, [[maybe_unused]] transaction::Transaction* txn,
+    [[maybe_unused]] bool has_sort_or_limit) {
+    // Reserved for transaction-aware and sort/limit vectorized operations in future
 
     if (!stmt.from()) {
         return nullptr;
@@ -1493,7 +1494,7 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
        When has_sort_or_limit is true, use_vectorized is false so this function
        is only called for pure vectorized queries (no ORDER BY, no LIMIT).
        The Volcano path handles Sort/Limit via build_plan(). */
-    (void)has_sort_or_limit;  // Suppress unused warning
+    // has_sort_or_limit reserved for vectorized sort/limit in future
 
     return current_root;
 }
