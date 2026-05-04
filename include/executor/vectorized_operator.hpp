@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "parser/expression.hpp"
 #include "storage/columnar_table.hpp"
@@ -21,18 +22,19 @@ namespace cloudsql::executor {
 /**
  * @brief Base class for vectorized operators (Batch-at-a-time)
  */
-class VectorizedOperator {
+class VectorizedOperator : public Operator {
    protected:
     ExecState state_ = ExecState::Init;
     std::string error_message_;
     Schema output_schema_;
 
    public:
-    explicit VectorizedOperator(Schema schema) : output_schema_(std::move(schema)) {}
+    explicit VectorizedOperator(Schema schema)
+        : Operator(OperatorType::Result), output_schema_(std::move(schema)) {}
     virtual ~VectorizedOperator() = default;
 
-    virtual bool init() { return true; }
-    virtual bool open() { return true; }
+    bool init() override { return true; }
+    bool open() override { return true; }
 
     /**
      * @brief Produce the next batch of results
@@ -40,9 +42,9 @@ class VectorizedOperator {
      */
     virtual bool next_batch(VectorBatch& out_batch) = 0;
 
-    virtual void close() {}
+    void close() override {}
 
-    [[nodiscard]] Schema& output_schema() { return output_schema_; }
+    [[nodiscard]] Schema& output_schema() override { return output_schema_; }
     [[nodiscard]] ExecState state() const { return state_; }
     [[nodiscard]] const std::string& error() const { return error_message_; }
 
@@ -543,6 +545,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 struct VectorizedHashBucket {
     std::vector<std::vector<common::Value>> key_values;    // Key column values per row
     std::vector<std::vector<common::Value>> payload_rows;  // Full right row values
+    std::vector<size_t>
+        right_row_indices;  // Global indices into right_bucket_rows_ for unmatched tracking
 };
 
 /**
@@ -575,7 +579,12 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
     // For LEFT join: track matched/unmatched rows
     static constexpr size_t BATCH_SIZE = 1024;
     std::vector<bool> left_matched_in_batch_;
-    std::vector<size_t> unmatched_indices_;
+    std::vector<size_t> unmatched_left_indices_;
+
+    // For RIGHT join: track matched right rows during probe
+    std::vector<bool> right_matched_;
+    std::vector<size_t> unmatched_right_rows_;
+    bool emitted_unmatched_right_ = false;
 
     // Probe state for resumable bucket scanning (prevents batch overflow)
     bool resuming_bucket_scan_ = false;  // True if we're resuming a mid-bucket scan
@@ -621,7 +630,7 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
 
         // Pre-size matched tracking vectors
         left_matched_in_batch_.resize(BATCH_SIZE, false);
-        unmatched_indices_.reserve(BATCH_SIZE);
+        unmatched_left_indices_.reserve(BATCH_SIZE);
     }
 
     bool next_batch(VectorBatch& out_batch) override {
@@ -634,6 +643,8 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
             case ProcessPhase::BuildRight:
                 build_hash_table();
                 if (state_ == ExecState::Error) return false;
+                // Resize matched tracking for right rows (needed for RIGHT/FULL joins)
+                right_matched_.resize(right_bucket_rows_.size(), false);
                 phase_ = ProcessPhase::ProbeLeft;
                 [[fallthrough]];
             case ProcessPhase::ProbeLeft:
@@ -644,6 +655,27 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 phase_ = ProcessPhase::Done;
                 [[fallthrough]];
             case ProcessPhase::Done:
+                // Emit unmatched right rows for RIGHT/FULL joins
+                if (!emitted_unmatched_right_ &&
+                    (join_type_ == JoinType::Right || join_type_ == JoinType::Full)) {
+                    // Build unmatched_right_rows_ from right_matched_ (unmatched = false)
+                    for (size_t i = 0; i < right_matched_.size(); ++i) {
+                        if (!right_matched_[i]) {
+                            unmatched_right_rows_.push_back(i);
+                        }
+                    }
+                    if (emit_unmatched_right_rows(out_batch)) {
+                        return true;  // Batch is full, more to emit later
+                    }
+                    // We emitted rows but batch wasn't full - return true so caller can process
+                    // them
+                    if (out_batch.row_count() > 0) {
+                        emitted_unmatched_right_ = true;
+                        return true;
+                    }
+                    emitted_unmatched_right_ = true;
+                }
+                return false;
             default:
                 return false;
         }
@@ -688,19 +720,29 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
 
         // Store full row (same data for now, could optimize)
         bucket.payload_rows.push_back(bucket.key_values.back());
+
+        // Track global right row index for RIGHT/FULL join unmatched tracking
+        size_t global_idx = right_bucket_rows_.size();
+        right_bucket_rows_.push_back(bucket.payload_rows.back());
+
+        // Track this bucket/entry for unmatched right row emission (RIGHT/FULL join)
+        if (join_type_ == JoinType::Right || join_type_ == JoinType::Full) {
+            bucket.right_row_indices.push_back(global_idx);
+        }
     }
 
     bool probe_and_emit(VectorBatch& out_batch) {
         while (true) {
             // Get next left batch if needed
             if (left_row_idx_ >= left_batch_->row_count()) {
-                // For LEFT join: if there are unmatched rows, emit them FIRST
-                if (join_type_ == JoinType::Left && !unmatched_indices_.empty()) {
+                // For LEFT/FULL join: if there are unmatched rows, emit them FIRST
+                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                    !unmatched_left_indices_.empty()) {
                     // First, emit all unmatched rows before any matched rows
                     if (emit_unmatched_left_rows(out_batch)) {
                         return true;  // Batch is full
                     }
-                    unmatched_indices_.clear();
+                    unmatched_left_indices_.clear();
                 }
 
                 left_batch_->clear();
@@ -754,9 +796,10 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                     // Finished scanning this bucket
                     resuming_bucket_scan_ = false;
 
-                    // Track unmatched for LEFT join
-                    if (join_type_ == JoinType::Left && !found_match) {
-                        unmatched_indices_.push_back(left_row_idx_);
+                    // Track unmatched for LEFT/FULL join
+                    if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                        !found_match) {
+                        unmatched_left_indices_.push_back(left_row_idx_);
                     }
 
                     left_row_idx_++;
@@ -766,9 +809,9 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                 const auto& key_val = left_batch_->get_column(left_key_col_idx_).get(left_row_idx_);
 
                 if (key_val.is_null()) {
-                    // NULL keys never match - mark as unmatched for LEFT join
-                    if (join_type_ == JoinType::Left) {
-                        unmatched_indices_.push_back(left_row_idx_);
+                    // NULL keys never match - mark as unmatched for LEFT/FULL join
+                    if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
+                        unmatched_left_indices_.push_back(left_row_idx_);
                     }
                     left_row_idx_++;
                     continue;
@@ -794,6 +837,12 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                         // Match found - emit row
                         emit_joined_row(out_batch, left_row_idx_, bucket.payload_rows[i]);
                         found_match = true;
+                        // Mark right row as matched for RIGHT/FULL join
+                        if (join_type_ == JoinType::Right || join_type_ == JoinType::Full) {
+                            if (i < bucket.right_row_indices.size()) {
+                                right_matched_[bucket.right_row_indices[i]] = true;
+                            }
+                        }
                         if (join_type_ == JoinType::Left) {
                             left_matched_in_batch_[left_row_idx_] = true;
                         }
@@ -801,9 +850,10 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                     }
                 }
 
-                // Track unmatched for LEFT join
-                if (join_type_ == JoinType::Left && !found_match) {
-                    unmatched_indices_.push_back(left_row_idx_);
+                // Track unmatched for LEFT/FULL join
+                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                    !found_match) {
+                    unmatched_left_indices_.push_back(left_row_idx_);
                 }
 
                 left_row_idx_++;
@@ -851,7 +901,7 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
     bool emit_unmatched_left_rows(VectorBatch& out_batch) {
         constexpr size_t BATCH_SIZE = 1024;
 
-        for (size_t idx : unmatched_indices_) {
+        for (size_t idx : unmatched_left_indices_) {
             if (out_batch.row_count() >= BATCH_SIZE) {
                 return true;  // Batch is full
             }
@@ -865,9 +915,33 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
             }
             out_batch.set_row_count(out_batch.row_count() + 1);
         }
-        unmatched_indices_.clear();
+        unmatched_left_indices_.clear();
         return false;
     }
+
+    bool emit_unmatched_right_rows(VectorBatch& out_batch) {
+        constexpr size_t BATCH_SIZE = 1024;
+
+        for (size_t row_idx : unmatched_right_rows_) {
+            if (out_batch.row_count() >= BATCH_SIZE) {
+                return true;  // Batch is full
+            }
+            // Append NULLs for left columns
+            for (size_t c = 0; c < left_col_count_; ++c) {
+                out_batch.get_column(c).append(common::Value::make_null());
+            }
+            // Append right columns from bucket payload
+            const auto& right_row = right_bucket_rows_[row_idx];
+            for (size_t c = 0; c < right_col_count_; ++c) {
+                out_batch.get_column(left_col_count_ + c).append(right_row[c]);
+            }
+            out_batch.set_row_count(out_batch.row_count() + 1);
+        }
+        return false;
+    }
+
+    // Storage for unmatched right rows (index into bucket payload)
+    std::vector<std::vector<common::Value>> right_bucket_rows_;
 };
 
 }  // namespace cloudsql::executor

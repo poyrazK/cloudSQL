@@ -17,6 +17,10 @@ namespace cloudsql::storage {
 
 /**
  * @brief Manages low-level disk I/O and page-level access
+ * @note StorageManager is not thread-safe for concurrent file operations.
+ *       The atomics in Stats are for aggregation of counters, not concurrent
+ *       file access. Use external synchronization (e.g., a lock) if multiple
+ *       threads will access the same StorageManager instance.
  */
 class StorageManager {
    public:

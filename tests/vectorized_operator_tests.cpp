@@ -1410,4 +1410,195 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinLeftMultiBatch) {
     EXPECT_EQ(null_left_ids[1], 3);
 }
 
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinRight) {
+    // Test RIGHT outer join: all right rows appear, NULLs for left when no match
+    // Left table: id=1,2,3 | Right table: id=2,3,4
+    // RIGHT join on id: (2,2,20), (3,3,30) matched; (4,NULL,NULL,40) unmatched right
+    // LEFT join part: left.id=1 has no right match, but RIGHT join doesn't emit unmatched left
+    // So total expected: 3 rows (2 matched + 1 unmatched right)
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+    left_schema.add_column("name", common::ValueType::TYPE_TEXT);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+    right_schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hj_right_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1), common::Value::make_text("A")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_text("B")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_text("C")}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hj_right_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_int64(20)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_int64(30)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(4), common::Value::make_int64(40)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hj_right_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hj_right_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Right);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int matched_count = 0;
+    int null_left_count = 0;
+
+    while (join->next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            // Check if this is an unmatched right row (NULL left columns)
+            if (result->get_column(0).get(i).is_null()) {
+                // Unmatched right row - should have id=4, val=40 in right columns
+                ASSERT_FALSE(result->get_column(2).get(i).is_null())
+                    << "right.id should not be null";
+                ASSERT_FALSE(result->get_column(3).get(i).is_null())
+                    << "right.val should not be null";
+                EXPECT_EQ(result->get_column(2).get(i).as_int64(), 4);
+                EXPECT_EQ(result->get_column(3).get(i).as_int64(), 40);
+                null_left_count++;
+            } else {
+                // Matched row
+                matched_count++;
+            }
+        }
+        result->clear();
+    }
+
+    // RIGHT join: 2 matched rows + 1 unmatched right row = 3 total
+    EXPECT_EQ(matched_count, 2);    // (2,2,20) and (3,3,30)
+    EXPECT_EQ(null_left_count, 1);  // (4,NULL,NULL,40) - right.id=4 unmatched
+}
+
+TEST_F(VectorizedGroupByTests, VectorizedHashJoinFull) {
+    // Test FULL outer join: all rows from both sides appear
+    // Left table: id=1,2,3 | Right table: id=2,3,4
+    // FULL join on id: expect (2,2,20), (3,3,30) matched
+    // Plus unmatched left: (1,NULL,NULL) and unmatched right: (NULL,NULL,4,40)
+    // Total: 4 rows
+    Schema left_schema;
+    left_schema.add_column("id", common::ValueType::TYPE_INT64);
+    left_schema.add_column("name", common::ValueType::TYPE_TEXT);
+
+    Schema right_schema;
+    right_schema.add_column("id", common::ValueType::TYPE_INT64);
+    right_schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    ColumnarTable left_table("hj_full_left", *storage_, left_schema);
+    ASSERT_TRUE(left_table.create());
+    ASSERT_TRUE(left_table.open());
+    auto left_batch = VectorBatch::create(left_schema);
+    left_batch->append_tuple(Tuple({common::Value::make_int64(1), common::Value::make_text("A")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_text("B")}));
+    left_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_text("C")}));
+    ASSERT_TRUE(left_table.append_batch(*left_batch));
+
+    ColumnarTable right_table("hj_full_right", *storage_, right_schema);
+    ASSERT_TRUE(right_table.create());
+    ASSERT_TRUE(right_table.open());
+    auto right_batch = VectorBatch::create(right_schema);
+    right_batch->append_tuple(Tuple({common::Value::make_int64(2), common::Value::make_int64(20)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(3), common::Value::make_int64(30)}));
+    right_batch->append_tuple(Tuple({common::Value::make_int64(4), common::Value::make_int64(40)}));
+    ASSERT_TRUE(right_table.append_batch(*right_batch));
+
+    auto left_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hj_full_left", std::make_shared<ColumnarTable>(left_table));
+    auto right_scan = std::make_unique<VectorizedSeqScanOperator>(
+        "hj_full_right", std::make_shared<ColumnarTable>(right_table));
+
+    auto join = make_vectorized_hash_join(std::move(left_scan), std::move(right_scan), "id", "id",
+                                          JoinType::Full);
+
+    auto result = VectorBatch::create(join->output_schema());
+    int64_t total_rows = 0;
+    int null_left_count = 0;   // rows with NULL left columns (unmatched right)
+    int null_right_count = 0;  // rows with NULL right columns (unmatched left)
+
+    while (join->next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            total_rows++;
+            if (result->get_column(2).get(i).is_null()) {
+                null_right_count++;  // No right match
+            }
+            if (result->get_column(1).get(i).is_null()) {
+                null_left_count++;  // No left match
+            }
+        }
+        result->clear();
+    }
+
+    // FULL: 2 matched rows + 1 unmatched left (id=1) + 1 unmatched right (id=4) = 4 total
+    EXPECT_EQ(total_rows, 4);
+    EXPECT_EQ(null_right_count, 1);  // id=1 has no right match
+    EXPECT_EQ(null_left_count, 1);   // id=4 has no left match
+}
+
 }  // namespace
+
+// ============= ThreadPool Tests =============
+
+#include "executor/thread_pool.hpp"
+
+using namespace cloudsql::executor;
+
+class ThreadPoolTests : public ::testing::Test {
+   protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(ThreadPoolTests, Constructor) {
+    ThreadPool pool(4);
+    EXPECT_EQ(pool.num_threads(), 4U);
+}
+
+TEST_F(ThreadPoolTests, SubmitAndWait) {
+    ThreadPool pool(4);
+    std::atomic<int> counter{0};
+
+    for (int i = 0; i < 10; ++i) {
+        pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    }
+    pool.wait();
+
+    EXPECT_EQ(counter.load(), 10);
+}
+
+TEST_F(ThreadPoolTests, MultipleWait) {
+    ThreadPool pool(2);
+    std::atomic<int> counter{0};
+
+    pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    pool.wait();
+    EXPECT_EQ(counter.load(), 1);
+
+    pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    pool.submit([&counter]() { counter.fetch_add(1, std::memory_order_acq_rel); });
+    pool.wait();
+    EXPECT_EQ(counter.load(), 3);
+}
+
+TEST_F(ThreadPoolTests, DefaultConstructor) {
+    ThreadPool pool;  // Uses hardware_concurrency
+    EXPECT_GE(pool.num_threads(), 1U);
+}
+
+TEST_F(ThreadPoolTests, FutureResults) {
+    ThreadPool pool(2);
+    auto f1 = pool.submit([]() { return 42; });
+    auto f2 = pool.submit([]() { return std::string("hello"); });
+    pool.wait();
+
+    EXPECT_EQ(f1.get(), 42);
+    EXPECT_EQ(f2.get(), "hello");
+}
