@@ -634,4 +634,189 @@ TEST(ExpressionTests, InExprEmptyList) {
     EXPECT_FALSE(result.as_bool());  // 5 IN () = false
 }
 
+// ============= evaluate_vectorized() Tests =============
+
+TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Gt) {
+    // Test val > 5 with VectorBatch
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    // Append val=5 and val=10
+    auto& col = batch.get_column(0);
+    col.append(Value::make_int64(5));
+    col.append(Value::make_int64(10));
+    batch.set_row_count(2);
+
+    NumericVector<bool> result(ValueType::TYPE_BOOL);
+
+    auto left = std::make_unique<ColumnExpr>("val");
+    auto right = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    BinaryExpr binary(std::move(left), TokenType::Gt, std::move(right));
+
+    binary.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).as_bool(), false);  // 5 > 5 = false
+    EXPECT_EQ(result.get(1).as_bool(), true);    // 10 > 5 = true
+}
+
+TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Eq) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    auto& col = batch.get_column(0);
+    col.append(Value::make_int64(42));
+    col.append(Value::make_int64(42));
+    batch.set_row_count(2);
+
+    NumericVector<bool> result(ValueType::TYPE_BOOL);
+
+    auto left = std::make_unique<ColumnExpr>("val");
+    auto right = std::make_unique<ConstantExpr>(Value::make_int64(42));
+    BinaryExpr binary(std::move(left), TokenType::Eq, std::move(right));
+
+    binary.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).to_int64(), 1);  // 42 == 42 = true
+    EXPECT_EQ(result.get(1).to_int64(), 1);    // 42 == 42 = true
+}
+
+TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Ne) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    auto& col = batch.get_column(0);
+    col.append(Value::make_int64(5));
+    col.append(Value::make_int64(10));
+    batch.set_row_count(2);
+
+    NumericVector<bool> result(ValueType::TYPE_BOOL);
+
+    auto left = std::make_unique<ColumnExpr>("val");
+    auto right = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    BinaryExpr binary(std::move(left), TokenType::Ne, std::move(right));
+
+    binary.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).to_int64(), 0);  // 5 != 5 = false
+    EXPECT_EQ(result.get(1).to_int64(), 1);   // 10 != 5 = true
+}
+
+TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Lt) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    auto& col = batch.get_column(0);
+    col.append(Value::make_int64(3));
+    col.append(Value::make_int64(7));
+    batch.set_row_count(2);
+
+    NumericVector<bool> result(ValueType::TYPE_BOOL);
+
+    auto left = std::make_unique<ColumnExpr>("val");
+    auto right = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    BinaryExpr binary(std::move(left), TokenType::Lt, std::move(right));
+
+    binary.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).to_int64(), 1);  // 3 < 5 = true
+    EXPECT_EQ(result.get(1).to_int64(), 0);  // 7 < 5 = false
+}
+
+TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Fallback_BothColumns) {
+    // When neither operand is Column op Constant, fallback path is used
+    Schema schema;
+    schema.add_column("a", ValueType::TYPE_INT64);
+    schema.add_column("b", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    batch.get_column(0).append(Value::make_int64(3));
+    batch.get_column(1).append(Value::make_int64(5));
+    batch.set_row_count(1);
+
+    NumericVector<int64_t> result(ValueType::TYPE_INT64);
+
+    // Both columns - triggers fallback
+    auto left = std::make_unique<ColumnExpr>("a");
+    auto right = std::make_unique<ColumnExpr>("b");
+    BinaryExpr binary(std::move(left), TokenType::Plus, std::move(right));
+
+    binary.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 1);
+    EXPECT_EQ(result.get(0).to_int64(), 8);  // 3 + 5 = 8
+}
+
+TEST(ExpressionTests, EvaluateVectorized_ColumnExpr_NotFound) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    batch.get_column(0).append(Value::make_int64(5));
+    batch.set_row_count(1);
+
+    NumericVector<int64_t> result(ValueType::TYPE_INT64);
+
+    ColumnExpr col("nonexistent");
+    col.evaluate_vectorized(batch, schema, result);
+
+    // Column not found - should append NULL
+    EXPECT_EQ(result.size(), 1);
+    EXPECT_TRUE(result.is_null(0));
+}
+
+TEST(ExpressionTests, EvaluateVectorized_ConstantExpr) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    batch.get_column(0).append(Value::make_int64(1));
+    batch.get_column(0).append(Value::make_int64(2));
+    batch.set_row_count(2);
+
+    NumericVector<int64_t> result(ValueType::TYPE_INT64);
+
+    ConstantExpr const_expr(Value::make_int64(42));
+    const_expr.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).to_int64(), 42);
+    EXPECT_EQ(result.get(1).to_int64(), 42);
+}
+
+TEST(ExpressionTests, EvaluateVectorized_UnaryExpr) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    batch.get_column(0).append(Value::make_int64(5));
+    batch.get_column(0).append(Value::make_int64(-3));
+    batch.set_row_count(2);
+
+    NumericVector<int64_t> result(ValueType::TYPE_INT64);
+
+    auto inner = std::make_unique<ColumnExpr>("val");
+    UnaryExpr expr(TokenType::Minus, std::move(inner));
+    expr.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).to_int64(), -5);
+    EXPECT_EQ(result.get(1).to_int64(), 3);
+}
+
 }  // namespace
