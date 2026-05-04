@@ -4,6 +4,7 @@
  */
 
 #include <gtest/gtest.h>
+
 #include <cstring>
 
 #include "common/value.hpp"
@@ -78,7 +79,7 @@ TEST(RpcMessageTests, DeserializeValue_Int64) {
     data.push_back(static_cast<uint8_t>(ValueType::TYPE_INT64));
     int64_t v = 12345;
     data.insert(data.end(), reinterpret_cast<uint8_t*>(&v),
-               reinterpret_cast<uint8_t*>(&v) + sizeof(v));
+                reinterpret_cast<uint8_t*>(&v) + sizeof(v));
 
     size_t offset = 0;
     auto result = Serializer::deserialize_value(data.data(), offset, data.size());
@@ -92,7 +93,7 @@ TEST(RpcMessageTests, DeserializeValue_Float64) {
     data.push_back(static_cast<uint8_t>(ValueType::TYPE_FLOAT64));
     double v = 2.718;
     data.insert(data.end(), reinterpret_cast<uint8_t*>(&v),
-               reinterpret_cast<uint8_t*>(&v) + sizeof(v));
+                reinterpret_cast<uint8_t*>(&v) + sizeof(v));
 
     size_t offset = 0;
     auto result = Serializer::deserialize_value(data.data(), offset, data.size());
@@ -107,7 +108,7 @@ TEST(RpcMessageTests, DeserializeValue_Text) {
     std::string s = "test string";
     uint32_t len = static_cast<uint32_t>(s.size());
     data.insert(data.end(), reinterpret_cast<uint8_t*>(&len),
-               reinterpret_cast<uint8_t*>(&len) + sizeof(len));
+                reinterpret_cast<uint8_t*>(&len) + sizeof(len));
     data.insert(data.end(), s.begin(), s.end());
 
     size_t offset = 0;
@@ -132,8 +133,7 @@ TEST(RpcMessageTests, DeserializeValue_TruncatedData) {
     data.push_back(static_cast<uint8_t>(ValueType::TYPE_INT64));
     // Only 4 bytes instead of 8
     int64_t v = 42;
-    data.insert(data.end(), reinterpret_cast<uint8_t*>(&v),
-               reinterpret_cast<uint8_t*>(&v) + 4);
+    data.insert(data.end(), reinterpret_cast<uint8_t*>(&v), reinterpret_cast<uint8_t*>(&v) + 4);
 
     size_t offset = 0;
     auto result = Serializer::deserialize_value(data.data(), offset, data.size());
@@ -225,7 +225,8 @@ TEST(RpcMessageTests, RoundTrip_String) {
     Serializer::serialize_string(original, serialized);
 
     size_t offset = 0;
-    auto deserialized = Serializer::deserialize_string(serialized.data(), offset, serialized.size());
+    auto deserialized =
+        Serializer::deserialize_string(serialized.data(), offset, serialized.size());
 
     EXPECT_EQ(deserialized, original);
 }
@@ -237,7 +238,8 @@ TEST(RpcMessageTests, RoundTrip_EmptyString) {
     Serializer::serialize_string(original, serialized);
 
     size_t offset = 0;
-    auto deserialized = Serializer::deserialize_string(serialized.data(), offset, serialized.size());
+    auto deserialized =
+        Serializer::deserialize_string(serialized.data(), offset, serialized.size());
 
     EXPECT_EQ(deserialized, original);
 }
@@ -249,7 +251,8 @@ TEST(RpcMessageTests, RoundTrip_UnicodeString) {
     Serializer::serialize_string(original, serialized);
 
     size_t offset = 0;
-    auto deserialized = Serializer::deserialize_string(serialized.data(), offset, serialized.size());
+    auto deserialized =
+        Serializer::deserialize_string(serialized.data(), offset, serialized.size());
 
     EXPECT_EQ(deserialized, original);
 }
@@ -266,7 +269,8 @@ TEST(RpcMessageTests, RoundTrip_Schema) {
     Serializer::serialize_schema(original, serialized);
 
     size_t offset = 0;
-    auto deserialized = Serializer::deserialize_schema(serialized.data(), offset, serialized.size());
+    auto deserialized =
+        Serializer::deserialize_schema(serialized.data(), offset, serialized.size());
 
     EXPECT_EQ(deserialized.column_count(), original.column_count());
     EXPECT_EQ(deserialized.get_column(0).name(), "id");
@@ -282,7 +286,8 @@ TEST(RpcMessageTests, RoundTrip_EmptySchema) {
     Serializer::serialize_schema(original, serialized);
 
     size_t offset = 0;
-    auto deserialized = Serializer::deserialize_schema(serialized.data(), offset, serialized.size());
+    auto deserialized =
+        Serializer::deserialize_schema(serialized.data(), offset, serialized.size());
 
     EXPECT_EQ(deserialized.column_count(), 0u);
 }
@@ -490,7 +495,7 @@ TEST(RpcMessageTests, RoundTrip_PushDataArgs_EmptyRows) {
 
 TEST(RpcMessageTests, PushDataArgs_TruncatedData) {
     std::vector<uint8_t> truncated;
-    truncated.push_back(2);  // length prefix of 2
+    truncated.push_back(2);                    // length prefix of 2
     truncated.insert(truncated.end(), {'a'});  // only 1 byte of string data
 
     auto deserialized = PushDataArgs::deserialize(truncated);

@@ -4,12 +4,13 @@
  */
 
 #include <gtest/gtest.h>
-#include <thread>
-#include <chrono>
 
+#include <chrono>
+#include <thread>
+
+#include "common/bloom_filter.hpp"
 #include "common/cluster_manager.hpp"
 #include "common/config.hpp"
-#include "common/bloom_filter.hpp"
 #include "executor/types.hpp"
 
 using namespace cloudsql;
@@ -436,8 +437,8 @@ TEST(ClusterManagerTests, SetBloomFilter_StoresAllFields) {
     ClusterManager cm(&config);
 
     std::vector<uint8_t> filter_data(100, 0xFF);
-    cm.set_bloom_filter("ctx1", "build_table", "probe_table", "key_col",
-                        std::move(filter_data), 1000, 3);
+    cm.set_bloom_filter("ctx1", "build_table", "probe_table", "key_col", std::move(filter_data),
+                        1000, 3);
 
     EXPECT_TRUE(cm.has_bloom_filter("ctx1"));
     EXPECT_EQ(cm.get_probe_table("ctx1"), "probe_table");
@@ -501,8 +502,8 @@ TEST(ClusterManagerTests, GetProbeTable_Existing) {
     config.mode = config::RunMode::Standalone;
     ClusterManager cm(&config);
 
-    cm.set_bloom_filter("ctx1", "build", "probe_table", "key_col",
-                        std::vector<uint8_t>(10, 0), 100, 3);
+    cm.set_bloom_filter("ctx1", "build", "probe_table", "key_col", std::vector<uint8_t>(10, 0), 100,
+                        3);
     EXPECT_EQ(cm.get_probe_table("ctx1"), "probe_table");
 }
 
@@ -519,8 +520,7 @@ TEST(ClusterManagerTests, GetProbeKeyCol_Existing) {
     config.mode = config::RunMode::Standalone;
     ClusterManager cm(&config);
 
-    cm.set_bloom_filter("ctx1", "build", "probe", "key_col",
-                        std::vector<uint8_t>(10, 0), 100, 3);
+    cm.set_bloom_filter("ctx1", "build", "probe", "key_col", std::vector<uint8_t>(10, 0), 100, 3);
     EXPECT_EQ(cm.get_probe_key_col("ctx1"), "key_col");
 }
 
@@ -589,8 +589,7 @@ TEST(ClusterManagerTests, ClearBloomFilter_RemovesAll) {
     config.mode = config::RunMode::Standalone;
     ClusterManager cm(&config);
 
-    cm.set_bloom_filter("ctx1", "build", "probe", "key",
-                        std::vector<uint8_t>(10, 0xFF), 100, 3);
+    cm.set_bloom_filter("ctx1", "build", "probe", "key", std::vector<uint8_t>(10, 0xFF), 100, 3);
     cm.set_local_bloom_bits("ctx1", std::vector<uint8_t>(10, 0xFF), 100, 3);
 
     cm.clear_bloom_filter("ctx1");
@@ -787,9 +786,8 @@ TEST(ClusterManagerTests, ConcurrentShuffleBuffer) {
 
     std::vector<std::thread> threads;
     for (int i = 0; i < 5; ++i) {
-        threads.emplace_back([&cm, i]() {
-            cm.buffer_shuffle_data("ctx1", "table_a", make_test_tuples({i}));
-        });
+        threads.emplace_back(
+            [&cm, i]() { cm.buffer_shuffle_data("ctx1", "table_a", make_test_tuples({i})); });
     }
 
     for (auto& t : threads) {

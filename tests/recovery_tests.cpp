@@ -309,16 +309,11 @@ TEST(RecoveryTests, LogRecordGetSize_AllTypes) {
         bool has_tuple;
     };
     std::vector<TestCase> cases = {
-        {LogRecordType::BEGIN, false},
-        {LogRecordType::PREPARE, false},
-        {LogRecordType::COMMIT, false},
-        {LogRecordType::ABORT, false},
-        {LogRecordType::NEW_PAGE, false},
-        {LogRecordType::INSERT, true},
-        {LogRecordType::UPDATE, true},
-        {LogRecordType::MARK_DELETE, true},
-        {LogRecordType::APPLY_DELETE, true},
-        {LogRecordType::ROLLBACK_DELETE, true},
+        {LogRecordType::BEGIN, false},       {LogRecordType::PREPARE, false},
+        {LogRecordType::COMMIT, false},      {LogRecordType::ABORT, false},
+        {LogRecordType::NEW_PAGE, false},    {LogRecordType::INSERT, true},
+        {LogRecordType::UPDATE, true},       {LogRecordType::MARK_DELETE, true},
+        {LogRecordType::APPLY_DELETE, true}, {LogRecordType::ROLLBACK_DELETE, true},
     };
 
     for (const auto& c : cases) {
@@ -372,8 +367,8 @@ TEST(RecoveryTests, LogRecordMixedTypesInSequence) {
     std::vector<Value> vals;
     vals.emplace_back(Value::make_int64(1));
     vals.emplace_back(Value::make_text("test"));
-    LogRecord insert_rec(1, begin_rec.lsn_, LogRecordType::INSERT, "t",
-                         HeapTable::TupleId(1, 1), Tuple(std::move(vals)));
+    LogRecord insert_rec(1, begin_rec.lsn_, LogRecordType::INSERT, "t", HeapTable::TupleId(1, 1),
+                         Tuple(std::move(vals)));
     std::vector<char> insert_buf(insert_rec.get_size());
     insert_rec.serialize(insert_buf.data());
     all_data.insert(all_data.end(), insert_buf.begin(), insert_buf.end());
