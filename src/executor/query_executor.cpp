@@ -1274,10 +1274,10 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         // Clean up any existing partial columnar files before starting fresh
         storage_manager_->delete_file(base_table_name + ".meta.bin");
         for (size_t i = 0; i < base_schema.column_count(); ++i) {
-            storage_manager_->delete_file(
-                base_table_name + ".col" + std::to_string(i) + ".data.bin");
-            storage_manager_->delete_file(
-                base_table_name + ".col" + std::to_string(i) + ".nulls.bin");
+            storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                          ".data.bin");
+            storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                          ".nulls.bin");
         }
 
         if (!col_table->create()) {
@@ -1308,10 +1308,10 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             // Clean up partial files so next attempt starts fresh
             storage_manager_->delete_file(base_table_name + ".meta.bin");
             for (size_t i = 0; i < base_schema.column_count(); ++i) {
-                storage_manager_->delete_file(
-                    base_table_name + ".col" + std::to_string(i) + ".data.bin");
-                storage_manager_->delete_file(
-                    base_table_name + ".col" + std::to_string(i) + ".nulls.bin");
+                storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                              ".data.bin");
+                storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                              ".nulls.bin");
             }
         }
     }
