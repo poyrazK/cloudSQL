@@ -36,6 +36,20 @@ constexpr uint16_t PORT_SSL = 6004;
 constexpr uint16_t PORT_INVALID = 6005;
 constexpr size_t STARTUP_PKT_LEN = 8;
 
+// Helper to find a free port for socket tests
+static uint16_t get_free_port() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    bind(sock, (struct sockaddr*)&addr, sizeof(addr));
+    socklen_t len = sizeof(addr);
+    getsockname(sock, (struct sockaddr*)&addr, &len);
+    uint16_t port = ntohs(addr.sin_port);
+    close(sock);
+    return port;
+}
+
 TEST(ServerTests, StatusStrings) {
     auto catalog = Catalog::create();
     StorageManager disk_manager("./test_data");
@@ -277,7 +291,7 @@ TEST(ServerTests, ParseError_SendsErrorResponse) {
     StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     config::Config cfg;
-    uint16_t port = 6013;
+    uint16_t port = get_free_port();
 
     auto server = Server::create(port, *catalog, sm, cfg, nullptr);
     ASSERT_TRUE(server->start());
@@ -330,7 +344,7 @@ TEST(ServerTests, TerminateMessage_TypeX_GracefulDisconnect) {
     StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     config::Config cfg;
-    uint16_t port = 6014;
+    uint16_t port = get_free_port();
 
     auto server = Server::create(port, *catalog, sm, cfg, nullptr);
     ASSERT_TRUE(server->start());
@@ -386,7 +400,7 @@ TEST(ServerTests, EmptyQuery) {
     StorageManager disk_manager("./test_data");
     storage::BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, disk_manager);
     config::Config cfg;
-    uint16_t port = 6015;
+    uint16_t port = get_free_port();
 
     auto server = Server::create(port, *catalog, sm, cfg, nullptr);
     ASSERT_TRUE(server->start());
