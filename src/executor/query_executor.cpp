@@ -1257,7 +1257,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
 
     /* Migrate HeapTable data to ColumnarTable if needed.
        INSERT writes to HeapTable, but vectorized path reads from ColumnarTable.
-       We only migrate when ColumnarTable is empty (first time or after clear). */
+       We only migrate when ColumnarTable is empty (first time or after clear).
+       On failure, partial files are cleaned up so next attempt starts fresh. */
     storage::HeapTable heap_table(base_table_name, bpm_, base_schema);
     uint64_t count = heap_table.tuple_count();
     bool needs_migration = (count > 0);
@@ -1270,19 +1271,48 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         }
     }
     if (needs_migration) {
-        col_table->create();
+        // Clean up any existing partial columnar files before starting fresh
+        storage_manager_->delete_file(base_table_name + ".meta.bin");
+        for (size_t i = 0; i < base_schema.column_count(); ++i) {
+            storage_manager_->delete_file(
+                base_table_name + ".col" + std::to_string(i) + ".data.bin");
+            storage_manager_->delete_file(
+                base_table_name + ".col" + std::to_string(i) + ".nulls.bin");
+        }
+
+        if (!col_table->create()) {
+            return nullptr;  // Failed to create columnar table
+        }
+
         auto batch = executor::VectorBatch::create(base_schema);
         auto iter = heap_table.scan();
         executor::Tuple tuple;
+        bool migration_failed = false;
         while (iter.next(tuple)) {
             batch->append_tuple(tuple);
             if (batch->row_count() >= 1024) {
-                col_table->append_batch(*batch);
+                if (!col_table->append_batch(*batch)) {
+                    migration_failed = true;
+                    break;
+                }
                 batch->clear();
             }
         }
-        if (batch->row_count() > 0) {
-            col_table->append_batch(*batch);
+        if (!migration_failed && batch->row_count() > 0) {
+            if (!col_table->append_batch(*batch)) {
+                migration_failed = true;
+            }
+        }
+
+        if (migration_failed) {
+            // Clean up partial files so next attempt starts fresh
+            storage_manager_->delete_file(base_table_name + ".meta.bin");
+            for (size_t i = 0; i < base_schema.column_count(); ++i) {
+                storage_manager_->delete_file(
+                    base_table_name + ".col" + std::to_string(i) + ".data.bin");
+                storage_manager_->delete_file(
+                    base_table_name + ".col" + std::to_string(i) + ".nulls.bin");
+            }
         }
     }
 
