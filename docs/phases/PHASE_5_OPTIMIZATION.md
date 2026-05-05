@@ -41,3 +41,14 @@ The vectorized execution engine was wired into `QueryExecutor` via `set_parallel
 - `execute_select()` — branches on `use_vectorized` flag between Volcano (tuple) and vectorized (batch) paths
 - **Join type support**: `VectorizedHashJoinOperator` supports INNER, LEFT, RIGHT, and FULL outer joins via `JoinType` enum. RIGHT and FULL outer joins use `right_matched_` bitmap and `emit_unmatched_right_rows()` to emit unmatched right rows at end of probe.
 - **Constraint**: Sort/Limit queries fall back to Volcano path since SortOperator/LimitOperator don't inherit from VectorizedOperator
+
+### Phase 5 Extension: Cost-Based Volcano/Vectorized Chooser (PR #75)
+The flag-based chooser (`parallel_ && storage_manager_ && !has_sort_or_limit`) was replaced with a cost-based heuristic using per-table statistics:
+
+- **`ANALYZE TABLE`** — single-pass scan collects min/max/NDV/null_count stats stored in `ColumnInfo` (catalog)
+- **`RowEstimator`** (`optimizer/row_estimator.cpp`) — row count estimation from column statistics
+- **`kVectorizedRowThreshold = 10000`** — heuristic: Vectorized batch execution outperforms Volcano above ~10k rows
+- **Chooser guard** — checks `ExprType::Column` to skip estimation for JOINs, subqueries, and aliased tables (Volcano fallback handles these correctly)
+- **Text NDV** — 64-char prefix truncation limits memory; note that long shared prefixes are underestimated
+
+## Status: 100% Test Pass
