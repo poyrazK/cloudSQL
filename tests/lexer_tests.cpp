@@ -367,7 +367,7 @@ TEST(LexerTests, MultiplePeekReturnsSame) {
 
 TEST(LexerTests, UnterminatedString) {
     auto tokens = tokenize("'unclosed string");
-    ASSERT_FALSE(tokens.empty());
+    ASSERT_GE(tokens.size(), 1);
     EXPECT_EQ(tokens[0].type(), TokenType::Error);
 }
 
@@ -379,7 +379,7 @@ TEST(LexerTests, InvalidCharacter) {
 
 TEST(LexerTests, BangAlone) {
     auto tokens = tokenize("!");
-    ASSERT_FALSE(tokens.empty());
+    ASSERT_EQ(tokens.size(), 2);
     EXPECT_EQ(tokens[0].type(), TokenType::Error);
 }
 
@@ -545,6 +545,87 @@ TEST(LexerTests, ComplexWhere) {
     EXPECT_TRUE(has_or);
     EXPECT_TRUE(has_gt);
     EXPECT_TRUE(has_eq);
+}
+
+// ============= Untested Operator Tests =============
+
+TEST(LexerTests, PercentOperator) {
+    auto tokens = tokenize("%");
+    ASSERT_EQ(tokens.size(), 2);  // % + End
+    EXPECT_EQ(tokens[0].type(), TokenType::Percent);
+}
+
+TEST(LexerTests, ColonOperator) {
+    auto tokens = tokenize(":");
+    ASSERT_EQ(tokens.size(), 2);  // : + End
+    EXPECT_EQ(tokens[0].type(), TokenType::Colon);
+}
+
+TEST(LexerTests, ConcatOperator) {
+    // '||' should be parsed as Concat
+    auto tokens = tokenize("||");
+    ASSERT_EQ(tokens.size(), 2);  // || + End
+    EXPECT_EQ(tokens[0].type(), TokenType::Concat);
+}
+
+TEST(LexerTests, LonePipeOperator) {
+    // Single '|' is an error
+    auto tokens = tokenize("|");
+    ASSERT_EQ(tokens.size(), 2);  // | + End
+    EXPECT_EQ(tokens[0].type(), TokenType::Error);
+    EXPECT_EQ(tokens[0].lexeme(), "|");
+}
+
+TEST(LexerTests, TypeBigInt) {
+    auto tokens = tokenize("BIGINT");
+    ASSERT_EQ(tokens.size(), 2);  // BIGINT + End
+    EXPECT_EQ(tokens[0].type(), TokenType::TypeBigInt);
+}
+
+TEST(LexerTests, TypeDouble) {
+    auto tokens = tokenize("DOUBLE");
+    ASSERT_EQ(tokens.size(), 2);  // DOUBLE + End
+    EXPECT_EQ(tokens[0].type(), TokenType::TypeDouble);
+}
+
+TEST(LexerTests, TypeVarchar) {
+    auto tokens = tokenize("VARCHAR");
+    ASSERT_EQ(tokens.size(), 2);  // VARCHAR + End
+    EXPECT_EQ(tokens[0].type(), TokenType::TypeVarchar);
+}
+
+TEST(LexerTests, TypeChar) {
+    auto tokens = tokenize("CHAR");
+    ASSERT_EQ(tokens.size(), 2);  // CHAR + End
+    EXPECT_EQ(tokens[0].type(), TokenType::TypeChar);
+}
+
+TEST(LexerTests, HavingKeyword) {
+    auto tokens = tokenize("HAVING");
+    ASSERT_EQ(tokens.size(), 2);  // HAVING + End
+    EXPECT_EQ(tokens[0].type(), TokenType::Having);
+}
+
+TEST(LexerTests, PeekAtEndToken) {
+    Lexer lexer("");
+    // First peek should return End
+    EXPECT_EQ(lexer.peek_token().type(), TokenType::End);
+    // Then next_token should also return End
+    EXPECT_EQ(lexer.next_token().type(), TokenType::End);
+}
+
+TEST(LexerTests, LeadingWhitespaceSkipped) {
+    // next_token() skips leading whitespace
+    auto tokens = tokenize("   SELECT");
+    EXPECT_EQ(tokens[0].type(), TokenType::Select);
+}
+
+TEST(LexerTests, CommentOnlyInput) {
+    // Input with only comment should result in End token
+    auto tokens = tokenize("-- just a comment");
+    ASSERT_GE(tokens.size(), 1);
+    // Last token should be End
+    EXPECT_EQ(tokens.back().type(), TokenType::End);
 }
 
 }  // namespace

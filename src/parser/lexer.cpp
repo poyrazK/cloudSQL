@@ -290,6 +290,16 @@ Token Lexer::read_operator() {
             return {TokenType::Error, "!"};
         case '?':
             return {TokenType::Param, "?"};
+        case '%':
+            return {TokenType::Percent, "%"};
+        case ':':
+            return {TokenType::Colon, ":"};
+        case '|':
+            if (current_char_ == '|') {
+                advance();
+                return {TokenType::Concat, "||"};
+            }
+            return {TokenType::Error, "|"};
         default:
             return {TokenType::Error, std::string(1, c)};
     }
