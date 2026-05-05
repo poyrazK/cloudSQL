@@ -27,6 +27,7 @@
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "executor/vectorized_operator.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "network/rpc_message.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
@@ -319,6 +320,14 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
             result = execute_delete(dynamic_cast<const parser::DeleteStatement&>(stmt), txn);
         } else if (stmt.type() == parser::StmtType::Update) {
             result = execute_update(dynamic_cast<const parser::UpdateStatement&>(stmt), txn);
+        } else if (stmt.type() == parser::StmtType::TransactionBegin) {
+            result = execute_begin();
+        } else if (stmt.type() == parser::StmtType::TransactionCommit) {
+            result = execute_commit();
+        } else if (stmt.type() == parser::StmtType::TransactionRollback) {
+            result = execute_rollback();
+        } else if (stmt.type() == parser::StmtType::Analyze) {
+            result = execute_analyze(dynamic_cast<const parser::AnalyzeStatement&>(stmt));
         } else {
             result.set_error("Unsupported statement type");
         }
@@ -389,7 +398,23 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     std::unique_ptr<Operator> root;
     std::unique_ptr<VectorizedOperator> vec_root;
     bool has_sort_or_limit = !stmt.order_by().empty() || stmt.has_limit() || stmt.has_offset();
-    bool use_vectorized = parallel_ && storage_manager_ && !has_sort_or_limit;
+
+    // Cost-based Volcano/Vectorized chooser using row estimates
+    bool use_vectorized = false;
+    if (parallel_ && storage_manager_ && !has_sort_or_limit) {
+        // Extract table name from FROM clause
+        const auto* from_expr = stmt.from();
+        if (from_expr != nullptr) {
+            std::string table_name = from_expr->to_string();
+            auto table_meta_opt = catalog_.get_table_by_name(table_name);
+            if (table_meta_opt.has_value()) {
+                const auto* table_meta = table_meta_opt.value();
+                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+                // Use Vectorized for large scans (> 10000 rows heuristic)
+                use_vectorized = estimated_rows > 10000;
+            }
+        }
+    }
 
     if (use_vectorized) {
         vec_root = build_vectorized_plan(stmt, txn, has_sort_or_limit);
@@ -910,6 +935,135 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
     }
 
     result.set_rows_affected(rows_updated);
+    return result;
+}
+
+QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt) {
+    QueryResult result;
+
+    auto table_meta_opt = catalog_.get_table_by_name(stmt.table_name());
+    if (!table_meta_opt.has_value()) {
+        result.set_error("Table not found: " + stmt.table_name());
+        return result;
+    }
+    const auto* table_meta = table_meta_opt.value();
+
+    Schema schema;
+    for (const auto& col : table_meta->columns) {
+        schema.add_column(col.name, col.type);
+    }
+
+    storage::HeapTable table(stmt.table_name(), bpm_, schema);
+
+    // Collect per-column stats by scanning the table
+    std::vector<ColumnInfo> col_stats(table_meta->columns.size());
+
+    auto iter = table.scan();
+    Tuple tuple;
+    uint64_t row_count = 0;
+
+    while (iter.next(tuple)) {
+        row_count++;
+        for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+            const auto& col_info = table_meta->columns[col_idx];
+            const auto& val = tuple.get(col_idx);
+
+            if (val.is_null()) {
+                col_stats[col_idx].null_count++;
+            } else {
+                switch (col_info.type) {
+                    case common::ValueType::TYPE_INT64: {
+                        int64_t v = val.to_int64();
+                        if (!col_stats[col_idx].min_int.has_value() ||
+                            v < col_stats[col_idx].min_int.value()) {
+                            col_stats[col_idx].min_int = v;
+                        }
+                        if (!col_stats[col_idx].max_int.has_value() ||
+                            v > col_stats[col_idx].max_int.value()) {
+                            col_stats[col_idx].max_int = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_INT32:
+                    case common::ValueType::TYPE_INT16:
+                    case common::ValueType::TYPE_INT8: {
+                        int64_t v = val.to_int64();
+                        if (!col_stats[col_idx].min_int.has_value() ||
+                            v < col_stats[col_idx].min_int.value()) {
+                            col_stats[col_idx].min_int = v;
+                        }
+                        if (!col_stats[col_idx].max_int.has_value() ||
+                            v > col_stats[col_idx].max_int.value()) {
+                            col_stats[col_idx].max_int = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_FLOAT64:
+                    case common::ValueType::TYPE_FLOAT32:
+                    case common::ValueType::TYPE_DECIMAL: {
+                        double v = val.to_float64();
+                        if (!col_stats[col_idx].min_double.has_value() ||
+                            v < col_stats[col_idx].min_double.value()) {
+                            col_stats[col_idx].min_double = v;
+                        }
+                        if (!col_stats[col_idx].max_double.has_value() ||
+                            v > col_stats[col_idx].max_double.value()) {
+                            col_stats[col_idx].max_double = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_TEXT:
+                    case common::ValueType::TYPE_VARCHAR:
+                    case common::ValueType::TYPE_CHAR: {
+                        const std::string& s = val.as_text();
+                        uint64_t len = static_cast<uint64_t>(s.size());
+                        if (!col_stats[col_idx].min_str_len.has_value() ||
+                            len < col_stats[col_idx].min_str_len.value()) {
+                            col_stats[col_idx].min_str_len = len;
+                        }
+                        if (!col_stats[col_idx].max_str_len.has_value() ||
+                            len > col_stats[col_idx].max_str_len.value()) {
+                            col_stats[col_idx].max_str_len = len;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    // Second pass: compute NDV using unordered_set (acceptable for medium tables)
+    // For large tables, HyperLogLog approximation should be used (future work)
+    for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+        const auto& col_info = table_meta->columns[col_idx];
+        std::unordered_set<std::string> distinct_values;
+        auto iter2 = table.scan();
+        Tuple tuple2;
+        while (iter2.next(tuple2)) {
+            const auto& val = tuple2.get(col_idx);
+            if (!val.is_null()) {
+                distinct_values.insert(val.to_string());
+            }
+        }
+        col_stats[col_idx].ndv = static_cast<uint64_t>(distinct_values.size());
+    }
+
+    // Update table-level stats
+    catalog_.update_table_stats(table_meta->table_id, row_count);
+
+    // Update per-column stats
+    for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+        col_stats[col_idx].has_stats = true;
+        col_stats[col_idx].name = table_meta->columns[col_idx].name;
+        col_stats[col_idx].type = table_meta->columns[col_idx].type;
+        col_stats[col_idx].position = table_meta->columns[col_idx].position;
+        catalog_.update_column_stats(table_meta->table_id, table_meta->columns[col_idx].name,
+                                    col_stats[col_idx]);
+    }
+
+    result.set_rows_affected(1);
     return result;
 }
 

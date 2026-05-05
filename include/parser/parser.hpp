@@ -31,6 +31,7 @@ class Parser {
     std::unique_ptr<Statement> parse_update();
     std::unique_ptr<Statement> parse_delete();
     std::unique_ptr<Statement> parse_drop();
+    std::unique_ptr<Statement> parse_analyze();
 
     std::unique_ptr<Expression> parse_expression();
     std::unique_ptr<Expression> parse_or();

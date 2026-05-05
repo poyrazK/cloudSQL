@@ -70,6 +70,7 @@ enum class TokenType : uint8_t {
     Begin,
     Commit,
     Rollback,
+    Analyze,
     If,
     Exists,
     Unique,

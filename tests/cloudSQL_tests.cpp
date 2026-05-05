@@ -1260,4 +1260,58 @@ TEST(TupleViewTests, FilterOperatorNextView) {
     static_cast<void>(std::remove(("./test_data/" + name + ".heap").c_str()));
 }
 
+TEST(ExecutionTests, AnalyzeTable) {
+    // Test ANALYZE TABLE collects column statistics
+    static_cast<void>(std::remove("./test_data/analyze_test.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    // Create and populate table
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_test (id INT, val INT, txt TEXT)"))
+             .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "INSERT INTO analyze_test VALUES (1, 10, 'A'), (2, 20, 'B'), (3, 30, 'C')"))
+             .parse_statement()));
+
+    // ANALYZE TABLE should succeed and collect stats
+    const auto res_analyze =
+        exec.execute(*Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_test"))
+                          .parse_statement());
+    EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
+    EXPECT_EQ(res_analyze.rows_affected(), 1U);
+
+    // Verify stats were stored in catalog
+    auto table_opt = catalog->get_table_by_name("analyze_test");
+    ASSERT_TRUE(table_opt.has_value());
+    const auto* table_info = table_opt.value();
+    EXPECT_EQ(table_info->num_rows, 3U);
+
+    // Verify per-column stats
+    ASSERT_GE(table_info->columns.size(), 3U);
+    // id column
+    EXPECT_TRUE(table_info->columns[0].has_stats);
+    EXPECT_EQ(table_info->columns[0].null_count, 0U);
+    EXPECT_TRUE(table_info->columns[0].min_int.has_value());
+    EXPECT_TRUE(table_info->columns[0].max_int.has_value());
+    EXPECT_EQ(table_info->columns[0].min_int.value(), 1);
+    EXPECT_EQ(table_info->columns[0].max_int.value(), 3);
+    // txt column
+    EXPECT_TRUE(table_info->columns[2].has_stats);
+    EXPECT_EQ(table_info->columns[2].ndv.value(), 3U);  // 'A', 'B', 'C'
+
+    // SELECT should still work after ANALYZE
+    const auto res_select = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT * FROM analyze_test")).parse_statement());
+    EXPECT_TRUE(res_select.success());
+    EXPECT_EQ(res_select.row_count(), 3U);
+
+    static_cast<void>(std::remove("./test_data/analyze_test.heap"));
+}
+
 }  // namespace
