@@ -328,12 +328,11 @@ TEST(ServerTests, ParseError_SendsErrorResponse) {
     send(sock, &msg_len, 4, 0);
     send(sock, bad_sql.c_str(), bad_sql.size() + 1, 0);
 
-    // Receive Error Response 'E'
+    // Receive response - server may send 'Z' (ReadyForQuery) first, then 'E' (Error)
     char resp_type = 0;
     ssize_t n = recv(sock, &resp_type, 1, 0);
-    // Either we get 'E' for error, or 'Z' for ReadyForQuery after error
-    // The key is the server handles the exception gracefully
-    EXPECT_TRUE(n > 0 || resp_type == 'Z' || resp_type == 'E');
+    // Server handles exception gracefully - check we got a valid response byte
+    EXPECT_TRUE(n == 1 && (resp_type == 'E' || resp_type == 'Z'));
 
     close(sock);
     static_cast<void>(server->stop());
@@ -387,8 +386,8 @@ TEST(ServerTests, TerminateMessage_TypeX_GracefulDisconnect) {
     // Check if connection is still open or closed
     char buf;
     ssize_t n = recv(sock, &buf, 1, MSG_PEEK);
-    // Either connection closed (n <= 0) or has data to read (n > 0)
-    // The important thing is server handled 'X' gracefully
+    // Server may send 'Z' ReadyForQuery before close, or close directly
+    // Either way it handled 'X' gracefully
     EXPECT_TRUE(n >= 0);
 
     close(sock);
@@ -433,15 +432,15 @@ TEST(ServerTests, EmptyQuery) {
     // Send empty query
     std::string empty_sql = "";
     uint32_t msg_len = htonl(static_cast<uint32_t>(empty_sql.size() + 4 + 1));
-    send(sock, "Q", 1, 0);
-    send(sock, &msg_len, 4, 0);
-    send(sock, empty_sql.c_str(), empty_sql.size() + 1, 0);
+    send(sock, "Q", 1, MSG_NOSIGNAL);
+    send(sock, &msg_len, 4, MSG_NOSIGNAL);
+    send(sock, empty_sql.c_str(), empty_sql.size() + 1, MSG_NOSIGNAL);
 
-    // Receive response (either error or ready)
+    // Receive response - check no socket error
     char resp_type = 0;
     ssize_t n = recv(sock, &resp_type, 1, MSG_PEEK);
-    // Server should handle gracefully
-    EXPECT_TRUE(n > 0 || n == 0);
+    // recv returns -1 on error, 0 on closed, > 0 if data available
+    EXPECT_NE(n, -1);
 
     close(sock);
     static_cast<void>(server->stop());

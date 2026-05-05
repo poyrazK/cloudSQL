@@ -316,7 +316,7 @@ TEST(RpcMessageTests, RoundTrip_RpcHeader) {
 }
 
 TEST(RpcMessageTests, RpcHeader_AllRpcTypes) {
-    for (uint8_t i = 0; i <= 17; ++i) {
+    for (uint8_t i = 0; i <= static_cast<uint8_t>(RpcType::FetchUnmatchedLeftRows); ++i) {
         RpcHeader h;
         h.type = static_cast<RpcType>(i);
         h.payload_len = i * 10;

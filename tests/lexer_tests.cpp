@@ -367,7 +367,7 @@ TEST(LexerTests, MultiplePeekReturnsSame) {
 
 TEST(LexerTests, UnterminatedString) {
     auto tokens = tokenize("'unclosed string");
-    ASSERT_FALSE(tokens.empty());
+    ASSERT_GE(tokens.size(), 1);
     EXPECT_EQ(tokens[0].type(), TokenType::Error);
 }
 
@@ -379,7 +379,7 @@ TEST(LexerTests, InvalidCharacter) {
 
 TEST(LexerTests, BangAlone) {
     auto tokens = tokenize("!");
-    ASSERT_FALSE(tokens.empty());
+    ASSERT_EQ(tokens.size(), 2);
     EXPECT_EQ(tokens[0].type(), TokenType::Error);
 }
 
@@ -568,6 +568,14 @@ TEST(LexerTests, ConcatOperator) {
     EXPECT_EQ(tokens[0].type(), TokenType::Concat);
 }
 
+TEST(LexerTests, LonePipeOperator) {
+    // Single '|' is an error
+    auto tokens = tokenize("|");
+    ASSERT_EQ(tokens.size(), 2);  // | + End
+    EXPECT_EQ(tokens[0].type(), TokenType::Error);
+    EXPECT_EQ(tokens[0].lexeme(), "|");
+}
+
 TEST(LexerTests, TypeBigInt) {
     auto tokens = tokenize("BIGINT");
     ASSERT_EQ(tokens.size(), 2);  // BIGINT + End
@@ -606,29 +614,10 @@ TEST(LexerTests, PeekAtEndToken) {
     EXPECT_EQ(lexer.next_token().type(), TokenType::End);
 }
 
-TEST(LexerTests, PeekAfterWhitespace) {
-    // Peek should skip whitespace and comments before returning token
+TEST(LexerTests, LeadingWhitespaceSkipped) {
+    // next_token() skips leading whitespace
     auto tokens = tokenize("   SELECT");
     EXPECT_EQ(tokens[0].type(), TokenType::Select);
-}
-
-TEST(LexerTests, UnterminatedStringReturnsError) {
-    auto tokens = tokenize("'unclosed string");
-    ASSERT_GE(tokens.size(), 1);
-    EXPECT_EQ(tokens[0].type(), TokenType::Error);
-}
-
-TEST(LexerTests, BangAloneReturnsError) {
-    // '!' alone is an error (not != )
-    auto tokens = tokenize("!");
-    ASSERT_EQ(tokens.size(), 2);
-    EXPECT_EQ(tokens[0].type(), TokenType::Error);
-}
-
-TEST(LexerTests, InvalidCharacterReturnsError) {
-    auto tokens = tokenize("@");
-    ASSERT_EQ(tokens.size(), 2);
-    EXPECT_EQ(tokens[0].type(), TokenType::Error);
 }
 
 TEST(LexerTests, CommentOnlyInput) {

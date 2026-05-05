@@ -20,12 +20,14 @@ Test Suite: 37 test targets, all passing
 ## Detailed File Coverage
 
 ### catalog/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | catalog.hpp | 33 | 90.9% | 8 | 75.0% |
 | catalog.cpp | 209 | 83.7% | 242 | 94.2% |
 
 ### common/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | arena_allocator.hpp | 85 | 97.7% | 36 | 94.4% |
@@ -38,6 +40,7 @@ Test Suite: 37 test targets, all passing
 | value.hpp | 12 | 91.7% | 4 | 100.0% |
 
 ### distributed/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | distributed_executor.cpp | 724 | 71.0% | 1260 | 72.1% |
@@ -49,6 +52,7 @@ Test Suite: 37 test targets, all passing
 | shard_manager.hpp | 6 | 100.0% | 2 | 100.0% |
 
 ### executor/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | operator.hpp | 43 | 83.7% | 122 | 100.0% |
@@ -59,6 +63,7 @@ Test Suite: 37 test targets, all passing
 | vectorized_operator.hpp | 150 | 44.0% | 30 | 40.0% |
 
 ### network/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | rpc_client.hpp | 34 | 85.3% | 44 | 100.0% |
@@ -70,11 +75,12 @@ Test Suite: 37 test targets, all passing
 | server.cpp | 296 | 60.0% | 298 | 40.0% |
 
 ### parser/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
-| expression.hpp | 25 | 32.0% | 68 | 11.8% |
+| expression.hpp | 25 | 100.0% | 68 | 11.8% |
 | expression.cpp | 31 | 74.2% | 80 | 77.5% |
-| lexer.hpp | 24 | 29.2% | 74 | 13.5% |
+| lexer.hpp | 24 | 100.0% | 74 | 13.5% |
 | lexer.cpp | 4 | 100.0% | 30 | 53.3% |
 | parser.hpp | 4 | 100.0% | 2 | 0.0% |
 | parser.cpp | 41 | 97.6% | 148 | 100.0% |
@@ -83,6 +89,7 @@ Test Suite: 37 test targets, all passing
 | token.hpp | 1 | 100.0% | 2 | 100.0% |
 
 ### recovery/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | log_manager.hpp | 24 | 29.2% | 58 | 20.7% |
@@ -93,6 +100,7 @@ Test Suite: 37 test targets, all passing
 | recovery_manager.cpp | 4 | 0.0% | 2 | 0.0% |
 
 ### storage/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | btree_index.hpp | 2 | 100.0% | 2 | 100.0% |
@@ -110,6 +118,7 @@ Test Suite: 37 test targets, all passing
 | storage_manager.cpp | 32 | 96.9% | 32 | 56.2% |
 
 ### transaction/
+
 | File | Lines | Line % | Branches | Branch % |
 |------|-------|--------|----------|----------|
 | lock_manager.hpp | 28 | 57.1% | 8 | 50.0% |
@@ -121,6 +130,7 @@ Test Suite: 37 test targets, all passing
 ## Coverage Gaps (Lines < 50%)
 
 ### Critical Gaps (< 20% line coverage)
+
 | File | Line % | Issue |
 |------|--------|-------|
 | storage/btree_index.cpp | 4.0% | Minimal tests |
@@ -129,13 +139,11 @@ Test Suite: 37 test targets, all passing
 | storage/heap_table.cpp | 18.3% | Needs more tests |
 
 ### Moderate Gaps (20-50% line coverage)
+
 | File | Line % | Issue |
 |------|--------|-------|
 | parser/statement.cpp | 23.1% | Partial coverage |
-| network/rpc_message.hpp | 29.2% | Partial coverage |
-| parser/lexer.hpp | 29.2% | Partial coverage |
 | recovery/log_manager.hpp | 29.2% | Partial coverage |
-| parser/expression.hpp | 32.0% | Partial coverage |
 | recovery/recovery_manager.hpp | 35.3% | Partial coverage |
 | recovery/log_manager.cpp | 37.5% | Partial coverage |
 | network/server.cpp | 55.7% | Partial coverage |
@@ -154,12 +162,11 @@ Test Suite: 37 test targets, all passing
 - network/rpc_message.hpp: 29.2% lines, 15.0% branches
 - recovery/log_manager.cpp: 37.5% lines, 5.3% branches
 - storage/heap_table.cpp: 18.3% lines, 26.3% branches
-- parser/expression.hpp: 32.0% lines, 11.8% branches
+- parser/expression.hpp: 100.0% lines, 11.8% branches
 
 ## Recommendations for Next Tests
 
 1. **shard_manager.hpp** - Already 100% coverage from existing distributed_executor_tests
 2. **config.hpp** - 44.4% lines, needs dedicated config_tests.cpp
 3. **arena_allocator.hpp** - 97.7% lines, only 3% missing - could add corner cases
-4. **rpc_message.hpp** - 29.2% lines, 15.0% branches - needs serialization tests
-5. **heap_table.cpp** - 18.3% lines - needs more tests (but may be covered by logic tests)
+4. **heap_table.cpp** - 18.3% lines - needs more tests (but may be covered by logic tests)

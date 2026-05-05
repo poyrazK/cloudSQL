@@ -354,7 +354,7 @@ TEST(RecoveryTests, LogRecordGetSize_CachedAfterSerialize) {
 }
 
 TEST(RecoveryTests, LogRecordMixedTypesInSequence) {
-    // Simulate a transaction sequence: BEGIN -> INSERT -> UPDATE -> COMMIT
+    // Simulate a transaction sequence: BEGIN -> INSERT -> COMMIT
     std::vector<char> all_data;
 
     // BEGIN

@@ -682,8 +682,8 @@ TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Eq) {
     binary.evaluate_vectorized(batch, schema, result);
 
     EXPECT_EQ(result.size(), 2);
-    EXPECT_EQ(result.get(0).to_int64(), 1);  // 42 == 42 = true
-    EXPECT_EQ(result.get(1).to_int64(), 1);  // 42 == 42 = true
+    EXPECT_EQ(result.get(0).as_bool(), true);  // 42 == 42 = true
+    EXPECT_EQ(result.get(1).as_bool(), true);  // 42 == 42 = true
 }
 
 TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Ne) {
@@ -706,8 +706,8 @@ TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Ne) {
     binary.evaluate_vectorized(batch, schema, result);
 
     EXPECT_EQ(result.size(), 2);
-    EXPECT_EQ(result.get(0).to_int64(), 0);  // 5 != 5 = false
-    EXPECT_EQ(result.get(1).to_int64(), 1);  // 10 != 5 = true
+    EXPECT_EQ(result.get(0).as_bool(), false);  // 5 != 5 = false
+    EXPECT_EQ(result.get(1).as_bool(), true);   // 10 != 5 = true
 }
 
 TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Lt) {
@@ -730,8 +730,8 @@ TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Lt) {
     binary.evaluate_vectorized(batch, schema, result);
 
     EXPECT_EQ(result.size(), 2);
-    EXPECT_EQ(result.get(0).to_int64(), 1);  // 3 < 5 = true
-    EXPECT_EQ(result.get(1).to_int64(), 0);  // 7 < 5 = false
+    EXPECT_EQ(result.get(0).as_bool(), true);   // 3 < 5 = true
+    EXPECT_EQ(result.get(1).as_bool(), false);   // 7 < 5 = false
 }
 
 TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Fallback_BothColumns) {
