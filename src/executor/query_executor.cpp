@@ -45,6 +45,9 @@
 
 namespace cloudsql::executor {
 
+// Threshold for cost-based Volcano/Vectorized chooser
+static constexpr uint64_t kVectorizedRowThreshold = 10000;
+
 // Define static members for statement cache
 std::unordered_map<std::string, std::shared_ptr<parser::Statement>> QueryExecutor::statement_cache_;
 std::mutex QueryExecutor::cache_mutex_;
@@ -410,8 +413,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
             if (table_meta_opt.has_value()) {
                 const auto* table_meta = table_meta_opt.value();
                 uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
-                // Use Vectorized for large scans (> 10000 rows heuristic)
-                use_vectorized = estimated_rows > 10000;
+                // Use Vectorized for large scans (> kVectorizedRowThreshold rows heuristic)
+                use_vectorized = estimated_rows > kVectorizedRowThreshold;
             }
         }
     }
@@ -972,8 +975,15 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
             if (val.is_null()) {
                 col_stats[col_idx].null_count++;
             } else {
-                // Collect NDV in same pass
-                ndv_sets[col_idx].insert(val.to_string());
+                // Collect NDV in same pass - use prefix for text to limit memory
+                std::string ndv_key = val.to_string();
+                if (col_info.type == common::ValueType::TYPE_TEXT ||
+                    col_info.type == common::ValueType::TYPE_VARCHAR ||
+                    col_info.type == common::ValueType::TYPE_CHAR) {
+                    // Truncate to first 64 chars to limit memory in NDV set
+                    ndv_key.resize(std::min(ndv_key.size(), size_t(64)));
+                }
+                ndv_sets[col_idx].insert(std::move(ndv_key));
 
                 switch (col_info.type) {
                     case common::ValueType::TYPE_INT64:
