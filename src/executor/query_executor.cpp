@@ -45,7 +45,9 @@
 
 namespace cloudsql::executor {
 
-// Threshold for cost-based Volcano/Vectorized chooser
+// Threshold for cost-based Volcano/Vectorized chooser.
+// Heuristic: Vectorized operators outperform Volcano-style tuple-at-a-time
+// above ~10k rows for analytical scan workloads. Tunable per workload.
 static constexpr uint64_t kVectorizedRowThreshold = 10000;
 
 // Define static members for statement cache
@@ -405,15 +407,16 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     // Cost-based Volcano/Vectorized chooser using row estimates
     bool use_vectorized = false;
     if (parallel_ && storage_manager_ && !has_sort_or_limit) {
-        // Extract table name from FROM clause
+        // Extract table name from FROM clause (only for simple column refs)
+        // Fall through to Volcano for JOINs, subqueries, and aliased tables
         const auto* from_expr = stmt.from();
-        if (from_expr != nullptr) {
+        if (from_expr != nullptr && from_expr->type() == parser::ExprType::Column) {
             std::string table_name = from_expr->to_string();
             auto table_meta_opt = catalog_.get_table_by_name(table_name);
             if (table_meta_opt.has_value()) {
                 const auto* table_meta = table_meta_opt.value();
                 uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
-                // Use Vectorized for large scans (> kVectorizedRowThreshold rows heuristic)
+                // Use Vectorized for large scans (>10k rows — heuristic crossover point)
                 use_vectorized = estimated_rows > kVectorizedRowThreshold;
             }
         }
