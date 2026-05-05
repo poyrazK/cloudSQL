@@ -1280,9 +1280,8 @@ TEST(ExecutionTests, AnalyzeTable) {
              .parse_statement()));
 
     // ANALYZE TABLE should succeed and collect stats
-    const auto res_analyze =
-        exec.execute(*Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_test"))
-                          .parse_statement());
+    const auto res_analyze = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_test")).parse_statement());
     EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
     EXPECT_EQ(res_analyze.rows_affected(), 1U);
 

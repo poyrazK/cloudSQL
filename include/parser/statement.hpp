@@ -353,8 +353,7 @@ class AnalyzeStatement : public Statement {
     std::string table_name_;
 
    public:
-    explicit AnalyzeStatement(std::string table_name)
-        : table_name_(std::move(table_name)) {}
+    explicit AnalyzeStatement(std::string table_name) : table_name_(std::move(table_name)) {}
     [[nodiscard]] StmtType type() const override { return StmtType::Analyze; }
     [[nodiscard]] const std::string& table_name() const { return table_name_; }
     [[nodiscard]] std::string to_string() const override {
