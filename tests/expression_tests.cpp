@@ -731,7 +731,7 @@ TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Int64_Lt) {
 
     EXPECT_EQ(result.size(), 2);
     EXPECT_EQ(result.get(0).as_bool(), true);   // 3 < 5 = true
-    EXPECT_EQ(result.get(1).as_bool(), false);   // 7 < 5 = false
+    EXPECT_EQ(result.get(1).as_bool(), false);  // 7 < 5 = false
 }
 
 TEST(ExpressionTests, EvaluateVectorized_BinaryExpr_Fallback_BothColumns) {
