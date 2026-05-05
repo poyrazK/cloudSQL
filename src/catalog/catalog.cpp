@@ -403,6 +403,52 @@ bool Catalog::update_table_stats(oid_t table_id, uint64_t num_rows) {
 }
 
 /**
+ * @brief Update column statistics
+ */
+bool Catalog::update_column_stats(oid_t table_id, const std::string& col_name,
+                                  ColumnInfo& stats) {
+    auto table_opt = get_table(table_id);
+    if (!table_opt.has_value()) {
+        return false;
+    }
+    auto& table = *table_opt.value();
+    for (auto& col : table.columns) {
+        if (col.name == col_name) {
+            col.has_stats = stats.has_stats;
+            col.null_count = stats.null_count;
+            col.min_int = stats.min_int;
+            col.max_int = stats.max_int;
+            col.min_double = stats.min_double;
+            col.max_double = stats.max_double;
+            col.min_str_len = stats.min_str_len;
+            col.max_str_len = stats.max_str_len;
+            col.ndv = stats.ndv;
+            version_++;
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Get column statistics
+ */
+std::optional<ColumnInfo*> Catalog::get_column_stats(oid_t table_id,
+                                                     const std::string& col_name) {
+    auto table_opt = get_table(table_id);
+    if (!table_opt.has_value()) {
+        return std::nullopt;
+    }
+    auto& table = *table_opt.value();
+    for (auto& col : table.columns) {
+        if (col.name == col_name) {
+            return &col;
+        }
+    }
+    return std::nullopt;
+}
+
+/**
  * @brief Check if table exists
  */
 bool Catalog::table_exists(oid_t table_id) const {
