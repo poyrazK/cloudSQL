@@ -68,7 +68,7 @@ uint64_t RowEstimator::estimate_filter_rows(const TableInfo& table, const std::s
 }
 
 uint64_t RowEstimator::estimate_join_rows(const TableInfo& left, const TableInfo& right,
-                                         const std::string& key_col) {
+                                          const std::string& key_col) {
     // Estimate join output: |A| * |B| / max(NDV(A.key), NDV(B.key))
     auto left_col_opt = const_cast<TableInfo&>(left).get_column(key_col);
     auto right_col_opt = const_cast<TableInfo&>(right).get_column(key_col);

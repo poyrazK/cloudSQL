@@ -27,8 +27,8 @@
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
 #include "executor/vectorized_operator.hpp"
-#include "optimizer/row_estimator.hpp"
 #include "network/rpc_message.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
@@ -1053,7 +1053,7 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
         col_stats[col_idx].type = table_meta->columns[col_idx].type;
         col_stats[col_idx].position = table_meta->columns[col_idx].position;
         catalog_.update_column_stats(table_meta->table_id, table_meta->columns[col_idx].name,
-                                    col_stats[col_idx]);
+                                     col_stats[col_idx]);
     }
 
     result.set_rows_affected(1);
