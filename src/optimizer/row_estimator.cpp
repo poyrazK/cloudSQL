@@ -54,6 +54,16 @@ uint64_t RowEstimator::estimate_filter_rows(const TableInfo& table, const std::s
         }
     }
 
+    // String length-based selectivity (for LIKE prefixes, etc.)
+    if (col->min_str_len.has_value() && col->max_str_len.has_value() &&
+        col->max_str_len.value() > col->min_str_len.value()) {
+        double range = static_cast<double>(col->max_str_len.value() - col->min_str_len.value() + 1);
+        if (range > 0) {
+            double selectivity = 1.0 / range;
+            return static_cast<uint64_t>(static_cast<double>(table.num_rows) * selectivity);
+        }
+    }
+
     return table.num_rows;
 }
 

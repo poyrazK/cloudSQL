@@ -955,8 +955,9 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
 
     storage::HeapTable table(stmt.table_name(), bpm_, schema);
 
-    // Collect per-column stats by scanning the table
+    // Collect per-column stats by scanning the table (single pass)
     std::vector<ColumnInfo> col_stats(table_meta->columns.size());
+    std::vector<std::unordered_set<std::string>> ndv_sets(table_meta->columns.size());
 
     auto iter = table.scan();
     Tuple tuple;
@@ -971,22 +972,15 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
             if (val.is_null()) {
                 col_stats[col_idx].null_count++;
             } else {
+                // Collect NDV in same pass
+                ndv_sets[col_idx].insert(val.to_string());
+
                 switch (col_info.type) {
-                    case common::ValueType::TYPE_INT64: {
-                        int64_t v = val.to_int64();
-                        if (!col_stats[col_idx].min_int.has_value() ||
-                            v < col_stats[col_idx].min_int.value()) {
-                            col_stats[col_idx].min_int = v;
-                        }
-                        if (!col_stats[col_idx].max_int.has_value() ||
-                            v > col_stats[col_idx].max_int.value()) {
-                            col_stats[col_idx].max_int = v;
-                        }
-                        break;
-                    }
+                    case common::ValueType::TYPE_INT64:
                     case common::ValueType::TYPE_INT32:
                     case common::ValueType::TYPE_INT16:
-                    case common::ValueType::TYPE_INT8: {
+                    case common::ValueType::TYPE_INT8:
+                    case common::ValueType::TYPE_BOOL: {
                         int64_t v = val.to_int64();
                         if (!col_stats[col_idx].min_int.has_value() ||
                             v < col_stats[col_idx].min_int.value()) {
@@ -1034,20 +1028,9 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
         }
     }
 
-    // Second pass: compute NDV using unordered_set (acceptable for medium tables)
-    // For large tables, HyperLogLog approximation should be used (future work)
+    // Compute NDV from sets collected in single pass
     for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
-        const auto& col_info = table_meta->columns[col_idx];
-        std::unordered_set<std::string> distinct_values;
-        auto iter2 = table.scan();
-        Tuple tuple2;
-        while (iter2.next(tuple2)) {
-            const auto& val = tuple2.get(col_idx);
-            if (!val.is_null()) {
-                distinct_values.insert(val.to_string());
-            }
-        }
-        col_stats[col_idx].ndv = static_cast<uint64_t>(distinct_values.size());
+        col_stats[col_idx].ndv = static_cast<uint64_t>(ndv_sets[col_idx].size());
     }
 
     // Update table-level stats
