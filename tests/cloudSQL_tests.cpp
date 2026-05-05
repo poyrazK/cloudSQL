@@ -1325,8 +1325,7 @@ TEST(ExecutionTests, AnalyzeTableLargeRows) {
 
     // Create table
     static_cast<void>(exec.execute(
-        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_large (id INT)"))
-             .parse_statement()));
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_large (id INT)")).parse_statement()));
 
     // Insert 10000 rows in 20 batches of 500 rows each
     for (int batch = 0; batch < 20; ++batch) {
@@ -1336,15 +1335,13 @@ TEST(ExecutionTests, AnalyzeTableLargeRows) {
             if (i < 499) vals += ", ";
         }
         std::string sql = "INSERT INTO analyze_large VALUES " + vals;
-        auto res = exec.execute(
-            *Parser(std::make_unique<Lexer>(sql)).parse_statement());
+        auto res = exec.execute(*Parser(std::make_unique<Lexer>(sql)).parse_statement());
         EXPECT_TRUE(res.success()) << "Batch " << batch << " insert failed";
     }
 
     // ANALYZE TABLE
     const auto res_analyze = exec.execute(
-        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_large"))
-             .parse_statement());
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_large")).parse_statement());
     EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
 
     // Verify row count exceeds threshold via catalog
@@ -1355,8 +1352,7 @@ TEST(ExecutionTests, AnalyzeTableLargeRows) {
 
     // Verify SELECT works after ANALYZE (chooser path test)
     const auto res_select = exec.execute(
-        *Parser(std::make_unique<Lexer>("SELECT * FROM analyze_large LIMIT 5"))
-             .parse_statement());
+        *Parser(std::make_unique<Lexer>("SELECT * FROM analyze_large LIMIT 5")).parse_statement());
     EXPECT_TRUE(res_select.success());
     EXPECT_GE(res_select.row_count(), size_t(0));
 
