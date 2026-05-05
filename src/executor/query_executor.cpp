@@ -980,7 +980,9 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
                 if (col_info.type == common::ValueType::TYPE_TEXT ||
                     col_info.type == common::ValueType::TYPE_VARCHAR ||
                     col_info.type == common::ValueType::TYPE_CHAR) {
-                    // Truncate to first 64 chars to limit memory in NDV set
+                    // Truncate to first 64 chars to limit memory in NDV set.
+                    // Note: distinct strings with the same 64-char prefix will be
+                    // counted as one NDV. Use HyperLogLog for production accuracy.
                     ndv_key.resize(std::min(ndv_key.size(), size_t(64)));
                 }
                 ndv_sets[col_idx].insert(std::move(ndv_key));

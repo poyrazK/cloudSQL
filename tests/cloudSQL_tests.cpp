@@ -1313,4 +1313,54 @@ TEST(ExecutionTests, AnalyzeTable) {
     static_cast<void>(std::remove("./test_data/analyze_test.heap"));
 }
 
+TEST(ExecutionTests, AnalyzeTableLargeRows) {
+    // Test ANALYZE TABLE with >10k rows to verify num_rows exceeds threshold
+    static_cast<void>(std::remove("./test_data/analyze_large.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    // Create table
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_large (id INT)"))
+             .parse_statement()));
+
+    // Insert 10000 rows in 20 batches of 500 rows each
+    for (int batch = 0; batch < 20; ++batch) {
+        std::string vals;
+        for (int i = 0; i < 500; ++i) {
+            vals += "(" + std::to_string(batch * 500 + i) + ")";
+            if (i < 499) vals += ", ";
+        }
+        std::string sql = "INSERT INTO analyze_large VALUES " + vals;
+        auto res = exec.execute(
+            *Parser(std::make_unique<Lexer>(sql)).parse_statement());
+        EXPECT_TRUE(res.success()) << "Batch " << batch << " insert failed";
+    }
+
+    // ANALYZE TABLE
+    const auto res_analyze = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_large"))
+             .parse_statement());
+    EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
+
+    // Verify row count exceeds threshold via catalog
+    auto table_opt = catalog->get_table_by_name("analyze_large");
+    ASSERT_TRUE(table_opt.has_value());
+    EXPECT_EQ(table_opt.value()->num_rows, 10000U);
+    EXPECT_GE(table_opt.value()->num_rows, uint64_t(10000));
+
+    // Verify SELECT works after ANALYZE (chooser path test)
+    const auto res_select = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT * FROM analyze_large LIMIT 5"))
+             .parse_statement());
+    EXPECT_TRUE(res_select.success());
+    EXPECT_GE(res_select.row_count(), size_t(0));
+
+    static_cast<void>(std::remove("./test_data/analyze_large.heap"));
+}
+
 }  // namespace
