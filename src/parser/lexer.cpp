@@ -69,6 +69,7 @@ std::map<std::string, TokenType> Lexer::init_keywords() {
             {"BEGIN", TokenType::Begin},
             {"COMMIT", TokenType::Commit},
             {"ROLLBACK", TokenType::Rollback},
+            {"ANALYZE", TokenType::Analyze},
             {"IF", TokenType::If},
             {"EXISTS", TokenType::Exists},
             {"UNIQUE", TokenType::Unique},

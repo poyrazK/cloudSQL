@@ -28,6 +28,7 @@
 #include "executor/types.hpp"
 #include "executor/vectorized_operator.hpp"
 #include "network/rpc_message.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
@@ -43,6 +44,11 @@
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
+
+// Threshold for cost-based Volcano/Vectorized chooser.
+// Heuristic: Vectorized operators outperform Volcano-style tuple-at-a-time
+// above ~10k rows for analytical scan workloads. Tunable per workload.
+static constexpr uint64_t kVectorizedRowThreshold = 10000;
 
 // Define static members for statement cache
 std::unordered_map<std::string, std::shared_ptr<parser::Statement>> QueryExecutor::statement_cache_;
@@ -319,6 +325,14 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
             result = execute_delete(dynamic_cast<const parser::DeleteStatement&>(stmt), txn);
         } else if (stmt.type() == parser::StmtType::Update) {
             result = execute_update(dynamic_cast<const parser::UpdateStatement&>(stmt), txn);
+        } else if (stmt.type() == parser::StmtType::TransactionBegin) {
+            result = execute_begin();
+        } else if (stmt.type() == parser::StmtType::TransactionCommit) {
+            result = execute_commit();
+        } else if (stmt.type() == parser::StmtType::TransactionRollback) {
+            result = execute_rollback();
+        } else if (stmt.type() == parser::StmtType::Analyze) {
+            result = execute_analyze(dynamic_cast<const parser::AnalyzeStatement&>(stmt));
         } else {
             result.set_error("Unsupported statement type");
         }
@@ -389,7 +403,24 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     std::unique_ptr<Operator> root;
     std::unique_ptr<VectorizedOperator> vec_root;
     bool has_sort_or_limit = !stmt.order_by().empty() || stmt.has_limit() || stmt.has_offset();
-    bool use_vectorized = parallel_ && storage_manager_ && !has_sort_or_limit;
+
+    // Cost-based Volcano/Vectorized chooser using row estimates
+    bool use_vectorized = false;
+    if (parallel_ && storage_manager_ && !has_sort_or_limit) {
+        // Extract table name from FROM clause (only for simple column refs)
+        // Fall through to Volcano for JOINs, subqueries, and aliased tables
+        const auto* from_expr = stmt.from();
+        if (from_expr != nullptr && from_expr->type() == parser::ExprType::Column) {
+            std::string table_name = from_expr->to_string();
+            auto table_meta_opt = catalog_.get_table_by_name(table_name);
+            if (table_meta_opt.has_value()) {
+                const auto* table_meta = table_meta_opt.value();
+                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+                // Use Vectorized for large scans (>10k rows — heuristic crossover point)
+                use_vectorized = estimated_rows > kVectorizedRowThreshold;
+            }
+        }
+    }
 
     if (use_vectorized) {
         vec_root = build_vectorized_plan(stmt, txn, has_sort_or_limit);
@@ -910,6 +941,127 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
     }
 
     result.set_rows_affected(rows_updated);
+    return result;
+}
+
+QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt) {
+    QueryResult result;
+
+    auto table_meta_opt = catalog_.get_table_by_name(stmt.table_name());
+    if (!table_meta_opt.has_value()) {
+        result.set_error("Table not found: " + stmt.table_name());
+        return result;
+    }
+    const auto* table_meta = table_meta_opt.value();
+
+    Schema schema;
+    for (const auto& col : table_meta->columns) {
+        schema.add_column(col.name, col.type);
+    }
+
+    storage::HeapTable table(stmt.table_name(), bpm_, schema);
+
+    // Collect per-column stats by scanning the table (single pass)
+    std::vector<ColumnInfo> col_stats(table_meta->columns.size());
+    std::vector<std::unordered_set<std::string>> ndv_sets(table_meta->columns.size());
+
+    auto iter = table.scan();
+    Tuple tuple;
+    uint64_t row_count = 0;
+
+    while (iter.next(tuple)) {
+        row_count++;
+        for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+            const auto& col_info = table_meta->columns[col_idx];
+            const auto& val = tuple.get(col_idx);
+
+            if (val.is_null()) {
+                col_stats[col_idx].null_count++;
+            } else {
+                // Collect NDV in same pass - use prefix for text to limit memory
+                std::string ndv_key = val.to_string();
+                if (col_info.type == common::ValueType::TYPE_TEXT ||
+                    col_info.type == common::ValueType::TYPE_VARCHAR ||
+                    col_info.type == common::ValueType::TYPE_CHAR) {
+                    // Truncate to first 64 chars to limit memory in NDV set.
+                    // Note: distinct strings with the same 64-char prefix will be
+                    // counted as one NDV. Use HyperLogLog for production accuracy.
+                    ndv_key.resize(std::min(ndv_key.size(), size_t(64)));
+                }
+                ndv_sets[col_idx].insert(std::move(ndv_key));
+
+                switch (col_info.type) {
+                    case common::ValueType::TYPE_INT64:
+                    case common::ValueType::TYPE_INT32:
+                    case common::ValueType::TYPE_INT16:
+                    case common::ValueType::TYPE_INT8:
+                    case common::ValueType::TYPE_BOOL: {
+                        int64_t v = val.to_int64();
+                        if (!col_stats[col_idx].min_int.has_value() ||
+                            v < col_stats[col_idx].min_int.value()) {
+                            col_stats[col_idx].min_int = v;
+                        }
+                        if (!col_stats[col_idx].max_int.has_value() ||
+                            v > col_stats[col_idx].max_int.value()) {
+                            col_stats[col_idx].max_int = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_FLOAT64:
+                    case common::ValueType::TYPE_FLOAT32:
+                    case common::ValueType::TYPE_DECIMAL: {
+                        double v = val.to_float64();
+                        if (!col_stats[col_idx].min_double.has_value() ||
+                            v < col_stats[col_idx].min_double.value()) {
+                            col_stats[col_idx].min_double = v;
+                        }
+                        if (!col_stats[col_idx].max_double.has_value() ||
+                            v > col_stats[col_idx].max_double.value()) {
+                            col_stats[col_idx].max_double = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_TEXT:
+                    case common::ValueType::TYPE_VARCHAR:
+                    case common::ValueType::TYPE_CHAR: {
+                        const std::string& s = val.as_text();
+                        uint64_t len = static_cast<uint64_t>(s.size());
+                        if (!col_stats[col_idx].min_str_len.has_value() ||
+                            len < col_stats[col_idx].min_str_len.value()) {
+                            col_stats[col_idx].min_str_len = len;
+                        }
+                        if (!col_stats[col_idx].max_str_len.has_value() ||
+                            len > col_stats[col_idx].max_str_len.value()) {
+                            col_stats[col_idx].max_str_len = len;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    // Compute NDV from sets collected in single pass
+    for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+        col_stats[col_idx].ndv = static_cast<uint64_t>(ndv_sets[col_idx].size());
+    }
+
+    // Update table-level stats
+    catalog_.update_table_stats(table_meta->table_id, row_count);
+
+    // Update per-column stats
+    for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+        col_stats[col_idx].has_stats = true;
+        col_stats[col_idx].name = table_meta->columns[col_idx].name;
+        col_stats[col_idx].type = table_meta->columns[col_idx].type;
+        col_stats[col_idx].position = table_meta->columns[col_idx].position;
+        catalog_.update_column_stats(table_meta->table_id, table_meta->columns[col_idx].name,
+                                     col_stats[col_idx]);
+    }
+
+    result.set_rows_affected(1);
     return result;
 }
 

@@ -173,6 +173,9 @@ class QueryExecutor {
     QueryResult execute_update(const parser::UpdateStatement& stmt, transaction::Transaction* txn);
     QueryResult execute_delete(const parser::DeleteStatement& stmt, transaction::Transaction* txn);
 
+    /* ANALYZE TABLE */
+    QueryResult execute_analyze(const parser::AnalyzeStatement& stmt);
+
     /* Transaction control */
     QueryResult execute_begin();
     QueryResult execute_commit();

@@ -73,6 +73,9 @@ std::unique_ptr<Statement> Parser::parse_statement() {
             static_cast<void>(next_token());
             stmt = std::make_unique<TransactionRollbackStatement>();
             break;
+        case TokenType::Analyze:
+            stmt = parse_analyze();
+            break;
         default:
             break;
     }
@@ -899,6 +902,24 @@ std::unique_ptr<Statement> Parser::parse_drop() {
     }
 
     return nullptr;
+}
+
+/**
+ * @brief Parse ANALYZE statement
+ */
+std::unique_ptr<Statement> Parser::parse_analyze() {
+    if (!consume(TokenType::Analyze)) {
+        return nullptr;
+    }
+    // Optional TABLE keyword
+    (void)consume(TokenType::Table);
+    const Token name = next_token();
+    if (name.type() != TokenType::Identifier) {
+        std::cerr << "Parser Error: Missing table name. Current token: " << name.to_string()
+                  << "\n";
+        return nullptr;
+    }
+    return std::make_unique<AnalyzeStatement>(name.lexeme());
 }
 
 /**

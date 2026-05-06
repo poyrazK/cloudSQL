@@ -75,6 +75,7 @@ set(CORE_SOURCES
     src/distributed/distributed_executor.cpp
     src/common/bloom_filter.cpp
     src/storage/columnar_table.cpp
+    src/optimizer/row_estimator.cpp
 )
 
 add_library(sqlEngineCore ${CORE_SOURCES})
