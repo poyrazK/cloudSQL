@@ -24,6 +24,7 @@
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
@@ -33,6 +34,7 @@ using namespace cloudsql::parser;
 using namespace cloudsql::executor;
 using namespace cloudsql::storage;
 using namespace cloudsql::transaction;
+using namespace cloudsql::optimizer;
 
 namespace {
 
@@ -1407,6 +1409,170 @@ TEST_F(QueryExecutorTests, VerifyIndexInMetadata) {
     // Verify the index has non-empty column_positions
     const auto& idx = table_meta.value()->indexes[0];
     EXPECT_FALSE(idx.column_positions.empty()) << "Index should have column_positions populated";
+}
+
+// ============= RowEstimator Unit Tests =============
+
+class RowEstimatorTests : public ::testing::Test {
+};
+
+// EstimateScanRows tests
+TEST_F(RowEstimatorTests, EstimateScanRows_WithStats) {
+    TableInfo table;
+    table.num_rows = 1000;
+    EXPECT_EQ(RowEstimator::estimate_scan_rows(table), 1000U);
+}
+
+TEST_F(RowEstimatorTests, EstimateScanRows_NoStats) {
+    TableInfo table;
+    table.num_rows = 0;
+    EXPECT_EQ(RowEstimator::estimate_scan_rows(table), 0U);
+}
+
+// EstimateFilterRows tests
+TEST_F(RowEstimatorTests, EstimateFilterRows_NDVSeltivity) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.ndv = 100;  // 100 distinct values
+    table.columns.push_back(col);
+
+    common::Value pred = common::Value::make_int64(42);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 10U);  // 1000 / 100 = 10
+}
+
+TEST_F(RowEstimatorTests, EstimateFilterRows_IntRangeSel) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.min_int = 1;
+    col.max_int = 100;
+    table.columns.push_back(col);
+
+    // Value in range [1, 100]
+    common::Value pred = common::Value::make_int64(50);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 10U);  // 1000 / 100 = 10
+}
+
+TEST_F(RowEstimatorTests, EstimateFilterRows_OutOfRange) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.min_int = 1;
+    col.max_int = 100;
+    table.columns.push_back(col);
+
+    // Value outside range
+    common::Value pred = common::Value::make_int64(200);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 1000U);  // Fallback to full scan
+}
+
+TEST_F(RowEstimatorTests, EstimateFilterRows_NoStats) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = false;  // No stats
+    table.columns.push_back(col);
+
+    common::Value pred = common::Value::make_int64(42);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 1000U);  // Fallback to full scan
+}
+
+TEST_F(RowEstimatorTests, EstimateFilterRows_UnknownColumn) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.ndv = 100;
+    table.columns.push_back(col);
+
+    // Query references non-existent column
+    common::Value pred = common::Value::make_int64(42);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "nonexistent", pred);
+    EXPECT_EQ(est, 1000U);  // Fallback to full scan
+}
+
+// EstimateJoinRows tests
+TEST_F(RowEstimatorTests, EstimateJoinRows_Basic) {
+    TableInfo left;
+    left.num_rows = 1000;
+    ColumnInfo left_col;
+    left_col.name = "id";
+    left_col.has_stats = true;
+    left_col.ndv = 50;
+    left.columns.push_back(left_col);
+
+    TableInfo right;
+    right.num_rows = 500;
+    ColumnInfo right_col;
+    right_col.name = "id";
+    right_col.has_stats = true;
+    right_col.ndv = 25;
+    right.columns.push_back(right_col);
+
+    uint64_t est = RowEstimator::estimate_join_rows(left, right, "id");
+    // |A| * |B| / max(50, 25) = 1000 * 500 / 50 = 10000
+    EXPECT_EQ(est, 10000U);
+}
+
+TEST_F(RowEstimatorTests, EstimateJoinRows_UnknownColumn) {
+    TableInfo left;
+    left.num_rows = 1000;
+    ColumnInfo left_col;
+    left_col.name = "id";
+    left_col.has_stats = true;
+    left_col.ndv = 50;
+    left.columns.push_back(left_col);
+
+    TableInfo right;
+    right.num_rows = 500;
+    ColumnInfo right_col;
+    right_col.name = "other_id";  // Different column name
+    right_col.has_stats = true;
+    right_col.ndv = 25;
+    right.columns.push_back(right_col);
+
+    // Cross product fallback when key column not found in both tables
+    uint64_t est = RowEstimator::estimate_join_rows(left, right, "id");
+    EXPECT_EQ(est, 500000U);  // 1000 * 500 = 500000
+}
+
+TEST_F(RowEstimatorTests, EstimateJoinRows_ZeroNDV) {
+    TableInfo left;
+    left.num_rows = 1000;
+    ColumnInfo left_col;
+    left_col.name = "id";
+    left_col.has_stats = true;
+    left_col.ndv = 0;  // Zero NDV
+    left.columns.push_back(left_col);
+
+    TableInfo right;
+    right.num_rows = 500;
+    ColumnInfo right_col;
+    right_col.name = "id";
+    right_col.has_stats = true;
+    right_col.ndv = 25;
+    right.columns.push_back(right_col);
+
+    uint64_t est = RowEstimator::estimate_join_rows(left, right, "id");
+    EXPECT_EQ(est, 0U);  // Zero NDV → 0 rows
 }
 
 }  // namespace

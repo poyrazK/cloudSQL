@@ -1359,4 +1359,117 @@ TEST(ExecutionTests, AnalyzeTableLargeRows) {
     static_cast<void>(std::remove("./test_data/analyze_large.heap"));
 }
 
+TEST(ExecutionTests, AnalyzeTableNonExistent) {
+    // ANALYZE TABLE on non-existent table should return error
+    static_cast<void>(std::remove("./test_data/analyze_nonexistent.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    const auto res = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE nonexistent_table"))
+             .parse_statement());
+    EXPECT_FALSE(res.success()) << "ANALYZE should fail for non-existent table";
+    EXPECT_FALSE(res.error().empty());
+
+    static_cast<void>(std::remove("./test_data/analyze_nonexistent.heap"));
+}
+
+TEST(ExecutionTests, AnalyzeTableEmpty) {
+    // ANALYZE TABLE on empty table should succeed with 0 rows
+    static_cast<void>(std::remove("./test_data/analyze_empty.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_empty (id INT)"))
+             .parse_statement()));
+
+    const auto res_analyze = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_empty"))
+             .parse_statement());
+    EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
+
+    auto table_opt = catalog->get_table_by_name("analyze_empty");
+    ASSERT_TRUE(table_opt.has_value());
+    EXPECT_EQ(table_opt.value()->num_rows, 0U);
+
+    static_cast<void>(std::remove("./test_data/analyze_empty.heap"));
+}
+
+TEST(ExecutionTests, AnalyzeTableWithNulls) {
+    // ANALYZE TABLE should track null_count correctly
+    static_cast<void>(std::remove("./test_data/analyze_nulls.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_nulls (id INT, val INT)"))
+             .parse_statement()));
+    // Insert some rows with NULL values
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "INSERT INTO analyze_nulls VALUES (1, NULL), (2, 20), (3, NULL), (4, 40)"))
+             .parse_statement()));
+
+    const auto res_analyze = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_nulls"))
+             .parse_statement());
+    EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
+
+    auto table_opt = catalog->get_table_by_name("analyze_nulls");
+    ASSERT_TRUE(table_opt.has_value());
+    ASSERT_GE(table_opt.value()->columns.size(), 2U);
+    // val column should have null_count == 2
+    EXPECT_EQ(table_opt.value()->columns[1].null_count, 2U);
+
+    static_cast<void>(std::remove("./test_data/analyze_nulls.heap"));
+}
+
+TEST(ExecutionTests, AnalyzeTableStringStats) {
+    // ANALYZE TABLE should collect min_str_len/max_str_len for TEXT columns
+    static_cast<void>(std::remove("./test_data/analyze_strings.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "CREATE TABLE analyze_strings (id INT, txt TEXT)"))
+             .parse_statement()));
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>(
+                    "INSERT INTO analyze_strings VALUES (1, 'A'), (2, 'BB'), (3, 'CCC')"))
+             .parse_statement()));
+
+    const auto res_analyze = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_strings"))
+             .parse_statement());
+    EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
+
+    auto table_opt = catalog->get_table_by_name("analyze_strings");
+    ASSERT_TRUE(table_opt.has_value());
+    ASSERT_GE(table_opt.value()->columns.size(), 2U);
+    // txt column should have string length stats
+    EXPECT_TRUE(table_opt.value()->columns[1].has_stats);
+    EXPECT_EQ(table_opt.value()->columns[1].min_str_len.value(), 1U);  // 'A'
+    EXPECT_EQ(table_opt.value()->columns[1].max_str_len.value(), 3U);    // 'CCC'
+
+    static_cast<void>(std::remove("./test_data/analyze_strings.heap"));
+}
+
 }  // namespace
