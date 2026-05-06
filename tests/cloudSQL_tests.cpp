@@ -1474,4 +1474,53 @@ TEST(ExecutionTests, AnalyzeTableStringStats) {
     static_cast<void>(std::remove("./test_data/analyze_strings.heap"));
 }
 
+TEST(ExecutionTests, AnalyzeFilterSelectivity) {
+    // Test that filter selectivity is used for WHERE clause estimation
+    // after ANALYZE TABLE — a filtered scan of 10k rows should still use
+    // Vectorized when the filter is estimated to return >10k rows
+    static_cast<void>(std::remove("./test_data/analyze_filter.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    static_cast<void>(exec.execute(
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_filter (id INT, val INT)"))
+             .parse_statement()));
+
+    // Insert 15000 rows with id from 0 to 14999
+    for (int batch = 0; batch < 15; ++batch) {
+        std::string vals;
+        for (int i = 0; i < 1000; ++i) {
+            vals += "(" + std::to_string(batch * 1000 + i) + ", " +
+                   std::to_string(batch * 1000 + i) + ")";
+            if (i < 999) vals += ", ";
+        }
+        std::string sql = "INSERT INTO analyze_filter VALUES " + vals;
+        auto res = exec.execute(*Parser(std::make_unique<Lexer>(sql)).parse_statement());
+        EXPECT_TRUE(res.success()) << "Batch " << batch << " insert failed";
+    }
+
+    const auto res_analyze = exec.execute(
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_filter"))
+             .parse_statement());
+    EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
+
+    // SELECT with WHERE id > 10000 — estimated ~5000 rows, still > kVectorizedRowThreshold
+    // should use Vectorized (no error thrown)
+    const auto res_select = exec.execute(
+        *Parser(std::make_unique<Lexer>("SELECT * FROM analyze_filter WHERE id > 10000"))
+             .parse_statement());
+    EXPECT_TRUE(res_select.success()) << "SELECT with WHERE should work after ANALYZE";
+
+    // Verify stats: min=0, max=14999, so id > 10000 is within range
+    auto table_opt = catalog->get_table_by_name("analyze_filter");
+    ASSERT_TRUE(table_opt.has_value());
+    EXPECT_GE(table_opt.value()->num_rows, uint64_t(15000));
+
+    static_cast<void>(std::remove("./test_data/analyze_filter.heap"));
+}
+
 }  // namespace

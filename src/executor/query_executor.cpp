@@ -415,7 +415,41 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
             auto table_meta_opt = catalog_.get_table_by_name(table_name);
             if (table_meta_opt.has_value()) {
                 const auto* table_meta = table_meta_opt.value();
-                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+                uint64_t estimated_rows = 0;
+
+                // Use filter selectivity when WHERE clause is simple and stats available
+                if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary) {
+                    const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(stmt.where());
+                    if (bin_expr != nullptr) {
+                        std::string col_name;
+                        common::Value pred_val;
+                        bool eligible = false;
+
+                        // col OP constant (e.g., id > 5000 or status = 'active')
+                        if (bin_expr->left().type() == parser::ExprType::Column &&
+                            bin_expr->right().type() == parser::ExprType::Constant) {
+                            col_name = bin_expr->left().to_string();
+                            pred_val = bin_expr->right().evaluate(nullptr, nullptr, current_params_);
+                            eligible = true;
+                        } else if (bin_expr->right().type() == parser::ExprType::Column &&
+                                   bin_expr->left().type() == parser::ExprType::Constant) {
+                            col_name = bin_expr->right().to_string();
+                            pred_val = bin_expr->left().evaluate(nullptr, nullptr, current_params_);
+                            eligible = true;
+                        }
+
+                        if (eligible) {
+                            estimated_rows =
+                                optimizer::RowEstimator::estimate_filter_rows(*table_meta, col_name, pred_val);
+                        }
+                    }
+                }
+
+                // Fall back to scan estimate if no filter or not eligible for selectivity estimation
+                if (estimated_rows == 0) {
+                    estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+                }
+
                 // Use Vectorized for large scans (>10k rows — heuristic crossover point)
                 use_vectorized = estimated_rows > kVectorizedRowThreshold;
             }
