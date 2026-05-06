@@ -915,7 +915,8 @@ std::unique_ptr<Statement> Parser::parse_analyze() {
     (void)consume(TokenType::Table);
     const Token name = next_token();
     if (name.type() != TokenType::Identifier) {
-        std::cerr << "Parser Error: Missing table name. Current token: " << name.to_string() << "\n";
+        std::cerr << "Parser Error: Missing table name. Current token: " << name.to_string()
+                  << "\n";
         return nullptr;
     }
     return std::make_unique<AnalyzeStatement>(name.lexeme());
