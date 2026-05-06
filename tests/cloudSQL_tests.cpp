@@ -1300,9 +1300,17 @@ TEST(ExecutionTests, AnalyzeTable) {
     EXPECT_TRUE(table_info->columns[0].max_int.has_value());
     EXPECT_EQ(table_info->columns[0].min_int.value(), 1);
     EXPECT_EQ(table_info->columns[0].max_int.value(), 3);
+    // val column
+    EXPECT_EQ(table_info->columns[1].null_count, 0U);
     // txt column
     EXPECT_TRUE(table_info->columns[2].has_stats);
+    EXPECT_EQ(table_info->columns[2].null_count, 0U);
     EXPECT_EQ(table_info->columns[2].ndv.value(), 3U);  // 'A', 'B', 'C'
+    // String length stats for txt column ('A','B','C' are all length 1)
+    EXPECT_TRUE(table_info->columns[2].min_str_len.has_value());
+    EXPECT_TRUE(table_info->columns[2].max_str_len.has_value());
+    EXPECT_EQ(table_info->columns[2].min_str_len.value(), 1U);
+    EXPECT_EQ(table_info->columns[2].max_str_len.value(), 1U);
 
     // SELECT should still work after ANALYZE
     const auto res_select = exec.execute(

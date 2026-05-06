@@ -266,7 +266,7 @@ class Catalog : public raft::RaftStateMachine {
     /**
      * @brief Update column statistics
      */
-    bool update_column_stats(oid_t table_id, const std::string& col_name, ColumnInfo& stats);
+    bool update_column_stats(oid_t table_id, const std::string& col_name, const ColumnInfo& stats);
 
     /**
      * @brief Get column statistics

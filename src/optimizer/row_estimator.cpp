@@ -93,8 +93,15 @@ uint64_t RowEstimator::estimate_join_rows(const TableInfo& left, const TableInfo
         max_ndv = 1;
     }
 
-    uint64_t product = left.num_rows * right.num_rows;
-    return product / max_ndv;
+    // Use 128-bit intermediate to prevent overflow of |A| * |B|
+    unsigned __int128 product = static_cast<unsigned __int128>(left.num_rows) *
+                                static_cast<unsigned __int128>(right.num_rows);
+    uint64_t result = static_cast<uint64_t>(product / max_ndv);
+    // Saturate at UINT64_MAX if division produced a value that doesn't fit
+    if (product > static_cast<unsigned __int128>(UINT64_MAX) * max_ndv) {
+        result = UINT64_MAX;
+    }
+    return result;
 }
 
 }  // namespace cloudsql::optimizer

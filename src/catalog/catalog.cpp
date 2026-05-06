@@ -405,7 +405,7 @@ bool Catalog::update_table_stats(oid_t table_id, uint64_t num_rows) {
 /**
  * @brief Update column statistics
  */
-bool Catalog::update_column_stats(oid_t table_id, const std::string& col_name, ColumnInfo& stats) {
+bool Catalog::update_column_stats(oid_t table_id, const std::string& col_name, const ColumnInfo& stats) {
     auto table_opt = get_table(table_id);
     if (!table_opt.has_value()) {
         return false;
