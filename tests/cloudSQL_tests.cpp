@@ -1370,8 +1370,7 @@ TEST(ExecutionTests, AnalyzeTableNonExistent) {
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     const auto res = exec.execute(
-        *Parser(std::make_unique<Lexer>("ANALYZE TABLE nonexistent_table"))
-             .parse_statement());
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE nonexistent_table")).parse_statement());
     EXPECT_FALSE(res.success()) << "ANALYZE should fail for non-existent table";
     EXPECT_FALSE(res.error().empty());
 
@@ -1389,12 +1388,10 @@ TEST(ExecutionTests, AnalyzeTableEmpty) {
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(exec.execute(
-        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_empty (id INT)"))
-             .parse_statement()));
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_empty (id INT)")).parse_statement()));
 
     const auto res_analyze = exec.execute(
-        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_empty"))
-             .parse_statement());
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_empty")).parse_statement());
     EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
 
     auto table_opt = catalog->get_table_by_name("analyze_empty");
@@ -1424,8 +1421,7 @@ TEST(ExecutionTests, AnalyzeTableWithNulls) {
              .parse_statement()));
 
     const auto res_analyze = exec.execute(
-        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_nulls"))
-             .parse_statement());
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_nulls")).parse_statement());
     EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
 
     auto table_opt = catalog->get_table_by_name("analyze_nulls");
@@ -1448,8 +1444,7 @@ TEST(ExecutionTests, AnalyzeTableStringStats) {
     QueryExecutor exec(*catalog, sm, lm, tm);
 
     static_cast<void>(exec.execute(
-        *Parser(std::make_unique<Lexer>(
-                    "CREATE TABLE analyze_strings (id INT, txt TEXT)"))
+        *Parser(std::make_unique<Lexer>("CREATE TABLE analyze_strings (id INT, txt TEXT)"))
              .parse_statement()));
     static_cast<void>(exec.execute(
         *Parser(std::make_unique<Lexer>(
@@ -1457,8 +1452,7 @@ TEST(ExecutionTests, AnalyzeTableStringStats) {
              .parse_statement()));
 
     const auto res_analyze = exec.execute(
-        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_strings"))
-             .parse_statement());
+        *Parser(std::make_unique<Lexer>("ANALYZE TABLE analyze_strings")).parse_statement());
     EXPECT_TRUE(res_analyze.success()) << "ANALYZE TABLE failed";
 
     auto table_opt = catalog->get_table_by_name("analyze_strings");
@@ -1467,7 +1461,7 @@ TEST(ExecutionTests, AnalyzeTableStringStats) {
     // txt column should have string length stats
     EXPECT_TRUE(table_opt.value()->columns[1].has_stats);
     EXPECT_EQ(table_opt.value()->columns[1].min_str_len.value(), 1U);  // 'A'
-    EXPECT_EQ(table_opt.value()->columns[1].max_str_len.value(), 3U);    // 'CCC'
+    EXPECT_EQ(table_opt.value()->columns[1].max_str_len.value(), 3U);  // 'CCC'
 
     static_cast<void>(std::remove("./test_data/analyze_strings.heap"));
 }

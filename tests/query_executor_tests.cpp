@@ -17,6 +17,7 @@
 #include "common/config.hpp"
 #include "executor/query_executor.hpp"
 #include "executor/types.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
@@ -24,7 +25,6 @@
 #include "storage/buffer_pool_manager.hpp"
 #include "storage/heap_table.hpp"
 #include "storage/storage_manager.hpp"
-#include "optimizer/row_estimator.hpp"
 #include "transaction/lock_manager.hpp"
 #include "transaction/transaction_manager.hpp"
 
@@ -1413,8 +1413,7 @@ TEST_F(QueryExecutorTests, VerifyIndexInMetadata) {
 
 // ============= RowEstimator Unit Tests =============
 
-class RowEstimatorTests : public ::testing::Test {
-};
+class RowEstimatorTests : public ::testing::Test {};
 
 // EstimateScanRows tests
 TEST_F(RowEstimatorTests, EstimateScanRows_WithStats) {
