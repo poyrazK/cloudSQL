@@ -415,7 +415,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
             auto table_meta_opt = catalog_.get_table_by_name(table_name);
             if (table_meta_opt.has_value()) {
                 const auto* table_meta = table_meta_opt.value();
-                // Start with scan estimate as baseline; filter selectivity will override if eligible
+                // Start with scan estimate as baseline; filter selectivity will override if
+                // eligible
                 uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
 
                 // Use filter selectivity when WHERE clause is simple and stats available
@@ -447,7 +448,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                     }
                 }
 
-// Use Vectorized for large scans (>10k rows — heuristic crossover point)
+                // Use Vectorized for large scans (>10k rows — heuristic crossover point)
                 use_vectorized = estimated_rows > kVectorizedRowThreshold;
             }
         }
