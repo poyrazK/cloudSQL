@@ -1595,6 +1595,10 @@ TEST(ExecutionTests, AnalyzeJoinOrder) {
                                         "join_order_big.id = join_order_small.id"))
              .parse_statement());
     EXPECT_TRUE(res_join.success()) << "Join should succeed with ANALYZE stats";
+    // Verify correctness: small table has 100 rows (id 0-99), big table has 10000 (id 0-9999),
+    // so join on id should return exactly 100 rows.
+    EXPECT_EQ(res_join.rows().size(), 100)
+        << "Join should return 100 rows (small.id 0-99 match big.id 0-99)";
 
     static_cast<void>(std::remove("./test_data/join_order_big.heap"));
     static_cast<void>(std::remove("./test_data/join_order_small.heap"));
