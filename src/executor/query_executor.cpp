@@ -1623,8 +1623,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                 // Estimate reverse: join_table_meta ⋈ current_est_rows (probe = left)
                 ::cloudsql::TableInfo left_est;
                 left_est.num_rows = current_est_rows;
-                est_reverse = optimizer::RowEstimator::estimate_join_rows(*join_table_meta, left_est,
-                                                                          left_key_col);
+                est_reverse = optimizer::RowEstimator::estimate_join_rows(*join_table_meta,
+                                                                          left_est, left_key_col);
                 // If reverse order is smaller, swap the key expressions so build/probe flip.
                 // The VectorizedHashJoinOperator uses left child as build, right as probe —
                 // swapping keys redirects the hash table to the smaller side.
@@ -1640,7 +1640,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             }
 
             // Update estimated row count for the join result (for subsequent joins in chain)
-            current_est_rows = (est_reverse > 0 && est_reverse < est_forward) ? est_reverse : est_forward;
+            current_est_rows =
+                (est_reverse > 0 && est_reverse < est_forward) ? est_reverse : est_forward;
         }
 
         executor::Schema output_schema;
