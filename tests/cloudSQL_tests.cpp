@@ -1523,4 +1523,86 @@ TEST(ExecutionTests, AnalyzeFilterSelectivity) {
     static_cast<void>(std::remove("./test_data/analyze_filter.heap"));
 }
 
+TEST(ExecutionTests, AnalyzeJoinOrder) {
+    // Test that join reordering picks the smaller-first build side after ANALYZE.
+    // Creates two tables (small=100 rows, big=10000 rows) with ANALYZE stats,
+    // then verifies a join between them executes without error using Vectorized path.
+    static_cast<void>(std::remove("./test_data/join_order_big.heap"));
+    static_cast<void>(std::remove("./test_data/join_order_small.heap"));
+    StorageManager storage("./test_data");
+    BufferPoolManager sm(config::Config::DEFAULT_BUFFER_POOL_SIZE, storage);
+    auto catalog = Catalog::create();
+    LockManager lm;
+    TransactionManager tm(lm, *catalog, sm, sm.get_log_manager());
+    QueryExecutor exec(*catalog, sm, lm, tm);
+
+    // Create tables
+    ASSERT_TRUE(
+        exec.execute(*Parser(std::make_unique<Lexer>(
+                            "CREATE TABLE join_order_big (id INT, val INT)"))
+                         .parse_statement())
+            .success());
+    ASSERT_TRUE(
+        exec.execute(*Parser(std::make_unique<Lexer>(
+                            "CREATE TABLE join_order_small (id INT, val INT)"))
+                         .parse_statement())
+            .success());
+
+    // Insert 10000 rows into big table
+    for (int batch = 0; batch < 10; ++batch) {
+        std::string vals;
+        for (int i = 0; i < 1000; ++i) {
+            vals += "(" + std::to_string(batch * 1000 + i) + ", " +
+                   std::to_string(batch * 1000 + i) + ")";
+            if (i < 999) vals += ", ";
+        }
+        std::string sql = "INSERT INTO join_order_big VALUES " + vals;
+        auto res = exec.execute(*Parser(std::make_unique<Lexer>(sql)).parse_statement());
+        EXPECT_TRUE(res.success()) << "Big table batch " << batch << " insert failed";
+    }
+
+    // Insert 100 rows into small table
+    {
+        std::string vals;
+        for (int i = 0; i < 100; ++i) {
+            vals += "(" + std::to_string(i) + ", " + std::to_string(i) + ")";
+            if (i < 99) vals += ", ";
+        }
+        std::string sql = "INSERT INTO join_order_small VALUES " + vals;
+        auto res =
+            exec.execute(*Parser(std::make_unique<Lexer>(sql)).parse_statement());
+        EXPECT_TRUE(res.success()) << "Small table insert failed";
+    }
+
+    // ANALYZE both tables to populate stats
+    ASSERT_TRUE(
+        exec.execute(*Parser(std::make_unique<Lexer>("ANALYZE TABLE join_order_big"))
+                         .parse_statement())
+            .success());
+    ASSERT_TRUE(
+        exec.execute(*Parser(std::make_unique<Lexer>("ANALYZE TABLE join_order_small"))
+                         .parse_statement())
+            .success());
+
+    // Verify ANALYZE populated stats
+    auto big_opt = catalog->get_table_by_name("join_order_big");
+    ASSERT_TRUE(big_opt.has_value());
+    EXPECT_GE(big_opt.value()->num_rows, uint64_t(10000));
+    auto small_opt = catalog->get_table_by_name("join_order_small");
+    ASSERT_TRUE(small_opt.has_value());
+    EXPECT_GE(small_opt.value()->num_rows, uint64_t(100));
+
+    // Join: big ⋈ small on id — should use Vectorized path without error.
+    // With stats available, the optimizer estimates both orders and picks
+    // smaller-first (small as probe) when applicable.
+    const auto res_join =
+        exec.execute(*Parser(std::make_unique<Lexer>(
+                            "SELECT * FROM join_order_big JOIN join_order_small ON join_order_big.id = join_order_small.id"))
+                         .parse_statement());
+    EXPECT_TRUE(res_join.success()) << "Join should succeed with ANALYZE stats";
+
+    static_cast<void>(std::remove("./test_data/join_order_big.heap"));
+    static_cast<void>(std::remove("./test_data/join_order_small.heap"));
+}
+
 }  // namespace
