@@ -415,7 +415,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
             auto table_meta_opt = catalog_.get_table_by_name(table_name);
             if (table_meta_opt.has_value()) {
                 const auto* table_meta = table_meta_opt.value();
-                uint64_t estimated_rows = 0;
+                // Start with scan estimate as baseline; filter selectivity will override if eligible
+                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
 
                 // Use filter selectivity when WHERE clause is simple and stats available
                 if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary) {
@@ -446,13 +447,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                     }
                 }
 
-                // Fall back to scan estimate if no filter or not eligible for selectivity
-                // estimation
-                if (estimated_rows == 0) {
-                    estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
-                }
-
-                // Use Vectorized for large scans (>10k rows — heuristic crossover point)
+// Use Vectorized for large scans (>10k rows — heuristic crossover point)
                 use_vectorized = estimated_rows > kVectorizedRowThreshold;
             }
         }
@@ -1600,12 +1595,15 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         }
 
         // Join reordering: estimate both join orders and pick the smaller-first approach.
-        // This heuristic puts the side estimated to produce fewer rows as the build (probe-side
-        // hash table) to reduce memory footprint and hash probe cost.
+        // This heuristic puts the side estimated to produce fewer rows as the build (hashed) side
+        // to reduce hash table memory footprint and probe cost.
         // Note: For multi-join chains, current_root may already be a join result — we use its
         // estimated cardinality as the "left" side estimate.
         std::string left_key_col = left_key ? left_key->to_string() : "";
         std::string right_key_col = right_key ? right_key->to_string() : "";
+        // NOTE: column lookup depends on expression to_string() format stability.
+        // If the printer format changes, get_column() silently fails and we fall back
+        // to cross-product estimate. Consider using column position indices instead.
         uint64_t est_forward = 0;
         uint64_t est_reverse = 0;
         if (!left_key_col.empty() && !right_key_col.empty()) {
