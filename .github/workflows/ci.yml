@@ -28,6 +28,7 @@ jobs:
   build:
     needs: style-check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         compiler: [clang++, g++]
@@ -39,10 +40,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake clang clang-tidy llvm ninja-build ccache || (sleep 10 && sudo apt-get update && sudo apt-get install -y cmake clang clang-tidy llvm ninja-build ccache)
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: cmake clang clang-tidy llvm ninja-build ccache
+        version: 1.0
 
     - name: Cache ccache
       uses: actions/cache@v4
@@ -83,6 +85,7 @@ jobs:
   test:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         compiler: [clang++, g++]
