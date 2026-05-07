@@ -429,7 +429,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                         if (bin_expr->left().type() == parser::ExprType::Column &&
                             bin_expr->right().type() == parser::ExprType::Constant) {
                             col_name = bin_expr->left().to_string();
-                            pred_val = bin_expr->right().evaluate(nullptr, nullptr, current_params_);
+                            pred_val =
+                                bin_expr->right().evaluate(nullptr, nullptr, current_params_);
                             eligible = true;
                         } else if (bin_expr->right().type() == parser::ExprType::Column &&
                                    bin_expr->left().type() == parser::ExprType::Constant) {
@@ -439,13 +440,14 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                         }
 
                         if (eligible) {
-                            estimated_rows =
-                                optimizer::RowEstimator::estimate_filter_rows(*table_meta, col_name, pred_val);
+                            estimated_rows = optimizer::RowEstimator::estimate_filter_rows(
+                                *table_meta, col_name, pred_val);
                         }
                     }
                 }
 
-                // Fall back to scan estimate if no filter or not eligible for selectivity estimation
+                // Fall back to scan estimate if no filter or not eligible for selectivity
+                // estimation
                 if (estimated_rows == 0) {
                     estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
                 }
@@ -1614,8 +1616,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             // Estimate reverse: join_table_meta ⋈ current_est_rows (probe = left)
             ::cloudsql::TableInfo left_est;
             left_est.num_rows = current_est_rows;
-            est_reverse = optimizer::RowEstimator::estimate_join_rows(
-                *join_table_meta, left_est, left_key_col);
+            est_reverse = optimizer::RowEstimator::estimate_join_rows(*join_table_meta, left_est,
+                                                                      left_key_col);
             // If reverse order is smaller, swap the key expressions so build/probe flip.
             // The VectorizedHashJoinOperator uses left child as build, right as probe —
             // swapping keys redirects the hash table to the smaller side.
@@ -1652,7 +1654,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             std::move(right_key), exec_join_type, output_schema);
 
         // Update estimated row count for the join result (for subsequent joins in the chain)
-        current_est_rows = (est_reverse < est_forward && est_reverse > 0) ? est_reverse : est_forward;
+        current_est_rows =
+            (est_reverse < est_forward && est_reverse > 0) ? est_reverse : est_forward;
 
         current_root = std::move(join_op);
     }
