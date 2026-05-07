@@ -1595,42 +1595,7 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             return nullptr;  // Vectorized path only supports equi-joins
         }
 
-        // Join reordering: estimate both join orders and pick the smaller-first approach.
-        // This heuristic puts the side estimated to produce fewer rows as the build (hashed) side
-        // to reduce hash table memory footprint and probe cost.
-        // Note: For multi-join chains, current_root may already be a join result — we use its
-        // estimated cardinality as the "left" side estimate.
-        std::string left_key_col = left_key ? left_key->to_string() : "";
-        std::string right_key_col = right_key ? right_key->to_string() : "";
-        // NOTE: column lookup depends on expression to_string() format stability.
-        // If the printer format changes, get_column() silently fails and we fall back
-        // to cross-product estimate. Consider using column position indices instead.
-        uint64_t est_forward = 0;
-        uint64_t est_reverse = 0;
-        if (!left_key_col.empty() && !right_key_col.empty()) {
-            // Estimate forward: current_est_rows ⋈ join_table_meta (probe = right)
-            est_forward = optimizer::RowEstimator::estimate_join_rows(
-                ::cloudsql::TableInfo{0, "", {}, {}, {}, current_est_rows, "", 0, 0},
-                *join_table_meta, right_key_col);
-            // Estimate reverse: join_table_meta ⋈ current_est_rows (probe = left)
-            ::cloudsql::TableInfo left_est;
-            left_est.num_rows = current_est_rows;
-            est_reverse = optimizer::RowEstimator::estimate_join_rows(*join_table_meta, left_est,
-                                                                      left_key_col);
-            // If reverse order is smaller, swap the key expressions so build/probe flip.
-            // The VectorizedHashJoinOperator uses left child as build, right as probe —
-            // swapping keys redirects the hash table to the smaller side.
-            if (est_reverse < est_forward && est_reverse > 0) {
-                // Swap left_key and right_key to redirect build to the smaller side
-                auto swapped_left = std::move(right_key);
-                auto swapped_right = std::move(left_key);
-                left_key = std::move(swapped_left);
-                right_key = std::move(swapped_right);
-                // Also swap the schema-based key column names for output schema ordering
-                std::swap(left_key_col, right_key_col);
-            }
-        }
-
+        // Determine join type — needed before reordering to gate outer joins
         executor::JoinType exec_join_type = executor::JoinType::Inner;
         if (join.type == parser::SelectStatement::JoinType::Left) {
             exec_join_type = executor::JoinType::Left;
@@ -1638,6 +1603,44 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             exec_join_type = executor::JoinType::Right;
         } else if (join.type == parser::SelectStatement::JoinType::Full) {
             exec_join_type = executor::JoinType::Full;
+        }
+
+        // Join reordering: estimate both join orders and pick the smaller-first approach.
+        // Only applies to inner joins — outer join semantics require preserving build/probe sides.
+        if (exec_join_type == executor::JoinType::Inner) {
+            std::string left_key_col = left_key ? left_key->to_string() : "";
+            std::string right_key_col = right_key ? right_key->to_string() : "";
+            // NOTE: column lookup depends on expression to_string() format stability.
+            // If the printer format changes, get_column() silently fails and we fall back
+            // to cross-product estimate. Consider using column position indices instead.
+            uint64_t est_forward = 0;
+            uint64_t est_reverse = 0;
+            if (!left_key_col.empty() && !right_key_col.empty()) {
+                // Estimate forward: current_est_rows ⋈ join_table_meta (probe = right)
+                est_forward = optimizer::RowEstimator::estimate_join_rows(
+                    ::cloudsql::TableInfo{0, "", {}, {}, {}, current_est_rows, "", 0, 0},
+                    *join_table_meta, right_key_col);
+                // Estimate reverse: join_table_meta ⋈ current_est_rows (probe = left)
+                ::cloudsql::TableInfo left_est;
+                left_est.num_rows = current_est_rows;
+                est_reverse = optimizer::RowEstimator::estimate_join_rows(*join_table_meta, left_est,
+                                                                          left_key_col);
+                // If reverse order is smaller, swap the key expressions so build/probe flip.
+                // The VectorizedHashJoinOperator uses left child as build, right as probe —
+                // swapping keys redirects the hash table to the smaller side.
+                if (est_reverse < est_forward && est_reverse > 0) {
+                    // Swap left_key and right_key to redirect build to the smaller side
+                    auto swapped_left = std::move(right_key);
+                    auto swapped_right = std::move(left_key);
+                    left_key = std::move(swapped_left);
+                    right_key = std::move(swapped_right);
+                    // Also swap the schema-based key column names for output schema ordering
+                    std::swap(left_key_col, right_key_col);
+                }
+            }
+
+            // Update estimated row count for the join result (for subsequent joins in chain)
+            current_est_rows = (est_reverse > 0 && est_reverse < est_forward) ? est_reverse : est_forward;
         }
 
         executor::Schema output_schema;
@@ -1651,10 +1654,6 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         auto join_op = std::make_unique<VectorizedHashJoinOperator>(
             std::move(current_root), std::move(right_scan), std::move(left_key),
             std::move(right_key), exec_join_type, output_schema);
-
-        // Update estimated row count for the join result (for subsequent joins in the chain)
-        current_est_rows =
-            (est_reverse < est_forward && est_reverse > 0) ? est_reverse : est_forward;
 
         current_root = std::move(join_op);
     }
