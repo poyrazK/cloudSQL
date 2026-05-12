@@ -284,4 +284,58 @@ TEST(CatalogCoverageTests, PrintDoesNotCrash) {
     EXPECT_NO_THROW(catalog->print());
 }
 
+// ============= save()/load() Failure Paths =============
+
+TEST(CatalogCoverageTests, Save_Failure_ReturnsFalse) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+    catalog->create_table("save_test", cols);
+
+    // Try to save to an unwritable path - should return false
+    bool result = catalog->save("/root/impossible_path/catalog.bin");
+    EXPECT_FALSE(result);
+}
+
+TEST(CatalogCoverageTests, Load_FileNotFound_ReturnsFalse) {
+    auto catalog = Catalog::create();
+
+    // Try to load from nonexistent file - should return false
+    bool result = catalog->load("/nonexistent/path/catalog.bin");
+    EXPECT_FALSE(result);
+}
+
+// ============= drop_index() Edge Cases =============
+
+TEST(CatalogCoverageTests, DropIndex_OnNonexistentIndex_ReturnsFalse) {
+    auto catalog = Catalog::create();
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+    oid_t tid = catalog->create_table("drop_idx_test", cols);
+    ASSERT_NE(tid, 0);
+
+    // Create an index
+    catalog->create_index("idx_valid", tid, {0}, IndexType::BTree, false);
+
+    // Try to drop non-existent index - should return false
+    bool result = catalog->drop_index(9999);
+    EXPECT_FALSE(result);
+}
+
+// ============= apply() Error Handling =============
+
+TEST(CatalogCoverageTests, Apply_WithEmptyEntry_ReturnsEarly) {
+    auto catalog = Catalog::create();
+
+    // Create a table first
+    std::vector<ColumnInfo> cols = {{"id", common::ValueType::TYPE_INT64, 0}};
+    catalog->create_table("apply_test", cols);
+
+    // Apply empty entry - should return early at empty check
+    raft::LogEntry empty_entry;
+    empty_entry.data.clear();
+    catalog->apply(empty_entry);
+
+    // Table should still exist unchanged
+    EXPECT_TRUE(catalog->table_exists_by_name("apply_test"));
+}
+
 }  // namespace
