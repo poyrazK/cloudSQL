@@ -297,8 +297,8 @@ TEST(ConfigTests, Save_EmptyFilename) {
 
 TEST(ConfigTests, Save_UnwritablePath) {
     Config cfg;
-    // Use an existing directory to guarantee failure - writing a file to a directory path fails
-    EXPECT_FALSE(cfg.save(std::filesystem::temp_directory_path()));
+    // Use "." (current directory) as path - attempting to save as a file named "." fails
+    EXPECT_FALSE(cfg.save("."));
     cleanup("test.cfg");
 }
 
