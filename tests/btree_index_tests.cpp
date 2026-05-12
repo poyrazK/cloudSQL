@@ -710,7 +710,6 @@ TEST_F(BTreeIndexTests, ScanIterator_INT8KeyRoundTrip) {
     BTreeIndex::Entry e;
     ASSERT_TRUE(it.next(e));
 
-    // Due to the bug, key type is TYPE_TEXT but value string is correct
     EXPECT_EQ(e.key.to_string(), "123");
     EXPECT_EQ(e.tuple_id.page_num, 7U);
     EXPECT_EQ(e.tuple_id.slot_num, 3U);

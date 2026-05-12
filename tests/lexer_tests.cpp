@@ -689,19 +689,18 @@ TEST(LexerTests, Keyword_IF_DROP_INDEX) {
 // ============= Number Edge Case Tests =============
 
 TEST(LexerTests, Number_FloatWithMultipleDecimalPoints) {
-    // Multiple decimal points - should produce error or parse what it can
+    // Multiple decimal points - lexer may produce Error or parse partial number
     auto lexer = make_lexer("3.14.159");
     Token token = lexer.next_token();
-    // Implementation may produce Number or Error depending on handling
-    (void)token;
+    EXPECT_TRUE(token.type() == TokenType::Number || token.type() == TokenType::Error);
 }
 
 TEST(LexerTests, Number_VeryLargeInteger) {
-    // Very large integer that might overflow and trigger stod fallback
+    // Very large integer - may overflow to Error or parse as Number
     auto lexer = make_lexer("99999999999999999999999999999");
     Token token = lexer.next_token();
-    // Should still produce a token (either Number or Error)
-    EXPECT_NE(token.type(), TokenType::End);
+    EXPECT_TRUE(token.type() == TokenType::Number || token.type() == TokenType::Error);
+    EXPECT_FALSE(token.lexeme().empty());
 }
 
 // ============= Error Character Tests =============

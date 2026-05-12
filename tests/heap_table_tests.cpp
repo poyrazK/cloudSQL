@@ -1022,31 +1022,24 @@ TEST_F(HeapTableTests, TupleView_Materialize_EmptyColumnMapping) {
     EXPECT_EQ(materialized.get(1).as_int64(), 200);
 }
 
-// ============= Iterator Empty Page Skip Tests =============
+// ============= Iterator Page Boundary Tests =============
 
-TEST_F(HeapTableTests, Iterator_AdvancePastEmptyPage) {
-    // Test that iterator correctly advances past a page with all-zero slot offsets
+TEST_F(HeapTableTests, Iterator_SinglePageIteration) {
+    // Verify iterator works correctly on a single-page table
     auto schema = std::make_unique<Schema>();
     schema->add_column("id", ValueType::TYPE_INT64, false);
 
-    HeapTable table("empty_page_test", *bpm_, *schema);
+    HeapTable table("single_page_iter_test", *bpm_, *schema);
     ASSERT_TRUE(table.create());
 
-    // Insert one tuple to create first data page
     auto tuple = Tuple({Value::make_int64(1)});
     auto rid = table.insert(tuple);
     ASSERT_FALSE(rid.is_null());
 
-    // Create an empty page file (simulating a page with no valid tuples)
-    // We can't directly manipulate page files, but we can test that iterator
-    // handles having only one page with one tuple correctly
     auto it = table.scan();
     Tuple out;
     ASSERT_TRUE(it.next(out));
     EXPECT_EQ(out.get(0).as_int64(), 1);
-
-    // If we could create an empty page, iterator should skip it
-    // This test verifies the base case works correctly
 }
 
 TEST_F(HeapTableTests, Iterator_MultipleEmptyPages) {
@@ -1081,29 +1074,23 @@ TEST_F(HeapTableTests, Iterator_MultipleEmptyPages) {
 
 // ============= Iterator Record Error Handling Tests =============
 
-TEST_F(HeapTableTests, Iterator_NextView_RecordLenTooSmall) {
-    // Test that next_view returns false when record_len < 18 (header size)
-    // This exercises the error path at lines 825-831
+TEST_F(HeapTableTests, Iterator_NextView_ValidRecord) {
+    // Verify next_view works correctly for valid records
+    // Note: Error path for record_len < 18 cannot be exercised without
+    // corrupting a page file, which is not possible from tests
     auto schema = std::make_unique<Schema>();
     schema->add_column("x", ValueType::TYPE_INT64, false);
 
     HeapTable table("record_len_test", *bpm_, *schema);
     ASSERT_TRUE(table.create());
 
-    // Insert a valid tuple first
     auto tuple = Tuple({Value::make_int64(999)});
     auto rid = table.insert(tuple);
     ASSERT_FALSE(rid.is_null());
 
-    // Iterate to verify normal case works
     auto it = table.scan();
     HeapTable::TupleView view;
     ASSERT_TRUE(it.next_view(view));
-
-    // The error path for record_len < 18 is exercised when:
-    // - A page has a slot offset pointing to a record that's truncated
-    // We can't directly corrupt a page from tests, but we verify the
-    // iterator's error handling works by checking the method exists and returns properly
 }
 
 // ============= Iterator NextView Schema Tests =============
