@@ -987,8 +987,8 @@ TEST_F(HeapTableTests, TupleView_Materialize_WithColumnMapping) {
     view.column_mapping = &col_map;
 
     // Materialize returns a Tuple, may need to handle nullptr column_mapping case
-    // The materialize() function signature: executor::Tuple materialize(std::pmr::memory_resource* mr = nullptr) const
-    // It will use column_mapping if set, otherwise fall back to schema
+    // The materialize() function signature: executor::Tuple materialize(std::pmr::memory_resource*
+    // mr = nullptr) const It will use column_mapping if set, otherwise fall back to schema
     auto materialized = view.materialize();
 
     // Verify the tuple was materialized correctly
@@ -1119,11 +1119,7 @@ TEST_F(HeapTableTests, Iterator_NextView_ReturnsTupleView_WithCorrectSchema) {
     ASSERT_TRUE(table.create());
 
     // Insert a tuple
-    auto tuple = Tuple({
-        Value::make_text("Bob"),
-        Value::make_int64(30),
-        Value::make_int64(85)
-    });
+    auto tuple = Tuple({Value::make_text("Bob"), Value::make_int64(30), Value::make_int64(85)});
     auto rid = table.insert(tuple);
     ASSERT_FALSE(rid.is_null());
 

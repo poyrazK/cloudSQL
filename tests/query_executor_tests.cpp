@@ -1451,8 +1451,7 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyNonExistentTable) {
 
     std::string table_name = "non_existent_table_xyz";
     uint32_t table_len = static_cast<uint32_t>(table_name.size());
-    entry_data.insert(entry_data.end(),
-                      reinterpret_cast<uint8_t*>(&table_len),
+    entry_data.insert(entry_data.end(), reinterpret_cast<uint8_t*>(&table_len),
                       reinterpret_cast<uint8_t*>(&table_len) + 4);
     entry_data.insert(entry_data.end(), table_name.begin(), table_name.end());
 
@@ -1477,8 +1476,7 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyUnknownType) {
 
     std::string table_name = "shard_unk";
     uint32_t table_len = static_cast<uint32_t>(table_name.size());
-    entry_data.insert(entry_data.end(),
-                      reinterpret_cast<uint8_t*>(&table_len),
+    entry_data.insert(entry_data.end(), reinterpret_cast<uint8_t*>(&table_len),
                       reinterpret_cast<uint8_t*>(&table_len) + 4);
     entry_data.insert(entry_data.end(), table_name.begin(), table_name.end());
 

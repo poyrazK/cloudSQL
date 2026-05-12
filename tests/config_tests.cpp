@@ -107,7 +107,7 @@ TEST(ConfigTests, Load_EmptyFile) {
     }
 
     Config cfg;
-    EXPECT_TRUE(cfg.load(filename));  // Empty file is valid (uses defaults)
+    EXPECT_TRUE(cfg.load(filename));            // Empty file is valid (uses defaults)
     EXPECT_EQ(cfg.port, Config::DEFAULT_PORT);  // Defaults preserved
 
     cleanup(filename);
@@ -340,8 +340,7 @@ TEST(ConfigTests, Save_CoordinatorMode) {
 
     // Verify file contains "coordinator"
     std::ifstream f(filename);
-    std::string content((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     EXPECT_TRUE(content.find("mode=coordinator") != std::string::npos);
 
     cleanup(filename);
@@ -356,8 +355,7 @@ TEST(ConfigTests, Save_DataMode) {
     EXPECT_TRUE(cfg.save(filename));
 
     std::ifstream f(filename);
-    std::string content((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     EXPECT_TRUE(content.find("mode=data") != std::string::npos);
 
     cleanup(filename);
@@ -372,8 +370,7 @@ TEST(ConfigTests, Save_StandaloneMode) {
     EXPECT_TRUE(cfg.save(filename));
 
     std::ifstream f(filename);
-    std::string content((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     EXPECT_TRUE(content.find("mode=standalone") != std::string::npos);
 
     cleanup(filename);

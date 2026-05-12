@@ -1222,7 +1222,8 @@ TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_EmptyTable_ReturnsEarly
                                  reply.schema.add_column("id", common::ValueType::TYPE_INT32);
                                  network::RpcHeader resp_h;
                                  resp_h.type = network::RpcType::QueryResults;
-                                 resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+                                 resp_h.payload_len =
+                                     static_cast<uint16_t>(reply.serialize().size());
                                  char h_buf[network::RpcHeader::HEADER_SIZE];
                                  resp_h.encode(h_buf);
                                  send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
@@ -1279,36 +1280,36 @@ TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_MultipleNodes_PushesToA
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, make_fetch_handler(row));
 
     // Handler for PushData - just count calls
-    servers_[0]->set_handler(network::RpcType::PushData,
-                             [&pushdata_count](const network::RpcHeader&, const std::vector<uint8_t>&,
-                                              int fd) {
-                                 ++pushdata_count;
-                                 network::QueryResultsReply reply;
-                                 reply.success = true;
-                                 network::RpcHeader resp_h;
-                                 resp_h.type = network::RpcType::QueryResults;
-                                 resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                                 char h_buf[network::RpcHeader::HEADER_SIZE];
-                                 resp_h.encode(h_buf);
-                                 send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                                 auto data = reply.serialize();
-                                 if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                             });
-    servers_[1]->set_handler(network::RpcType::PushData,
-                             [&pushdata_count](const network::RpcHeader&, const std::vector<uint8_t>&,
-                                              int fd) {
-                                 ++pushdata_count;
-                                 network::QueryResultsReply reply;
-                                 reply.success = true;
-                                 network::RpcHeader resp_h;
-                                 resp_h.type = network::RpcType::QueryResults;
-                                 resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-                                 char h_buf[network::RpcHeader::HEADER_SIZE];
-                                 resp_h.encode(h_buf);
-                                 send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-                                 auto data = reply.serialize();
-                                 if (!data.empty()) send(fd, data.data(), data.size(), 0);
-                             });
+    servers_[0]->set_handler(
+        network::RpcType::PushData,
+        [&pushdata_count](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            ++pushdata_count;
+            network::QueryResultsReply reply;
+            reply.success = true;
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
+    servers_[1]->set_handler(
+        network::RpcType::PushData,
+        [&pushdata_count](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            ++pushdata_count;
+            network::QueryResultsReply reply;
+            reply.success = true;
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
 
     // Create table locally
     auto lexer = std::make_unique<Lexer>("CREATE TABLE broadcast_multi (id INT)");
