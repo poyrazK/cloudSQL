@@ -1414,7 +1414,13 @@ TEST_F(QueryExecutorTests, VerifyIndexInMetadata) {
 
 // ============= ShardStateMachine Tests =============
 
-TEST_F(QueryExecutorTests, ShardStateMachine_ApplyEmptyEntry) {
+class ShardStateMachineTests : public ::testing::Test {
+   protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(ShardStateMachineTests, ShardStateMachine_ApplyEmptyEntry) {
     TestEnvironment env;
 
     executor::ShardStateMachine sm("any_table", env.bpm, *env.catalog);
@@ -1422,13 +1428,13 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyEmptyEntry) {
     raft::LogEntry empty_entry;
     empty_entry.data = {};  // Empty data
 
-    sm.apply(empty_entry);  // Should return early at line 74 (entry.data.empty())
+    sm.apply(empty_entry);  // no-op for empty entry
 
     // Should not crash - empty entry is handled
     SUCCEED();
 }
 
-TEST_F(QueryExecutorTests, ShardStateMachine_ApplyTruncatedHeader) {
+TEST_F(ShardStateMachineTests, ShardStateMachine_ApplyTruncatedHeader) {
     TestEnvironment env;
 
     executor::ShardStateMachine sm("any_table", env.bpm, *env.catalog);
@@ -1442,7 +1448,7 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyTruncatedHeader) {
     SUCCEED();
 }
 
-TEST_F(QueryExecutorTests, ShardStateMachine_ApplyNonExistentTable) {
+TEST_F(ShardStateMachineTests, ShardStateMachine_ApplyNonExistentTable) {
     TestEnvironment env;
 
     // Build binary log entry for non-existent table
@@ -1451,20 +1457,23 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyNonExistentTable) {
 
     std::string table_name = "non_existent_table_xyz";
     uint32_t table_len = static_cast<uint32_t>(table_name.size());
-    entry_data.insert(entry_data.end(), reinterpret_cast<uint8_t*>(&table_len),
-                      reinterpret_cast<uint8_t*>(&table_len) + 4);
+    // Write table_len in little-endian byte order for platform independence
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 0) & 0xFF));
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 8) & 0xFF));
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 16) & 0xFF));
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 24) & 0xFF));
     entry_data.insert(entry_data.end(), table_name.begin(), table_name.end());
 
     raft::LogEntry entry;
     entry.data = std::move(entry_data);
 
     executor::ShardStateMachine sm("non_existent_table_xyz", env.bpm, *env.catalog);
-    sm.apply(entry);  // Should return early at line 93 (table not found)
+    sm.apply(entry);  // Should return early when table not found
 
     SUCCEED();  // Should not hang on non-existent table
 }
 
-TEST_F(QueryExecutorTests, ShardStateMachine_ApplyUnknownType) {
+TEST_F(ShardStateMachineTests, ShardStateMachine_ApplyUnknownType) {
     TestEnvironment env;
 
     // Create table
@@ -1476,8 +1485,11 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyUnknownType) {
 
     std::string table_name = "shard_unk";
     uint32_t table_len = static_cast<uint32_t>(table_name.size());
-    entry_data.insert(entry_data.end(), reinterpret_cast<uint8_t*>(&table_len),
-                      reinterpret_cast<uint8_t*>(&table_len) + 4);
+    // Write table_len in little-endian byte order for platform independence
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 0) & 0xFF));
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 8) & 0xFF));
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 16) & 0xFF));
+    entry_data.push_back(static_cast<uint8_t>((table_len >> 24) & 0xFF));
     entry_data.insert(entry_data.end(), table_name.begin(), table_name.end());
 
     raft::LogEntry entry;

@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <string>
 
 #include "common/config.hpp"
 
@@ -296,7 +297,8 @@ TEST(ConfigTests, Save_EmptyFilename) {
 
 TEST(ConfigTests, Save_UnwritablePath) {
     Config cfg;
-    EXPECT_FALSE(cfg.save("/root/impossible_path/config.cfg"));
+    // Use an existing directory to guarantee failure - writing a file to a directory path fails
+    EXPECT_FALSE(cfg.save(std::filesystem::temp_directory_path()));
     cleanup("test.cfg");
 }
 

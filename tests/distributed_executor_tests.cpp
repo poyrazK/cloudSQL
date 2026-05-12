@@ -1129,6 +1129,7 @@ TEST_F(DistributedExecutorTests, Join_CrossNotSupported_ReturnsError) {
 
     auto res = exec_->execute(*stmt, "SELECT * FROM t1 CROSS JOIN t2 ON t1.id = t2.id");
     // May return error for unsupported join type
+    ASSERT_FALSE(res.success()) << "CROSS JOIN should return error";
     (void)res;
 }
 
@@ -1141,6 +1142,7 @@ TEST_F(DistributedExecutorTests, Join_NaturalNotSupported_ReturnsError) {
 
     auto res = exec_->execute(*stmt, "SELECT * FROM t1 NATURAL JOIN t2");
     // May return error for unsupported join type
+    ASSERT_FALSE(res.success()) << "NATURAL JOIN should return error";
     (void)res;
 }
 
@@ -1160,9 +1162,8 @@ TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_Basic) {
         exec_->execute(*stmt, "CREATE TABLE bt_test (id INT, val TEXT)");
     }
 
-    // Note: broadcast_table requires actual distributed setup to be meaningful
-    // This just verifies the function doesn't crash with weak setup
-    (void)temp_path;
+    // Actually invoke broadcast_table to exercise the code path
+    EXPECT_NO_THROW(exec_->broadcast_table("bt_test"));
 }
 
 // ============= Leader-Aware Routing Tests =============
