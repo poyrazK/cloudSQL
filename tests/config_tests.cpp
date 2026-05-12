@@ -640,7 +640,7 @@ TEST(ConfigTests, Load_InvalidKeyValuePair) {
     // stoi will throw exception - the load will catch it or fail
     Config cfg;
     // This test documents current behavior - stoi throws on non-numeric
-    EXPECT_THROW(cfg.load(filename), std::exception);
+    EXPECT_THROW((void)cfg.load(filename), std::exception);
 
     cleanup(filename);
 }
