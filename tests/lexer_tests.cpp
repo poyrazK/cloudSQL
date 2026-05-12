@@ -628,4 +628,92 @@ TEST(LexerTests, CommentOnlyInput) {
     EXPECT_EQ(tokens.back().type(), TokenType::End);
 }
 
+// ============= Param Token Tests =============
+
+TEST(LexerTests, Token_ParamMarker) {
+    auto lexer = make_lexer("?");
+    Token token = lexer.next_token();
+    EXPECT_EQ(token.type(), TokenType::Param);
+    EXPECT_EQ(token.lexeme(), "?");
+}
+
+// ============= Keyword Coverage Tests =============
+
+TEST(LexerTests, Keyword_IN) {
+    auto lexer = make_lexer("IN");
+    Token token = lexer.next_token();
+    EXPECT_EQ(token.type(), TokenType::In);
+    EXPECT_EQ(token.lexeme(), "IN");
+}
+
+TEST(LexerTests, Keyword_LIKE) {
+    auto lexer = make_lexer("LIKE");
+    Token token = lexer.next_token();
+    EXPECT_EQ(token.type(), TokenType::Like);
+    EXPECT_EQ(token.lexeme(), "LIKE");
+}
+
+TEST(LexerTests, Keyword_EXISTS) {
+    auto lexer = make_lexer("EXISTS");
+    Token token = lexer.next_token();
+    EXPECT_EQ(token.type(), TokenType::Exists);
+    EXPECT_EQ(token.lexeme(), "EXISTS");
+}
+
+TEST(LexerTests, Keyword_BEGIN_COMMIT_ROLLBACK) {
+    auto tokens = tokenize("BEGIN COMMIT ROLLBACK");
+    ASSERT_GE(tokens.size(), 4);
+    EXPECT_EQ(tokens[0].type(), TokenType::Begin);
+    EXPECT_EQ(tokens[1].type(), TokenType::Commit);
+    EXPECT_EQ(tokens[2].type(), TokenType::Rollback);
+}
+
+TEST(LexerTests, Keyword_LEFT_RIGHT_INNER_OUTER_FULL) {
+    auto tokens = tokenize("LEFT RIGHT INNER OUTER FULL");
+    ASSERT_GE(tokens.size(), 6);
+    EXPECT_EQ(tokens[0].type(), TokenType::Left);
+    EXPECT_EQ(tokens[1].type(), TokenType::Right);
+    EXPECT_EQ(tokens[2].type(), TokenType::Inner);
+    EXPECT_EQ(tokens[3].type(), TokenType::Outer);
+    EXPECT_EQ(tokens[4].type(), TokenType::Full);
+}
+
+TEST(LexerTests, Keyword_IF_DROP_INDEX) {
+    auto tokens = tokenize("IF DROP INDEX");
+    ASSERT_GE(tokens.size(), 4);
+    EXPECT_EQ(tokens[0].type(), TokenType::If);
+    EXPECT_EQ(tokens[1].type(), TokenType::Drop);
+    EXPECT_EQ(tokens[2].type(), TokenType::Index);
+}
+
+// ============= Number Edge Case Tests =============
+
+TEST(LexerTests, Number_FloatWithMultipleDecimalPoints) {
+    // Multiple decimal points - should produce error or parse what it can
+    auto lexer = make_lexer("3.14.159");
+    Token token = lexer.next_token();
+    // Implementation may produce Number or Error depending on handling
+    (void)token;
+}
+
+TEST(LexerTests, Number_VeryLargeInteger) {
+    // Very large integer that might overflow and trigger stod fallback
+    auto lexer = make_lexer("99999999999999999999999999999");
+    Token token = lexer.next_token();
+    // Should still produce a token (either Number or Error)
+    EXPECT_NE(token.type(), TokenType::End);
+}
+
+// ============= Error Character Tests =============
+
+TEST(LexerTests, Error_InvalidCharacters) {
+    // Invalid characters should produce error tokens
+    auto tokens = tokenize("# $ & ~");
+    ASSERT_GE(tokens.size(), 1);
+    // Each invalid char produces an error token
+    for (size_t i = 0; i < tokens.size() - 1; ++i) {
+        EXPECT_EQ(tokens[i].type(), TokenType::Error);
+    }
+}
+
 }  // namespace
