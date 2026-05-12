@@ -819,4 +819,146 @@ TEST(ExpressionTests, EvaluateVectorized_UnaryExpr) {
     EXPECT_EQ(result.get(1).to_int64(), 3);
 }
 
+// ============= BinaryExpr to_string Coverage =============
+
+TEST(ExpressionTests, ToString_BinaryExpr_Le) {
+    auto left = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    auto right = std::make_unique<ConstantExpr>(Value::make_int64(10));
+    BinaryExpr expr(std::move(left), TokenType::Le, std::move(right));
+
+    auto str = expr.to_string();
+    EXPECT_TRUE(str.find("<=") != std::string::npos);
+}
+
+TEST(ExpressionTests, ToString_BinaryExpr_Ge) {
+    auto left = std::make_unique<ConstantExpr>(Value::make_int64(5));
+    auto right = std::make_unique<ConstantExpr>(Value::make_int64(10));
+    BinaryExpr expr(std::move(left), TokenType::Ge, std::move(right));
+
+    auto str = expr.to_string();
+    EXPECT_TRUE(str.find(">=") != std::string::npos);
+}
+
+TEST(ExpressionTests, ToString_BinaryExpr_And) {
+    auto left = std::make_unique<ConstantExpr>(Value::make_bool(true));
+    auto right = std::make_unique<ConstantExpr>(Value::make_bool(false));
+    BinaryExpr expr(std::move(left), TokenType::And, std::move(right));
+
+    auto str = expr.to_string();
+    EXPECT_TRUE(str.find("AND") != std::string::npos);
+}
+
+TEST(ExpressionTests, ToString_BinaryExpr_Or) {
+    auto left = std::make_unique<ConstantExpr>(Value::make_bool(true));
+    auto right = std::make_unique<ConstantExpr>(Value::make_bool(false));
+    BinaryExpr expr(std::move(left), TokenType::Or, std::move(right));
+
+    auto str = expr.to_string();
+    EXPECT_TRUE(str.find("OR") != std::string::npos);
+}
+
+// ============= IsNullExpr Vectorized Evaluation =============
+
+TEST(ExpressionTests, EvaluateVectorized_IsNullExpr_IsNull) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    batch.get_column(0).append(Value::make_int64(5));
+    batch.get_column(0).append(Value::make_null());
+    batch.set_row_count(2);
+
+    NumericVector<bool> result(ValueType::TYPE_BOOL);
+
+    auto inner = std::make_unique<ColumnExpr>("val");
+    IsNullExpr expr(std::move(inner), false);
+    expr.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).as_bool(), false);  // 5 IS NULL = false
+    EXPECT_EQ(result.get(1).as_bool(), true);   // NULL IS NULL = true
+}
+
+TEST(ExpressionTests, EvaluateVectorized_IsNullExpr_IsNotNull) {
+    Schema schema;
+    schema.add_column("val", ValueType::TYPE_INT64);
+
+    VectorBatch batch;
+    batch.init_from_schema(schema);
+    batch.get_column(0).append(Value::make_int64(5));
+    batch.get_column(0).append(Value::make_null());
+    batch.set_row_count(2);
+
+    NumericVector<bool> result(ValueType::TYPE_BOOL);
+
+    auto inner = std::make_unique<ColumnExpr>("val");
+    IsNullExpr expr(std::move(inner), true);  // not_flag = true
+    expr.evaluate_vectorized(batch, schema, result);
+
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result.get(0).as_bool(), true);   // 5 IS NOT NULL = true
+    EXPECT_EQ(result.get(1).as_bool(), false);  // NULL IS NOT NULL = false
+}
+
+// ============= InExpr Basic Evaluation =============
+
+TEST(ExpressionTests, Evaluate_InExpr_Basic) {
+    auto col = std::make_unique<ColumnExpr>("id");
+    std::vector<std::unique_ptr<Expression>> values;
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(1)));
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(3)));
+
+    InExpr expr(std::move(col), std::move(values), false);
+
+    // Test with tuple
+    Schema schema;
+    schema.add_column("id", ValueType::TYPE_INT64, false);
+    Tuple tuple({Value::make_int64(1)});
+
+    auto result = expr.evaluate(&tuple, &schema);
+    EXPECT_EQ(result.as_bool(), true);  // 1 IN (1, 3) = true
+}
+
+TEST(ExpressionTests, Evaluate_InExpr_NotIn) {
+    auto col = std::make_unique<ColumnExpr>("id");
+    std::vector<std::unique_ptr<Expression>> values;
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(1)));
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(3)));
+
+    InExpr expr(std::move(col), std::move(values), true);  // NOT IN
+
+    Schema schema;
+    schema.add_column("id", ValueType::TYPE_INT64, false);
+    Tuple tuple({Value::make_int64(2)});
+
+    auto result = expr.evaluate(&tuple, &schema);
+    EXPECT_EQ(result.as_bool(), true);  // 2 NOT IN (1, 3) = true
+}
+
+// ============= InExpr to_string =============
+
+TEST(ExpressionTests, ToString_InExpr) {
+    auto col = std::make_unique<ColumnExpr>("id");
+    std::vector<std::unique_ptr<Expression>> values;
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(1)));
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(2)));
+
+    InExpr expr(std::move(col), std::move(values), false);
+
+    auto str = expr.to_string();
+    EXPECT_TRUE(str.find("IN") != std::string::npos);
+}
+
+TEST(ExpressionTests, ToString_InExpr_NotIn) {
+    auto col = std::make_unique<ColumnExpr>("id");
+    std::vector<std::unique_ptr<Expression>> values;
+    values.push_back(std::make_unique<ConstantExpr>(Value::make_int64(1)));
+
+    InExpr expr(std::move(col), std::move(values), true);  // NOT IN
+
+    auto str = expr.to_string();
+    EXPECT_TRUE(str.find("NOT") != std::string::npos);
+}
+
 }  // namespace

@@ -81,9 +81,16 @@ bool BTreeIndex::Iterator::next(Entry& out_entry) {
         std::string slot_str;
         if (std::getline(ss, type_str, '|') && std::getline(ss, lexeme, '|') &&
             std::getline(ss, page_str, '|') && std::getline(ss, slot_str, '|')) {
+            int type_id = std::stoi(type_str);
             common::Value val;
-            if (std::stoi(type_str) == static_cast<int>(common::ValueType::TYPE_INT64)) {
+            if (type_id == static_cast<int>(common::ValueType::TYPE_INT64)) {
                 val = common::Value::make_int64(std::stoll(lexeme));
+            } else if (type_id == static_cast<int>(common::ValueType::TYPE_INT32)) {
+                val = common::Value(static_cast<int32_t>(std::stol(lexeme)));
+            } else if (type_id == static_cast<int>(common::ValueType::TYPE_INT16)) {
+                val = common::Value(static_cast<int16_t>(std::stoi(lexeme)));
+            } else if (type_id == static_cast<int>(common::ValueType::TYPE_INT8)) {
+                val = common::Value(static_cast<int8_t>(std::stoi(lexeme)));
             } else {
                 val = common::Value::make_text(lexeme);
             }

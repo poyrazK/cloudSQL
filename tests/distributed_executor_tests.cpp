@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -1115,6 +1116,214 @@ TEST_F(DistributedExecutorWithNodesTests, CommitPrepareFailure) {
     // Should fail with "Distributed transaction aborted"
     EXPECT_FALSE(res.success());
     EXPECT_TRUE(res.error().find("aborted") != std::string::npos);
+}
+
+// ============= Join Error Path Tests =============
+
+TEST_F(DistributedExecutorTests, Join_CrossNotSupported_ReturnsError) {
+    // CROSS JOIN is not supported - should return error
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 CROSS JOIN t2 ON t1.id = t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 CROSS JOIN t2 ON t1.id = t2.id");
+    // May return error for unsupported join type
+    ASSERT_FALSE(res.success()) << "CROSS JOIN should return error";
+    (void)res;
+}
+
+TEST_F(DistributedExecutorTests, Join_NaturalNotSupported_ReturnsError) {
+    // NATURAL JOIN is not supported - should return error
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 NATURAL JOIN t2");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 NATURAL JOIN t2");
+    // May return error for unsupported join type
+    ASSERT_FALSE(res.success()) << "NATURAL JOIN should return error";
+    (void)res;
+}
+
+// ============= broadcast_table Coverage =============
+
+TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_Basic) {
+    // Test that broadcast_table() can be called without crash
+    // This exercises the function even if it doesn't do full distributed work in test env
+    std::string temp_path = "./test_data/broadcast_test.bin";
+    std::filesystem::remove(temp_path);
+
+    // Create a simple table
+    auto lexer = std::make_unique<Lexer>("CREATE TABLE bt_test (id INT, val TEXT)");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    if (stmt) {
+        exec_->execute(*stmt, "CREATE TABLE bt_test (id INT, val TEXT)");
+    }
+
+    // Actually invoke broadcast_table to exercise the code path
+    EXPECT_NO_THROW(exec_->broadcast_table("bt_test"));
+}
+
+// ============= Leader-Aware Routing Tests =============
+
+// Test: SELECT with leader set to a node not registered in data_nodes
+// Verifies fallback to data_nodes[shard_idx] when leader is unknown
+TEST_F(DistributedExecutorWithNodesTests, Select_WithLeaderUnknown_FallsBack) {
+    auto srv1 = std::make_unique<network::RpcServer>(6416);
+    auto srv2 = std::make_unique<network::RpcServer>(6417);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6416, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6417, config::RunMode::Data);
+
+    set_execute_fragment_handler(*servers_[0], true);
+    set_execute_fragment_handler(*servers_[1], true);
+
+    // Set leader for shard 1 to a node that is NOT registered
+    // This exercises the !found_leader path (lines 549-558)
+    cm_->set_leader(1, "unknown_node");
+
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM test_table WHERE id = 1");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM test_table WHERE id = 1");
+    // Should succeed - falls back to data_nodes[shard_idx]
+    EXPECT_TRUE(res.success());
+}
+
+// ============= Broadcast Table Tests =============
+
+// Test: broadcast_table with no registered data nodes returns false
+TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_NoDataNodes_ReturnsFalse) {
+    // No nodes registered - data_nodes.empty() at line 958
+    bool result = exec_->broadcast_table("some_table");
+    EXPECT_FALSE(result);
+}
+
+// Test: broadcast_table with registered nodes but empty all_rows returns early
+TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_EmptyTable_ReturnsEarly) {
+    auto srv1 = std::make_unique<network::RpcServer>(6418);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6418, config::RunMode::Data);
+
+    // Set up ExecuteFragment handler that returns empty rows
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment,
+                             [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+                                 network::QueryResultsReply reply;
+                                 reply.success = true;
+                                 // Empty rows - triggers early return at line 989
+                                 reply.schema.add_column("id", common::ValueType::TYPE_INT32);
+                                 network::RpcHeader resp_h;
+                                 resp_h.type = network::RpcType::QueryResults;
+                                 resp_h.payload_len =
+                                     static_cast<uint16_t>(reply.serialize().size());
+                                 char h_buf[network::RpcHeader::HEADER_SIZE];
+                                 resp_h.encode(h_buf);
+                                 send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+                                 auto data = reply.serialize();
+                                 if (!data.empty()) send(fd, data.data(), data.size(), 0);
+                             });
+
+    // Create table locally
+    auto lexer = std::make_unique<Lexer>("CREATE TABLE empty_broadcast (id INT)");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+    exec_->execute(*stmt, "CREATE TABLE empty_broadcast (id INT)");
+
+    // broadcast_table should return true (empty table is fine - early return)
+    bool result = exec_->broadcast_table("empty_broadcast");
+    EXPECT_TRUE(result);
+}
+
+// Test: broadcast_table with multiple nodes - PushData called on all
+TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_MultipleNodes_PushesToAll) {
+    auto srv1 = std::make_unique<network::RpcServer>(6419);
+    auto srv2 = std::make_unique<network::RpcServer>(6420);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6419, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6420, config::RunMode::Data);
+
+    std::atomic<int> pushdata_count{0};
+
+    // Handler for ExecuteFragment - returns one row
+    auto make_fetch_handler = [](const executor::Tuple& row) {
+        return [row](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            network::QueryResultsReply reply;
+            reply.success = true;
+            reply.schema.add_column("id", common::ValueType::TYPE_INT32);
+            reply.rows.push_back(row);
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        };
+    };
+
+    executor::Tuple row{common::Value::make_int64(42)};
+    servers_[0]->set_handler(network::RpcType::ExecuteFragment, make_fetch_handler(row));
+    servers_[1]->set_handler(network::RpcType::ExecuteFragment, make_fetch_handler(row));
+
+    // Handler for PushData - just count calls
+    servers_[0]->set_handler(
+        network::RpcType::PushData,
+        [&pushdata_count](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            ++pushdata_count;
+            network::QueryResultsReply reply;
+            reply.success = true;
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
+    servers_[1]->set_handler(
+        network::RpcType::PushData,
+        [&pushdata_count](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            ++pushdata_count;
+            network::QueryResultsReply reply;
+            reply.success = true;
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
+
+    // Create table locally
+    auto lexer = std::make_unique<Lexer>("CREATE TABLE broadcast_multi (id INT)");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+    exec_->execute(*stmt, "CREATE TABLE broadcast_multi (id INT)");
+
+    bool result = exec_->broadcast_table("broadcast_multi");
+    EXPECT_TRUE(result);
+    // PushData should be called on both nodes
+    EXPECT_EQ(pushdata_count.load(), 2);
 }
 
 }  // namespace

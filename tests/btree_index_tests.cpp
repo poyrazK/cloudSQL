@@ -562,4 +562,184 @@ TEST_F(BTreeIndexWritePageNewPageTests, Insert_AfterPoolExhausted_StillSucceedsV
     bpm_->delete_file("dummy");
 }
 
+// ============= INT8/INT16/INT32 Key Type Tests =============
+
+TEST_F(BTreeIndexTests, ScanIterator_INT8KeyDeserialization) {
+    // Verify INT8 key deserialization in scan iterator
+    auto idx8 = std::make_unique<BTreeIndex>("idx8", *bpm_, ValueType::TYPE_INT8);
+    ASSERT_TRUE(idx8->create());
+    ASSERT_TRUE(idx8->open());
+
+    idx8->insert(Value(static_cast<int8_t>(42)), make_rid(1, 0));
+
+    auto it = idx8->scan();
+    BTreeIndex::Entry e;
+    ASSERT_TRUE(it.next(e));
+
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT8);
+    EXPECT_EQ(e.key.to_int64(), 42);
+    EXPECT_EQ(e.tuple_id.page_num, 1U);
+}
+
+TEST_F(BTreeIndexTests, ScanIterator_INT16KeyDeserialization) {
+    auto idx16 = std::make_unique<BTreeIndex>("idx16", *bpm_, ValueType::TYPE_INT16);
+    ASSERT_TRUE(idx16->create());
+    ASSERT_TRUE(idx16->open());
+
+    idx16->insert(Value(static_cast<int16_t>(42)), make_rid(1, 0));
+
+    auto it = idx16->scan();
+    BTreeIndex::Entry e;
+    ASSERT_TRUE(it.next(e));
+
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT16);
+    EXPECT_EQ(e.key.to_int64(), 42);
+}
+
+TEST_F(BTreeIndexTests, ScanIterator_INT32KeyDeserialization) {
+    auto idx32 = std::make_unique<BTreeIndex>("idx32", *bpm_, ValueType::TYPE_INT32);
+    ASSERT_TRUE(idx32->create());
+    ASSERT_TRUE(idx32->open());
+
+    idx32->insert(Value(static_cast<int32_t>(42)), make_rid(1, 0));
+
+    auto it = idx32->scan();
+    BTreeIndex::Entry e;
+    ASSERT_TRUE(it.next(e));
+
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT32);
+    EXPECT_EQ(e.key.to_int64(), 42);
+}
+
+TEST_F(BTreeIndexTests, ScanIterator_INT64KeyDeserialization_Regression) {
+    // Verify INT64 deserialization path still works (was the only tested path)
+    ASSERT_TRUE(index_->create());
+    ASSERT_TRUE(index_->open());
+
+    int64_t key_val = 42;
+    index_->insert(Value::make_int64(key_val), make_rid(1, 0));
+
+    auto it = index_->scan();
+    BTreeIndex::Entry e;
+    ASSERT_TRUE(it.next(e));
+
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT64);
+    EXPECT_EQ(e.key.to_int64(), 42);
+}
+
+TEST_F(BTreeIndexTests, ScanIterator_TEXTKeyDeserialization_Regression) {
+    // Verify TEXT deserialization path still works
+    auto text_index = std::make_unique<BTreeIndex>("text_scan_idx", *bpm_, ValueType::TYPE_TEXT);
+    ASSERT_TRUE(text_index->create());
+    ASSERT_TRUE(text_index->open());
+
+    text_index->insert(Value::make_text("hello"), make_rid(1, 0));
+
+    auto it = text_index->scan();
+    BTreeIndex::Entry e;
+    ASSERT_TRUE(it.next(e));
+
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_TEXT);
+    EXPECT_EQ(e.key.to_string(), "hello");
+}
+
+TEST_F(BTreeIndexTests, Search_INT8Key) {
+    auto idx8 = std::make_unique<BTreeIndex>("idx8_search", *bpm_, ValueType::TYPE_INT8);
+    ASSERT_TRUE(idx8->create());
+    ASSERT_TRUE(idx8->open());
+
+    idx8->insert(Value::make_int64(99), make_rid(5, 10));
+
+    auto results = idx8->search(Value::make_int64(99));
+    ASSERT_EQ(results.size(), 1U);
+    EXPECT_EQ(results[0].page_num, 5U);
+    EXPECT_EQ(results[0].slot_num, 10U);
+}
+
+TEST_F(BTreeIndexTests, Search_INT16Key) {
+    auto idx16 = std::make_unique<BTreeIndex>("idx16_search", *bpm_, ValueType::TYPE_INT16);
+    ASSERT_TRUE(idx16->create());
+    ASSERT_TRUE(idx16->open());
+
+    idx16->insert(Value::make_int64(99), make_rid(5, 10));
+
+    auto results = idx16->search(Value::make_int64(99));
+    ASSERT_EQ(results.size(), 1U);
+    EXPECT_EQ(results[0].page_num, 5U);
+}
+
+TEST_F(BTreeIndexTests, Search_INT32Key) {
+    auto idx32 = std::make_unique<BTreeIndex>("idx32_search", *bpm_, ValueType::TYPE_INT32);
+    ASSERT_TRUE(idx32->create());
+    ASSERT_TRUE(idx32->open());
+
+    idx32->insert(Value::make_int64(99), make_rid(5, 10));
+
+    auto results = idx32->search(Value::make_int64(99));
+    ASSERT_EQ(results.size(), 1U);
+    EXPECT_EQ(results[0].page_num, 5U);
+}
+
+TEST_F(BTreeIndexTests, ScanMultiple_INT8Entries) {
+    auto idx8 = std::make_unique<BTreeIndex>("idx8_multi", *bpm_, ValueType::TYPE_INT8);
+    ASSERT_TRUE(idx8->create());
+    ASSERT_TRUE(idx8->open());
+
+    idx8->insert(Value::make_int64(10), make_rid(1, 0));
+    idx8->insert(Value::make_int64(20), make_rid(1, 1));
+    idx8->insert(Value::make_int64(30), make_rid(2, 0));
+
+    auto it = idx8->scan();
+    BTreeIndex::Entry e;
+    int count = 0;
+    while (it.next(e)) {
+        count++;
+    }
+    EXPECT_EQ(count, 3);
+}
+
+TEST_F(BTreeIndexTests, ScanIterator_INT8KeyRoundTrip) {
+    // Test insert + scan round-trip: verifies value string is preserved correctly
+    auto idx8 = std::make_unique<BTreeIndex>("idx8_round", *bpm_, ValueType::TYPE_INT8);
+    ASSERT_TRUE(idx8->create());
+    ASSERT_TRUE(idx8->open());
+
+    idx8->insert(Value::make_int64(123), make_rid(7, 3));
+
+    auto it = idx8->scan();
+    BTreeIndex::Entry e;
+    ASSERT_TRUE(it.next(e));
+
+    EXPECT_EQ(e.key.to_string(), "123");
+    EXPECT_EQ(e.tuple_id.page_num, 7U);
+    EXPECT_EQ(e.tuple_id.slot_num, 3U);
+}
+
+TEST_F(BTreeIndexTests, InsertAndScan_BinaryKeyValues) {
+    // Test insert and scan with non-sequential INT8 values
+    auto idx8 = std::make_unique<BTreeIndex>("idx8_binary", *bpm_, ValueType::TYPE_INT8);
+    ASSERT_TRUE(idx8->create());
+    ASSERT_TRUE(idx8->open());
+
+    // Use binary-like pattern: 0, 1, 127, -128, 42
+    std::vector<int8_t> values = {0, 1, 127, -128, 42};
+    uint32_t page = 1;
+    uint16_t slot = 0;
+    for (auto v : values) {
+        idx8->insert(Value::make_int64(v), make_rid(page, slot++));
+        if (slot == 100) {
+            slot = 0;
+            page++;
+        }
+    }
+
+    auto it = idx8->scan();
+    BTreeIndex::Entry e;
+    int count = 0;
+    while (it.next(e)) {
+        count++;
+    }
+    EXPECT_EQ(count, 5);
+}
+
 }  // namespace
