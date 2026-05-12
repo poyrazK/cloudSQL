@@ -565,22 +565,19 @@ TEST_F(BTreeIndexWritePageNewPageTests, Insert_AfterPoolExhausted_StillSucceedsV
 // ============= INT8/INT16/INT32 Key Type Tests =============
 
 TEST_F(BTreeIndexTests, ScanIterator_INT8KeyDeserialization) {
-    // Note: This test exposes a known bug where INT8/INT16/INT32 keys
-    // fall through to TYPE_TEXT in iterator deserialization (btree_index.cpp:87-89).
-    // The test verifies the scan path executes without crashing.
+    // Verify INT8 key deserialization in scan iterator
     auto idx8 = std::make_unique<BTreeIndex>("idx8", *bpm_, ValueType::TYPE_INT8);
     ASSERT_TRUE(idx8->create());
     ASSERT_TRUE(idx8->open());
 
-    idx8->insert(Value::make_int64(42), make_rid(1, 0));
+    idx8->insert(Value(static_cast<int8_t>(42)), make_rid(1, 0));
 
     auto it = idx8->scan();
     BTreeIndex::Entry e;
     ASSERT_TRUE(it.next(e));
 
-    // The key type will be TYPE_TEXT due to the bug (else branch at line 87)
-    // But the value string should match
-    EXPECT_EQ(e.key.to_string(), "42");
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT8);
+    EXPECT_EQ(e.key.to_int64(), 42);
     EXPECT_EQ(e.tuple_id.page_num, 1U);
 }
 
@@ -589,13 +586,14 @@ TEST_F(BTreeIndexTests, ScanIterator_INT16KeyDeserialization) {
     ASSERT_TRUE(idx16->create());
     ASSERT_TRUE(idx16->open());
 
-    idx16->insert(Value::make_int64(42), make_rid(1, 0));
+    idx16->insert(Value(static_cast<int16_t>(42)), make_rid(1, 0));
 
     auto it = idx16->scan();
     BTreeIndex::Entry e;
     ASSERT_TRUE(it.next(e));
 
-    EXPECT_EQ(e.key.to_string(), "42");
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT16);
+    EXPECT_EQ(e.key.to_int64(), 42);
 }
 
 TEST_F(BTreeIndexTests, ScanIterator_INT32KeyDeserialization) {
@@ -603,13 +601,14 @@ TEST_F(BTreeIndexTests, ScanIterator_INT32KeyDeserialization) {
     ASSERT_TRUE(idx32->create());
     ASSERT_TRUE(idx32->open());
 
-    idx32->insert(Value::make_int64(42), make_rid(1, 0));
+    idx32->insert(Value(static_cast<int32_t>(42)), make_rid(1, 0));
 
     auto it = idx32->scan();
     BTreeIndex::Entry e;
     ASSERT_TRUE(it.next(e));
 
-    EXPECT_EQ(e.key.to_string(), "42");
+    EXPECT_EQ(e.key.type(), ValueType::TYPE_INT32);
+    EXPECT_EQ(e.key.to_int64(), 42);
 }
 
 TEST_F(BTreeIndexTests, ScanIterator_INT64KeyDeserialization_Regression) {
