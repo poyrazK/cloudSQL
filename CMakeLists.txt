@@ -165,6 +165,8 @@ if(BUILD_TESTS)
     add_custom_target(run-tests
         COMMAND ${CMAKE_CTEST_COMMAND}
         COMMENT "Running all tests via CTest")
+else()
+    message(STATUS "Unit tests disabled (BUILD_TESTS=OFF)")
 endif()
 
 # Benchmarks
