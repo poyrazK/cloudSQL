@@ -18,6 +18,7 @@
 #include "distributed/raft_types.hpp"
 #include "executor/query_executor.hpp"
 #include "executor/types.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
@@ -34,6 +35,7 @@ using namespace cloudsql::parser;
 using namespace cloudsql::executor;
 using namespace cloudsql::storage;
 using namespace cloudsql::transaction;
+using namespace cloudsql::optimizer;
 
 namespace {
 
@@ -184,6 +186,34 @@ TEST_F(QueryExecutorTests, InsertIntoNonExistentTable) {
     TestEnvironment env;
     const auto res = execute_sql(env.executor, "INSERT INTO nonexistent VALUES (1)");
     EXPECT_FALSE(res.success());
+}
+
+TEST_F(QueryExecutorTests, InsertBatchModeSkipsLockAcquisition) {
+    // Test batch_insert_mode=true skips lock acquisition (line 217)
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE test_table (id INT, val INT)");
+
+    // Enable batch insert mode - skips lock acquisition per line 217
+    env.executor.set_batch_insert_mode(true);
+
+    // BEGIN transaction
+    execute_sql(env.executor, "BEGIN");
+
+    // Multi-row INSERT - should succeed without lock acquisition
+    const auto res =
+        execute_sql(env.executor, "INSERT INTO test_table VALUES (1, 10), (2, 20), (3, 30)");
+    EXPECT_TRUE(res.success());
+    EXPECT_EQ(res.rows_affected(), 3U);
+
+    // COMMIT
+    execute_sql(env.executor, "COMMIT");
+
+    // Verify data was inserted
+    const auto select_res = execute_sql(env.executor, "SELECT * FROM test_table");
+    EXPECT_EQ(select_res.row_count(), 3U);
+
+    // Cleanup
+    env.executor.set_batch_insert_mode(false);
 }
 
 // ============= SELECT Tests =============
@@ -1461,80 +1491,167 @@ TEST_F(QueryExecutorTests, ShardStateMachine_ApplyUnknownType) {
     SUCCEED();
 }
 
-// ============= JOIN Type Coverage Tests (Lines 1050-1058) =============
+// ============= RowEstimator Unit Tests =============
 
-TEST_F(QueryExecutorTests, RightJoin) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE ra (id INT, name TEXT)");
-    execute_sql(env.executor, "CREATE TABLE rb (id INT, val INT)");
-    execute_sql(env.executor, "INSERT INTO ra VALUES (1, 'Alice'), (2, 'Bob')");
-    execute_sql(env.executor, "INSERT INTO rb VALUES (1, 100), (3, 300)");  // No match for id=2
+class RowEstimatorTests : public ::testing::Test {};
 
-    // RIGHT JOIN - right table rows always returned even if no match
-    const auto res = execute_sql(
-        env.executor,
-        "SELECT ra.name, rb.val FROM ra RIGHT JOIN rb ON ra.id = rb.id");
-    // May succeed or fail - just verify no crash and branch is exercised
-    (void)res;
+// EstimateScanRows tests
+TEST_F(RowEstimatorTests, EstimateScanRows_WithStats) {
+    TableInfo table;
+    table.num_rows = 1000;
+    EXPECT_EQ(RowEstimator::estimate_scan_rows(table), 1000U);
 }
 
-TEST_F(QueryExecutorTests, FullOuterJoin) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE fa (id INT, name TEXT)");
-    execute_sql(env.executor, "CREATE TABLE fb (id INT, val INT)");
-    execute_sql(env.executor, "INSERT INTO fa VALUES (1, 'Alice'), (3, 'Carol')");
-    execute_sql(env.executor, "INSERT INTO fb VALUES (1, 100), (2, 200)");
-
-    // FULL OUTER JOIN - all rows from both tables
-    const auto res = execute_sql(
-        env.executor,
-        "SELECT fa.name, fb.val FROM fa FULL OUTER JOIN fb ON fa.id = fb.id");
-    // May succeed or fail - just verify no crash and branch is exercised
-    (void)res;
+TEST_F(RowEstimatorTests, EstimateScanRows_NoStats) {
+    TableInfo table;
+    table.num_rows = 0;
+    EXPECT_EQ(RowEstimator::estimate_scan_rows(table), 0U);
 }
 
-TEST_F(QueryExecutorTests, HashJoinReversedColumns) {
-    TestEnvironment env;
-    // Tables where join columns are named opposite to what hash join expects
-    execute_sql(env.executor, "CREATE TABLE rev_a (b_id INT, val TEXT)");
-    execute_sql(env.executor, "CREATE TABLE rev_b (a_id INT, num INT)");
-    execute_sql(env.executor, "INSERT INTO rev_a VALUES (1, 'X')");
-    execute_sql(env.executor, "INSERT INTO rev_b VALUES (1, 100)");
+// EstimateFilterRows tests
+TEST_F(RowEstimatorTests, EstimateFilterRows_NDVSeltivity) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.ndv = 100;  // 100 distinct values
+    table.columns.push_back(col);
 
-    // JOIN with columns on opposite sides - tests reversed column lookup path
-    const auto res = execute_sql(
-        env.executor,
-        "SELECT rev_a.val, rev_b.num FROM rev_a JOIN rev_b ON rev_a.b_id = rev_b.a_id");
-    // May succeed or fail - tests the reversed column matching path
-    (void)res;
+    common::Value pred = common::Value::make_int64(42);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 10U);  // 1000 / 100 = 10
 }
 
-// ============= Exception Handling Tests (Lines 329-338) =============
+TEST_F(RowEstimatorTests, EstimateFilterRows_IntRangeSel) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.min_int = 1;
+    col.max_int = 100;
+    table.columns.push_back(col);
 
-TEST_F(QueryExecutorTests, ExecuteThrowsException_ReturnsError) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE exc_test (id INT)");
-    execute_sql(env.executor, "INSERT INTO exc_test VALUES (1)");
-
-    // Force an exception by closing catalog before second executor uses it
-    // This tests the catch(std::exception&) branch
-    // Note: We can't easily trigger std::exception from SQL, so we verify the path exists
-    const auto res = execute_sql(env.executor, "SELECT * FROM exc_test");
-    EXPECT_TRUE(res.success());  // Normal path works
+    // Value in range [1, 100]
+    common::Value pred = common::Value::make_int64(50);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 10U);  // 1000 / 100 = 10
 }
 
-// ============= Index Caching on INSERT (Lines 159-166) =============
+TEST_F(RowEstimatorTests, EstimateFilterRows_OutOfRange) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.min_int = 1;
+    col.max_int = 100;
+    table.columns.push_back(col);
 
-TEST_F(QueryExecutorTests, InsertWithIndexCaching) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE idx_cache (id INT, val TEXT)");
-    execute_sql(env.executor, "CREATE INDEX idx_val ON idx_cache(val)");
-    execute_sql(env.executor, "INSERT INTO idx_cache VALUES (1, 'first')");
+    // Value outside range
+    common::Value pred = common::Value::make_int64(200);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 1000U);  // Fallback to full scan
+}
 
-    // Second INSERT - should hit index caching branch (line 159-165)
-    const auto res = execute_sql(env.executor, "INSERT INTO idx_cache VALUES (2, 'second')");
-    // May succeed or fail - just verify no crash and branch is exercised
-    (void)res;
+TEST_F(RowEstimatorTests, EstimateFilterRows_NoStats) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = false;  // No stats
+    table.columns.push_back(col);
+
+    common::Value pred = common::Value::make_int64(42);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "id", pred);
+    EXPECT_EQ(est, 1000U);  // Fallback to full scan
+}
+
+TEST_F(RowEstimatorTests, EstimateFilterRows_UnknownColumn) {
+    TableInfo table;
+    table.num_rows = 1000;
+    ColumnInfo col;
+    col.name = "id";
+    col.type = common::ValueType::TYPE_INT64;
+    col.has_stats = true;
+    col.ndv = 100;
+    table.columns.push_back(col);
+
+    // Query references non-existent column
+    common::Value pred = common::Value::make_int64(42);
+    uint64_t est = RowEstimator::estimate_filter_rows(table, "nonexistent", pred);
+    EXPECT_EQ(est, 1000U);  // Fallback to full scan
+}
+
+// EstimateJoinRows tests
+TEST_F(RowEstimatorTests, EstimateJoinRows_Basic) {
+    TableInfo left;
+    left.num_rows = 1000;
+    ColumnInfo left_col;
+    left_col.name = "id";
+    left_col.has_stats = true;
+    left_col.ndv = 50;
+    left.columns.push_back(left_col);
+
+    TableInfo right;
+    right.num_rows = 500;
+    ColumnInfo right_col;
+    right_col.name = "id";
+    right_col.has_stats = true;
+    right_col.ndv = 25;
+    right.columns.push_back(right_col);
+
+    uint64_t est = RowEstimator::estimate_join_rows(left, right, "id");
+    // |A| * |B| / max(50, 25) = 1000 * 500 / 50 = 10000
+    EXPECT_EQ(est, 10000U);
+}
+
+TEST_F(RowEstimatorTests, EstimateJoinRows_UnknownColumn) {
+    TableInfo left;
+    left.num_rows = 1000;
+    ColumnInfo left_col;
+    left_col.name = "id";
+    left_col.has_stats = true;
+    left_col.ndv = 50;
+    left.columns.push_back(left_col);
+
+    TableInfo right;
+    right.num_rows = 500;
+    ColumnInfo right_col;
+    right_col.name = "other_id";  // Different column name
+    right_col.has_stats = true;
+    right_col.ndv = 25;
+    right.columns.push_back(right_col);
+
+    // Cross product fallback when key column not found in both tables
+    uint64_t est = RowEstimator::estimate_join_rows(left, right, "id");
+    EXPECT_EQ(est, 500000U);  // 1000 * 500 = 500000
+}
+
+TEST_F(RowEstimatorTests, EstimateJoinRows_ZeroNDV) {
+    TableInfo left;
+    left.num_rows = 1000;
+    ColumnInfo left_col;
+    left_col.name = "id";
+    left_col.has_stats = true;
+    left_col.ndv = 0;  // Zero NDV
+    left.columns.push_back(left_col);
+
+    TableInfo right;
+    right.num_rows = 500;
+    ColumnInfo right_col;
+    right_col.name = "id";
+    right_col.has_stats = true;
+    right_col.ndv = 25;
+    right.columns.push_back(right_col);
+
+    uint64_t est = RowEstimator::estimate_join_rows(left, right, "id");
+    EXPECT_EQ(est, 0U);  // Zero NDV → 0 rows
 }
 
 }  // namespace

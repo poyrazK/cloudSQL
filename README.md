@@ -21,6 +21,7 @@ A lightweight, distributed SQL database engine. Designed for cloud environments 
   - **B+ Tree Indexing**: Persistent indexing for high-speed point lookups and optimized query planning.
 - **Type-Safe Value System**: Robust handling of SQL data types using `std::variant`.
 - **Volcano & Vectorized Engine**: Flexible execution models supporting traditional row-based and high-performance columnar processing.
+- **Cost-Based Optimization**: `ANALYZE TABLE` collects per-column statistics (min/max/NDV/null count) for cost-based Volcano/Vectorized selection — vectorized execution auto-engages for large scans (>10k rows).
 - **PostgreSQL Wire Protocol**: Handshake and simple query protocol implementation for tool compatibility.
 
 ## Performance

@@ -42,8 +42,20 @@ Implemented a vectorized hash join with graceful partitioning and batch-based pr
 - **Two-Phase Processing**: `BuildRight` phase constructs hash table from right relation; `ProbeLeft` phase probes with left rows.
 - **Resumable Bucket Scanning**: Uses `resuming_bucket_scan_`, `resumed_bucket_idx_`, `resumed_entry_idx_`, and `resumed_key_val_` to resume interrupted bucket scans when batch capacity is reached, preventing batch overflow during multi-match probes.
 - **Batch Size**: Output batches use `BATCH_SIZE` (1024 rows) for memory-efficient processing.
-- **Join Type Support**: INNER and LEFT joins supported; LEFT join emits unmatched left rows with NULLs for right columns.
-- **Matched Row Tracking**: `left_matched_in_batch_` tracks matched rows within the current batch for LEFT join unmatched emission.
+- **Join Type Support**: INNER, LEFT, RIGHT, and FULL outer joins supported.
+  - **INNER**: Only matched rows emitted.
+  - **LEFT**: Unmatched left rows emitted with NULLs for right columns.
+  - **RIGHT**: Unmatched right rows emitted with NULLs for left columns; uses `right_matched_` bitmap and `right_bucket_rows_` global storage during probe to track matched right rows.
+  - **FULL**: Combines LEFT and RIGHT logic — unmatched left rows emitted during probe, unmatched right rows emitted at end via `emit_unmatched_right_rows()`.
+- **Matched Row Tracking**: `left_matched_in_batch_` tracks matched rows within the current batch for LEFT join unmatched emission. `right_matched_` bitmap tracks matched right rows for RIGHT/FULL joins across all probe batches. `right_bucket_rows_` provides global row storage for unmatched right row emission.
+
+### 7. Parallel Vectorized Execution
+Added `ThreadPool` class and parallel operator variants for multi-threaded batch processing.
+- **ThreadPool** (`include/executor/thread_pool.hpp`): Fixed-size thread pool for parallel task execution with wait/timeout support.
+- **ParallelVectorizedSeqScanOperator**: Multi-threaded scan over ColumnarTable using ThreadPool for parallel batch processing.
+- **VectorizedGroupByOperator with ThreadPool**: Parallel hash-based grouped aggregation leveraging ThreadPool for concurrent group processing.
+- **QueryExecutor Integration**: `set_parallel(true)` mode enables vectorized batch execution via `build_vectorized_plan()`. Queries with ORDER BY or LIMIT fall back to Volcano path since SortOperator/LimitOperator do not inherit from VectorizedOperator.
+- **Batch Iteration**: Vectorized path uses `next_batch(VectorBatch&)` instead of `next(Tuple&)`, converting batches to result rows for QueryResult output.
 
 ## Recent Improvements (Engine Benchmarking)
 As of our latest sprint, we have established a high-performance baseline for the engine's core scanning logic:

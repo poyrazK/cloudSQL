@@ -30,7 +30,8 @@ enum class StmtType : uint8_t {
     TransactionBegin,
     TransactionCommit,
     TransactionRollback,
-    Explain
+    Explain,
+    Analyze
 };
 
 /**
@@ -342,6 +343,22 @@ class TransactionRollbackStatement : public Statement {
    public:
     [[nodiscard]] StmtType type() const override { return StmtType::TransactionRollback; }
     [[nodiscard]] std::string to_string() const override { return "ROLLBACK"; }
+};
+
+/**
+ * @brief ANALYZE statement
+ */
+class AnalyzeStatement : public Statement {
+   private:
+    std::string table_name_;
+
+   public:
+    explicit AnalyzeStatement(std::string table_name) : table_name_(std::move(table_name)) {}
+    [[nodiscard]] StmtType type() const override { return StmtType::Analyze; }
+    [[nodiscard]] const std::string& table_name() const { return table_name_; }
+    [[nodiscard]] std::string to_string() const override {
+        return std::string("ANALYZE TABLE ") + table_name_;
+    }
 };
 
 }  // namespace cloudsql::parser

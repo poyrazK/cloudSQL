@@ -46,6 +46,20 @@ struct ColumnInfo {
     std::optional<std::string> default_value;
     uint32_t flags = 0;
 
+    // Column statistics (valid after ANALYZE TABLE)
+    bool has_stats = false;
+    uint64_t null_count = 0;
+    // For numeric types
+    std::optional<int64_t> min_int;
+    std::optional<int64_t> max_int;
+    std::optional<double> min_double;
+    std::optional<double> max_double;
+    // For string types
+    std::optional<uint64_t> min_str_len;
+    std::optional<uint64_t> max_str_len;
+    // Number of distinct values
+    std::optional<uint64_t> ndv;
+
     ColumnInfo() = default;
 
     ColumnInfo(std::string col_name, common::ValueType col_type, uint16_t col_pos)
@@ -248,6 +262,17 @@ class Catalog : public raft::RaftStateMachine {
      * @brief Update table statistics
      */
     bool update_table_stats(oid_t table_id, uint64_t num_rows);
+
+    /**
+     * @brief Update column statistics
+     */
+    bool update_column_stats(oid_t table_id, const std::string& col_name, const ColumnInfo& stats);
+
+    /**
+     * @brief Get column statistics
+     */
+    [[nodiscard]] std::optional<ColumnInfo*> get_column_stats(oid_t table_id,
+                                                              const std::string& col_name);
 
     /**
      * @brief Check if table exists

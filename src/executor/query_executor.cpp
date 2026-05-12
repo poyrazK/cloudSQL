@@ -26,7 +26,9 @@
 #include "distributed/shard_manager.hpp"
 #include "executor/operator.hpp"
 #include "executor/types.hpp"
+#include "executor/vectorized_operator.hpp"
 #include "network/rpc_message.hpp"
+#include "optimizer/row_estimator.hpp"
 #include "parser/expression.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
@@ -42,6 +44,11 @@
 #include "transaction/transaction_manager.hpp"
 
 namespace cloudsql::executor {
+
+// Threshold for cost-based Volcano/Vectorized chooser.
+// Heuristic: Vectorized operators outperform Volcano-style tuple-at-a-time
+// above ~10k rows for analytical scan workloads. Tunable per workload.
+static constexpr uint64_t kVectorizedRowThreshold = 10000;
 
 // Define static members for statement cache
 std::unordered_map<std::string, std::shared_ptr<parser::Statement>> QueryExecutor::statement_cache_;
@@ -318,6 +325,14 @@ QueryResult QueryExecutor::execute(const parser::Statement& stmt) {
             result = execute_delete(dynamic_cast<const parser::DeleteStatement&>(stmt), txn);
         } else if (stmt.type() == parser::StmtType::Update) {
             result = execute_update(dynamic_cast<const parser::UpdateStatement&>(stmt), txn);
+        } else if (stmt.type() == parser::StmtType::TransactionBegin) {
+            result = execute_begin();
+        } else if (stmt.type() == parser::StmtType::TransactionCommit) {
+            result = execute_commit();
+        } else if (stmt.type() == parser::StmtType::TransactionRollback) {
+            result = execute_rollback();
+        } else if (stmt.type() == parser::StmtType::Analyze) {
+            result = execute_analyze(dynamic_cast<const parser::AnalyzeStatement&>(stmt));
         } else {
             result.set_error("Unsupported statement type");
         }
@@ -385,7 +400,67 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     QueryResult result;
 
     /* Build execution plan */
-    auto root = build_plan(stmt, txn);
+    std::unique_ptr<Operator> root;
+    std::unique_ptr<VectorizedOperator> vec_root;
+    bool has_sort_or_limit = !stmt.order_by().empty() || stmt.has_limit() || stmt.has_offset();
+
+    // Cost-based Volcano/Vectorized chooser using row estimates
+    bool use_vectorized = false;
+    if (parallel_ && storage_manager_ && !has_sort_or_limit) {
+        // Extract table name from FROM clause (only for simple column refs)
+        // Fall through to Volcano for JOINs, subqueries, and aliased tables
+        const auto* from_expr = stmt.from();
+        if (from_expr != nullptr && from_expr->type() == parser::ExprType::Column) {
+            std::string table_name = from_expr->to_string();
+            auto table_meta_opt = catalog_.get_table_by_name(table_name);
+            if (table_meta_opt.has_value()) {
+                const auto* table_meta = table_meta_opt.value();
+                // Start with scan estimate as baseline; filter selectivity will override if
+                // eligible
+                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+
+                // Use filter selectivity when WHERE clause is simple and stats available
+                if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary) {
+                    const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(stmt.where());
+                    if (bin_expr != nullptr) {
+                        std::string col_name;
+                        common::Value pred_val;
+                        bool eligible = false;
+
+                        // col OP constant (e.g., id > 5000 or status = 'active')
+                        if (bin_expr->left().type() == parser::ExprType::Column &&
+                            bin_expr->right().type() == parser::ExprType::Constant) {
+                            col_name = bin_expr->left().to_string();
+                            pred_val =
+                                bin_expr->right().evaluate(nullptr, nullptr, current_params_);
+                            eligible = true;
+                        } else if (bin_expr->right().type() == parser::ExprType::Column &&
+                                   bin_expr->left().type() == parser::ExprType::Constant) {
+                            col_name = bin_expr->right().to_string();
+                            pred_val = bin_expr->left().evaluate(nullptr, nullptr, current_params_);
+                            eligible = true;
+                        }
+
+                        if (eligible) {
+                            estimated_rows = optimizer::RowEstimator::estimate_filter_rows(
+                                *table_meta, col_name, pred_val);
+                        }
+                    }
+                }
+
+                // Use Vectorized for large scans (>10k rows — heuristic crossover point)
+                use_vectorized = estimated_rows > kVectorizedRowThreshold;
+            }
+        }
+    }
+
+    if (use_vectorized) {
+        vec_root = build_vectorized_plan(stmt, txn, has_sort_or_limit);
+        root = std::move(vec_root);
+    } else {
+        root = build_plan(stmt, txn);
+    }
+
     if (!root) {
         result.set_error("Failed to build execution plan (check table existence and FROM clause)");
         return result;
@@ -402,11 +477,44 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
     /* Set result schema */
     result.set_schema(root->output_schema());
 
-    /* Pull tuples (Volcano model) */
-    Tuple tuple;
-    while (root->next(tuple)) {
-        // MUST deep-copy tuple to default allocator (heap) so it outlives the arena reset
-        result.add_row(Tuple(tuple.values(), nullptr));
+    if (use_vectorized) {
+        /* Vectorized batch iteration */
+        auto batch = VectorBatch::create(root->output_schema());
+        auto* vec_op = dynamic_cast<VectorizedOperator*>(root.get());
+        assert(vec_op && "root must be a VectorizedOperator when use_vectorized is true");
+
+        while (true) {
+            bool has_more = false;
+            try {
+                has_more = vec_op->next_batch(*batch);
+            } catch (const std::out_of_range& e) {
+                result.set_error(std::string("vector access error in next_batch: ") + e.what() +
+                                 " batch_cols=" + std::to_string(batch->column_count()) +
+                                 " batch_rows=" + std::to_string(batch->row_count()));
+                break;
+            } catch (const std::exception& e) {
+                result.set_error(std::string("next_batch error: ") + e.what());
+                break;
+            } catch (...) {
+                result.set_error("next_batch error: unknown exception type");
+                break;
+            }
+            if (!has_more) break;
+            for (size_t r = 0; r < batch->row_count(); ++r) {
+                Tuple tuple;
+                for (size_t c = 0; c < batch->column_count(); ++c) {
+                    tuple.set(c, batch->get_column(c).get(r));
+                }
+                result.add_row(Tuple(tuple.values(), nullptr));
+            }
+        }
+    } else {
+        /* Pull tuples (Volcano model) */
+        Tuple tuple;
+        while (root->next(tuple)) {
+            // MUST deep-copy tuple to default allocator (heap) so it outlives the arena reset
+            result.add_row(Tuple(tuple.values(), nullptr));
+        }
     }
 
     root->close();
@@ -868,6 +976,127 @@ QueryResult QueryExecutor::execute_update(const parser::UpdateStatement& stmt,
     return result;
 }
 
+QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt) {
+    QueryResult result;
+
+    auto table_meta_opt = catalog_.get_table_by_name(stmt.table_name());
+    if (!table_meta_opt.has_value()) {
+        result.set_error("Table not found: " + stmt.table_name());
+        return result;
+    }
+    const auto* table_meta = table_meta_opt.value();
+
+    Schema schema;
+    for (const auto& col : table_meta->columns) {
+        schema.add_column(col.name, col.type);
+    }
+
+    storage::HeapTable table(stmt.table_name(), bpm_, schema);
+
+    // Collect per-column stats by scanning the table (single pass)
+    std::vector<ColumnInfo> col_stats(table_meta->columns.size());
+    std::vector<std::unordered_set<std::string>> ndv_sets(table_meta->columns.size());
+
+    auto iter = table.scan();
+    Tuple tuple;
+    uint64_t row_count = 0;
+
+    while (iter.next(tuple)) {
+        row_count++;
+        for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+            const auto& col_info = table_meta->columns[col_idx];
+            const auto& val = tuple.get(col_idx);
+
+            if (val.is_null()) {
+                col_stats[col_idx].null_count++;
+            } else {
+                // Collect NDV in same pass - use prefix for text to limit memory
+                std::string ndv_key = val.to_string();
+                if (col_info.type == common::ValueType::TYPE_TEXT ||
+                    col_info.type == common::ValueType::TYPE_VARCHAR ||
+                    col_info.type == common::ValueType::TYPE_CHAR) {
+                    // Truncate to first 64 chars to limit memory in NDV set.
+                    // Note: distinct strings with the same 64-char prefix will be
+                    // counted as one NDV. Use HyperLogLog for production accuracy.
+                    ndv_key.resize(std::min(ndv_key.size(), size_t(64)));
+                }
+                ndv_sets[col_idx].insert(std::move(ndv_key));
+
+                switch (col_info.type) {
+                    case common::ValueType::TYPE_INT64:
+                    case common::ValueType::TYPE_INT32:
+                    case common::ValueType::TYPE_INT16:
+                    case common::ValueType::TYPE_INT8:
+                    case common::ValueType::TYPE_BOOL: {
+                        int64_t v = val.to_int64();
+                        if (!col_stats[col_idx].min_int.has_value() ||
+                            v < col_stats[col_idx].min_int.value()) {
+                            col_stats[col_idx].min_int = v;
+                        }
+                        if (!col_stats[col_idx].max_int.has_value() ||
+                            v > col_stats[col_idx].max_int.value()) {
+                            col_stats[col_idx].max_int = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_FLOAT64:
+                    case common::ValueType::TYPE_FLOAT32:
+                    case common::ValueType::TYPE_DECIMAL: {
+                        double v = val.to_float64();
+                        if (!col_stats[col_idx].min_double.has_value() ||
+                            v < col_stats[col_idx].min_double.value()) {
+                            col_stats[col_idx].min_double = v;
+                        }
+                        if (!col_stats[col_idx].max_double.has_value() ||
+                            v > col_stats[col_idx].max_double.value()) {
+                            col_stats[col_idx].max_double = v;
+                        }
+                        break;
+                    }
+                    case common::ValueType::TYPE_TEXT:
+                    case common::ValueType::TYPE_VARCHAR:
+                    case common::ValueType::TYPE_CHAR: {
+                        const std::string& s = val.as_text();
+                        uint64_t len = static_cast<uint64_t>(s.size());
+                        if (!col_stats[col_idx].min_str_len.has_value() ||
+                            len < col_stats[col_idx].min_str_len.value()) {
+                            col_stats[col_idx].min_str_len = len;
+                        }
+                        if (!col_stats[col_idx].max_str_len.has_value() ||
+                            len > col_stats[col_idx].max_str_len.value()) {
+                            col_stats[col_idx].max_str_len = len;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    // Compute NDV from sets collected in single pass
+    for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+        col_stats[col_idx].ndv = static_cast<uint64_t>(ndv_sets[col_idx].size());
+    }
+
+    // Update table-level stats
+    catalog_.update_table_stats(table_meta->table_id, row_count);
+
+    // Update per-column stats
+    for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
+        col_stats[col_idx].has_stats = true;
+        col_stats[col_idx].name = table_meta->columns[col_idx].name;
+        col_stats[col_idx].type = table_meta->columns[col_idx].type;
+        col_stats[col_idx].position = table_meta->columns[col_idx].position;
+        catalog_.update_column_stats(table_meta->table_id, table_meta->columns[col_idx].name,
+                                     col_stats[col_idx]);
+    }
+
+    result.set_rows_affected(1);
+    return result;
+}
+
 std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatement& stmt,
                                                     transaction::Transaction* txn) {
     /* 1. Base: Initial table access (Sequential Scan or Index Scan) */
@@ -1180,6 +1409,364 @@ std::unique_ptr<Operator> QueryExecutor::build_plan(const parser::SelectStatemen
         limit_op->set_params(current_params_);
         current_root = std::move(limit_op);
     }
+
+    return current_root;
+}
+
+std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
+    const parser::SelectStatement& stmt, [[maybe_unused]] transaction::Transaction* txn,
+    [[maybe_unused]] bool has_sort_or_limit) {
+    // Currently unused — reserved for vectorized sort/limit support
+
+    if (!stmt.from()) {
+        return nullptr;
+    }
+
+    const std::string base_table_name = stmt.from()->to_string();
+
+    /* Build base scan using ColumnarTable */
+    auto base_table_meta_opt = catalog_.get_table_by_name(base_table_name);
+    if (!base_table_meta_opt.has_value()) {
+        return nullptr;
+    }
+    const auto* base_table_meta = base_table_meta_opt.value();
+
+    executor::Schema base_schema;
+    for (const auto& col : base_table_meta->columns) {
+        base_schema.add_column(col.name, col.type, col.nullable);
+    }
+
+    auto col_table =
+        std::make_shared<storage::ColumnarTable>(base_table_name, *storage_manager_, base_schema);
+
+    /* Migrate HeapTable data to ColumnarTable if needed.
+       INSERT writes to HeapTable, but vectorized path reads from ColumnarTable.
+       We only migrate when ColumnarTable is empty (first time or after clear).
+       On failure, partial files are cleaned up so next attempt starts fresh. */
+    storage::HeapTable heap_table(base_table_name, bpm_, base_schema);
+    uint64_t count = heap_table.tuple_count();
+    bool needs_migration = (count > 0);
+    if (needs_migration) {
+        // Check if already migrated by trying to open existing columnar table
+        auto existing_col_table = std::make_shared<storage::ColumnarTable>(
+            base_table_name, *storage_manager_, base_schema);
+        if (existing_col_table->open() && existing_col_table->row_count() > 0) {
+            needs_migration = false;  // Already migrated, skip
+        }
+    }
+    if (needs_migration) {
+        // Clean up any existing partial columnar files before starting fresh
+        storage_manager_->delete_file(base_table_name + ".meta.bin");
+        for (size_t i = 0; i < base_schema.column_count(); ++i) {
+            storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                          ".data.bin");
+            storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                          ".nulls.bin");
+        }
+
+        if (!col_table->create()) {
+            return nullptr;  // Failed to create columnar table
+        }
+
+        auto batch = executor::VectorBatch::create(base_schema);
+        auto iter = heap_table.scan();
+        executor::Tuple tuple;
+        bool migration_failed = false;
+        while (iter.next(tuple)) {
+            batch->append_tuple(tuple);
+            if (batch->row_count() >= 1024) {
+                if (!col_table->append_batch(*batch)) {
+                    migration_failed = true;
+                    break;
+                }
+                batch->clear();
+            }
+        }
+        if (!migration_failed && batch->row_count() > 0) {
+            if (!col_table->append_batch(*batch)) {
+                migration_failed = true;
+            }
+        }
+
+        if (migration_failed) {
+            // Clean up partial files so next attempt starts fresh
+            storage_manager_->delete_file(base_table_name + ".meta.bin");
+            for (size_t i = 0; i < base_schema.column_count(); ++i) {
+                storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                              ".data.bin");
+                storage_manager_->delete_file(base_table_name + ".col" + std::to_string(i) +
+                                              ".nulls.bin");
+            }
+        }
+    }
+
+    if (!col_table->open()) {
+        return nullptr;  // Table not found or not columnar
+    }
+
+    std::unique_ptr<VectorizedOperator> current_root =
+        std::make_unique<VectorizedSeqScanOperator>(base_table_name, col_table);
+
+    // Track estimated output rows for join reordering decisions
+    uint64_t current_est_rows = optimizer::RowEstimator::estimate_scan_rows(*base_table_meta);
+
+    /* Add JOINs (VectorizedHashJoinOperator) */
+    for (const auto& join : stmt.joins()) {
+        const std::string join_table_name = join.table->to_string();
+
+        auto join_table_meta_opt = catalog_.get_table_by_name(join_table_name);
+        if (!join_table_meta_opt.has_value()) {
+            return nullptr;
+        }
+        const auto* join_table_meta = join_table_meta_opt.value();
+
+        executor::Schema join_schema;
+        for (const auto& col : join_table_meta->columns) {
+            join_schema.add_column(col.name, col.type, col.nullable);
+        }
+
+        auto join_col_table = std::make_shared<storage::ColumnarTable>(
+            join_table_name, *storage_manager_, join_schema);
+
+        /* Migrate HeapTable data to ColumnarTable for join table */
+        storage::HeapTable join_heap_table(join_table_name, bpm_, join_schema);
+        uint64_t join_count = join_heap_table.tuple_count();
+        if (join_count > 0) {
+            join_col_table->create();
+            auto batch = executor::VectorBatch::create(join_schema);
+            auto iter = join_heap_table.scan();
+            executor::Tuple tuple;
+            while (iter.next(tuple)) {
+                batch->append_tuple(tuple);
+                if (batch->row_count() >= 1024) {
+                    join_col_table->append_batch(*batch);
+                    batch->clear();
+                }
+            }
+            if (batch->row_count() > 0) {
+                join_col_table->append_batch(*batch);
+            }
+        }
+
+        if (!join_col_table->open()) {
+            return nullptr;
+        }
+
+        std::unique_ptr<VectorizedOperator> right_scan =
+            std::make_unique<VectorizedSeqScanOperator>(join_table_name, join_col_table);
+
+        bool use_hash_join = false;
+        std::unique_ptr<parser::Expression> left_key = nullptr;
+        std::unique_ptr<parser::Expression> right_key = nullptr;
+
+        if (join.condition && join.condition->type() == parser::ExprType::Binary) {
+            const auto* bin_expr = dynamic_cast<const parser::BinaryExpr*>(join.condition.get());
+            if (bin_expr != nullptr && bin_expr->op() == parser::TokenType::Eq) {
+                const auto& left_schema = current_root->output_schema();
+                const auto& right_schema = right_scan->output_schema();
+
+                const std::string left_col_name = bin_expr->left().to_string();
+                const std::string right_col_name = bin_expr->right().to_string();
+
+                bool left_in_left =
+                    (left_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                bool right_in_right =
+                    (right_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+
+                if (left_in_left && right_in_right) {
+                    use_hash_join = true;
+                    left_key = bin_expr->left().clone();
+                    right_key = bin_expr->right().clone();
+                } else {
+                    bool left_in_right =
+                        (right_schema.find_column(left_col_name) != static_cast<size_t>(-1));
+                    bool right_in_left =
+                        (left_schema.find_column(right_col_name) != static_cast<size_t>(-1));
+                    if (left_in_right && right_in_left) {
+                        use_hash_join = true;
+                        left_key = bin_expr->right().clone();
+                        right_key = bin_expr->left().clone();
+                    }
+                }
+            }
+        }
+
+        if (!use_hash_join) {
+            return nullptr;  // Vectorized path only supports equi-joins
+        }
+
+        // Determine join type — needed before reordering to gate outer joins
+        executor::JoinType exec_join_type = executor::JoinType::Inner;
+        if (join.type == parser::SelectStatement::JoinType::Left) {
+            exec_join_type = executor::JoinType::Left;
+        } else if (join.type == parser::SelectStatement::JoinType::Right) {
+            exec_join_type = executor::JoinType::Right;
+        } else if (join.type == parser::SelectStatement::JoinType::Full) {
+            exec_join_type = executor::JoinType::Full;
+        }
+
+        // Join reordering: estimate both join orders and pick the smaller-first approach.
+        // Only applies to inner joins — outer join semantics require preserving build/probe sides.
+        if (exec_join_type == executor::JoinType::Inner) {
+            std::string left_key_col = left_key ? left_key->to_string() : "";
+            std::string right_key_col = right_key ? right_key->to_string() : "";
+            // NOTE: column lookup depends on expression to_string() format stability.
+            // If the printer format changes, get_column() silently fails and we fall back
+            // to cross-product estimate. Consider using column position indices instead.
+            uint64_t est_forward = 0;
+            uint64_t est_reverse = 0;
+            if (!left_key_col.empty() && !right_key_col.empty()) {
+                // Estimate forward: current_est_rows ⋈ join_table_meta (probe = right)
+                est_forward = optimizer::RowEstimator::estimate_join_rows(
+                    ::cloudsql::TableInfo{0, "", {}, {}, {}, current_est_rows, "", 0, 0},
+                    *join_table_meta, right_key_col);
+                // Estimate reverse: join_table_meta ⋈ current_est_rows (probe = left)
+                ::cloudsql::TableInfo left_est;
+                left_est.num_rows = current_est_rows;
+                est_reverse = optimizer::RowEstimator::estimate_join_rows(*join_table_meta,
+                                                                          left_est, left_key_col);
+                // If reverse order is smaller, swap the key expressions so build/probe flip.
+                // The VectorizedHashJoinOperator uses left child as build, right as probe —
+                // swapping keys redirects the hash table to the smaller side.
+                if (est_reverse < est_forward && est_reverse > 0) {
+                    // Swap left_key and right_key to redirect build to the smaller side
+                    auto swapped_left = std::move(right_key);
+                    auto swapped_right = std::move(left_key);
+                    left_key = std::move(swapped_left);
+                    right_key = std::move(swapped_right);
+                    // Also swap the schema-based key column names for output schema ordering
+                    std::swap(left_key_col, right_key_col);
+                }
+            }
+
+            // Update estimated row count for the join result (for subsequent joins in chain)
+            current_est_rows =
+                (est_reverse > 0 && est_reverse < est_forward) ? est_reverse : est_forward;
+        }
+
+        executor::Schema output_schema;
+        for (const auto& col : current_root->output_schema().columns()) {
+            output_schema.add_column(col.name(), col.type(), col.nullable());
+        }
+        for (const auto& col : right_scan->output_schema().columns()) {
+            output_schema.add_column(col.name(), col.type(), col.nullable());
+        }
+
+        auto join_op = std::make_unique<VectorizedHashJoinOperator>(
+            std::move(current_root), std::move(right_scan), std::move(left_key),
+            std::move(right_key), exec_join_type, output_schema);
+
+        current_root = std::move(join_op);
+    }
+
+    /* Filter (WHERE) */
+    if (stmt.where()) {
+        auto filter_op = std::make_unique<VectorizedFilterOperator>(std::move(current_root),
+                                                                    stmt.where()->clone());
+        current_root = std::move(filter_op);
+    }
+
+    /* Aggregate (GROUP BY) */
+    bool has_aggregates = false;
+    std::vector<VectorizedAggregateInfo> agg_infos;
+    for (const auto& col : stmt.columns()) {
+        if (col->type() == parser::ExprType::Function) {
+            const auto* func = dynamic_cast<const parser::FunctionExpr*>(col.get());
+            if (func == nullptr) continue;
+            std::string name = func->name();
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            if (name == "COUNT" || name == "SUM" || name == "MIN" || name == "MAX" ||
+                name == "AVG") {
+                has_aggregates = true;
+                VectorizedAggregateInfo info;
+                if (name == "COUNT")
+                    info.type = AggregateType::Count;
+                else if (name == "SUM")
+                    info.type = AggregateType::Sum;
+                else if (name == "MIN")
+                    info.type = AggregateType::Min;
+                else if (name == "MAX")
+                    info.type = AggregateType::Max;
+                else
+                    info.type = AggregateType::Avg;
+                info.input_col_idx = -1;  // default
+                agg_infos.push_back(info);
+            }
+        }
+    }
+
+    if (!stmt.group_by().empty() || has_aggregates) {
+        std::vector<std::unique_ptr<parser::Expression>> group_by;
+        for (const auto& gb : stmt.group_by()) {
+            group_by.push_back(gb->clone());
+        }
+
+        executor::Schema output_schema;
+        for (const auto& gb : stmt.group_by()) {
+            const auto& gb_name = gb->to_string();
+            size_t idx = current_root->output_schema().find_column(gb_name);
+            if (idx != static_cast<size_t>(-1)) {
+                output_schema.add_column(current_root->output_schema().get_column(idx).name(),
+                                         current_root->output_schema().get_column(idx).type(),
+                                         current_root->output_schema().get_column(idx).nullable());
+            }
+        }
+        for (size_t i = 0; i < agg_infos.size(); ++i) {
+            output_schema.add_column("agg_" + std::to_string(i), common::ValueType::TYPE_FLOAT64,
+                                     false);
+        }
+
+        auto agg_op = std::make_unique<VectorizedGroupByOperator>(
+            std::move(current_root), std::move(group_by), std::move(agg_infos), output_schema);
+        current_root = std::move(agg_op);
+
+        if (stmt.having()) {
+            auto having_filter = std::make_unique<VectorizedFilterOperator>(std::move(current_root),
+                                                                            stmt.having()->clone());
+            current_root = std::move(having_filter);
+        }
+    }
+
+    /* Project (SELECT columns) - before Sort/Limit since they are Volcano operators */
+    if (!stmt.columns().empty()) {
+        std::vector<std::unique_ptr<parser::Expression>> proj_exprs;
+        for (const auto& col : stmt.columns()) {
+            proj_exprs.push_back(col->clone());
+        }
+
+        executor::Schema proj_schema;
+        for (const auto& col : stmt.columns()) {
+            if (col->type() == parser::ExprType::Column) {
+                const auto& col_name = col->to_string();
+                size_t idx = current_root->output_schema().find_column(col_name);
+                if (idx != static_cast<size_t>(-1)) {
+                    proj_schema.add_column(
+                        current_root->output_schema().get_column(idx).name(),
+                        current_root->output_schema().get_column(idx).type(),
+                        current_root->output_schema().get_column(idx).nullable());
+                }
+            } else {
+                // Infer expression result type from constant value, fallback to TYPE_TEXT
+                common::ValueType expr_type = common::ValueType::TYPE_TEXT;
+                if (col->type() == parser::ExprType::Constant) {
+                    const auto* const_expr = static_cast<const parser::ConstantExpr*>(col.get());
+                    expr_type = const_expr->value().type();
+                }
+                proj_schema.add_column("expr", expr_type, true);
+            }
+        }
+
+        auto project_op = std::make_unique<VectorizedProjectOperator>(
+            std::move(current_root), proj_schema, std::move(proj_exprs));
+        current_root = std::move(project_op);
+    }
+
+    /* Sort and Limit are NOT created here in the vectorized path.
+       When has_sort_or_limit is true, use_vectorized is false so this function
+       is only called for pure vectorized queries (no ORDER BY, no LIMIT).
+       The Volcano path handles Sort/Limit via build_plan(). */
+    // has_sort_or_limit reserved for vectorized sort/limit in future
 
     return current_root;
 }

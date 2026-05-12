@@ -880,4 +880,35 @@ TEST(ParserTests, NewlinesAndTabs) {
     EXPECT_EQ(stmt->type(), StmtType::Select);
 }
 
+// ============= ANALYZE TABLE Tests =============
+
+TEST(ParserTests, AnalyzeTableBasic) {
+    auto stmt = parse("ANALYZE TABLE my_table");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->type(), StmtType::Analyze);
+    auto* analyze = as<AnalyzeStatement>(stmt);
+    ASSERT_NE(analyze, nullptr);
+    EXPECT_EQ(analyze->table_name(), "my_table");
+}
+
+TEST(ParserTests, AnalyzeTableWithoutTableKeyword) {
+    // Some SQL dialects allow ANALYZE tablename without TABLE keyword
+    auto stmt = parse("ANALYZE my_table");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->type(), StmtType::Analyze);
+    auto* analyze = as<AnalyzeStatement>(stmt);
+    ASSERT_NE(analyze, nullptr);
+    EXPECT_EQ(analyze->table_name(), "my_table");
+}
+
+TEST(ParserTests, AnalyzeTableMissingName) {
+    auto stmt = parse("ANALYZE TABLE");
+    EXPECT_EQ(stmt, nullptr);
+}
+
+TEST(ParserTests, AnalyzeTableInvalidName) {
+    auto stmt = parse("ANALYZE TABLE 123");
+    EXPECT_EQ(stmt, nullptr);
+}
+
 }  // namespace

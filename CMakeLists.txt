@@ -62,6 +62,7 @@ set(CORE_SOURCES
     src/parser/expression.cpp
     src/executor/operator.cpp
     src/executor/query_executor.cpp
+    src/executor/thread_pool.cpp
     src/network/rpc_client.cpp
     src/network/rpc_server.cpp
     src/network/server.cpp
@@ -75,6 +76,7 @@ set(CORE_SOURCES
     src/distributed/distributed_executor.cpp
     src/common/bloom_filter.cpp
     src/storage/columnar_table.cpp
+    src/optimizer/row_estimator.cpp
 )
 
 add_library(sqlEngineCore ${CORE_SOURCES})
