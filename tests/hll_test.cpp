@@ -151,4 +151,89 @@ TEST(HyperLogLogTests, TextValueInsertion) {
     EXPECT_GT(card, 0U);
 }
 
+/**
+ * @brief Tests accuracy bounds for distinct values.
+ * HLL is a probabilistic estimator with ~1.6% standard error for large cardinalities.
+ * For smaller cardinalities the error can be larger, so we use a very loose bound
+ * (cardinality > 0 and reasonable upper bound).
+ */
+TEST(HyperLogLogTests, AccuracyBoundsDistinct) {
+    HyperLogLog hll;
+    uint64_t val = 123456789ULL;
+    for (int i = 0; i < 1000; ++i) {
+        hll.insert(val);
+        val = val * 6364136223846793005ULL + 1442695043ULL;
+    }
+    uint64_t card = hll.cardinality();
+    // Must be positive
+    EXPECT_GT(card, 0U);
+    // Upper bound: 1000 distinct values can't estimate more than 100000
+    EXPECT_LT(card, 100000U);
+}
+
+/**
+ * @brief Tests merge with overlapping sets.
+ * Uses distinct LCG-generated values for hll1 and hll2 to ensure good
+ * hash distribution across registers (avoids sequential value collisions).
+ */
+TEST(HyperLogLogTests, MergeOverlappingSets) {
+    HyperLogLog hll1;
+    HyperLogLog hll2;
+    uint64_t val = 123456789ULL;
+    for (int i = 0; i < 100; ++i) {
+        hll1.insert(val);
+        val = val * 6364136223846793005ULL + 1442695043ULL;
+    }
+    uint64_t val2 = 987654321ULL;
+    for (int i = 0; i < 100; ++i) {
+        hll2.insert(val2);
+        val2 = val2 * 6364136223846793005ULL + 1442695043ULL;
+    }
+    uint64_t card1 = hll1.cardinality();
+    uint64_t card2 = hll2.cardinality();
+    hll1.merge(hll2);
+    uint64_t merged = hll1.cardinality();
+    // Merged cardinality should be >= either individual
+    EXPECT_GE(merged, card1);
+    EXPECT_GE(merged, card2);
+    // Both sets are disjoint with good distribution, merged should be in a reasonable range
+    EXPECT_LT(merged, 50000U);  // Sanity upper bound
+}
+
+/**
+ * @brief Tests seed reproducibility — same seed gives same cardinality.
+ */
+TEST(HyperLogLogTests, SeedReproducibility) {
+    HyperLogLog hll1(42);
+    HyperLogLog hll2(42);
+    uint64_t val = 123456789ULL;
+    for (int i = 0; i < 500; ++i) {
+        hll1.insert(val);
+        val = val * 6364136223846793005ULL + 1442695043ULL;
+    }
+    val = 123456789ULL;
+    for (int i = 0; i < 500; ++i) {
+        hll2.insert(val);
+        val = val * 6364136223846793005ULL + 1442695043ULL;
+    }
+    EXPECT_EQ(hll1.cardinality(), hll2.cardinality());
+}
+
+/**
+ * @brief Tests different seeds produce different cardinalities.
+ * Seed is XORed onto the hash, so different seeds produce different
+ * register distributions and thus different cardinality estimates.
+ */
+TEST(HyperLogLogTests, DifferentSeedsDiffer) {
+    HyperLogLog hll1(0);
+    HyperLogLog hll2(12345);  // Large seed difference ensures different register distributions
+    uint64_t val = 123456789ULL;
+    for (int i = 0; i < 500; ++i) {
+        hll1.insert(val);
+        hll2.insert(val);
+        val = val * 6364136223846793005ULL + 1442695043ULL;
+    }
+    EXPECT_NE(hll1.cardinality(), hll2.cardinality());
+}
+
 }  // namespace

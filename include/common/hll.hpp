@@ -35,6 +35,18 @@ class HyperLogLog {
     static constexpr double kPowBase = 2.0;          // base for 2^(-reg) computation
     static constexpr int kIndexBits = 11;            // bits used for register index
 
+    // Linear counting fallback: when nonzero registers < m / kLinearCountingThreshold,
+    // raw HLL formula overestimates severely (e.g., 3 distinct values → 23k estimate).
+    // Linear counting: E[n] ≈ -m * log(V/m) where V = empty fraction.
+    static constexpr double kLinearCountingThreshold = 20.0;
+
+    // Bias correction: when raw_estimate <= kBiasCorrectionBoundary * m, apply correction.
+    // Empirical testing shows HLL systematically overestimates for small cardinalities.
+    static constexpr double kBiasCorrectionBoundary = 2.5;
+
+    // Bias adjustment: bias = -0.5 * (m / kBiasAdjustmentFactor).
+    static constexpr double kBiasAdjustmentFactor = 10.0;
+
     /**
      * @brief Construct with optional seed for reproducible hashing
      */
@@ -81,9 +93,9 @@ class HyperLogLog {
         int empty_count = static_cast<int>(m) - nonzero_count;
 
         // For sparse data (few registers used), use linear counting to avoid
-        // HLL's extreme overestimation. When registers are sparse (nonzero < m/20),
+        // HLL's extreme overestimation. When registers are sparse (nonzero < m/kLinearCountingThreshold),
         // the HLL raw formula gives wildly incorrect results.
-        if (nonzero_count < static_cast<int>(m / 20)) {
+        if (nonzero_count < static_cast<int>(m / kLinearCountingThreshold)) {
             // Linear counting: E[n] ≈ -m * log(V/m) where V = empty fraction
             double linear_est = -m * std::log2(static_cast<double>(empty_count) / m);
             return static_cast<uint64_t>(std::max(1.0, linear_est));
@@ -94,8 +106,8 @@ class HyperLogLog {
 
         // Bias correction for small cardinalities
         double bias = 0.0;
-        if (raw_estimate <= 2.5 * m) {
-            bias = -0.5 * (m / 10.0);
+        if (raw_estimate <= kBiasCorrectionBoundary * m) {
+            bias = -0.5 * (m / kBiasAdjustmentFactor);
         }
 
         double estimate = raw_estimate + bias;
