@@ -1443,4 +1443,44 @@ TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle_SkipsBloomFilter) {
     EXPECT_EQ(bloom_filter_push_count.load(), 0);
 }
 
+// Test: SELECT query returns error from data node
+// Verifies error propagation when ExecuteFragment returns success=false
+// Path: line 611 all_success=false → line 953 res.set_error(errors)
+TEST_F(DistributedExecutorWithNodesTests, SelectErrorFromNode_ReturnsError) {
+    auto srv1 = std::make_unique<network::RpcServer>(6454);
+    srv1->start();
+    servers_.push_back(std::move(srv1));
+
+    cm_->register_node("node_1", "127.0.0.1", 6454, config::RunMode::Data);
+
+    // Handler returns success=false with error message
+    servers_[0]->set_handler(
+        network::RpcType::ExecuteFragment,
+        [](const network::RpcHeader&, const std::vector<uint8_t>& payload, int fd) {
+            [[maybe_unused]] auto args =
+                network::ExecuteFragmentArgs::deserialize(payload);
+            network::QueryResultsReply reply;
+            reply.success = false;
+            reply.error_msg = "node rejected query";
+            reply.schema.add_column("id", common::ValueType::TYPE_INT32);
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
+
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM test_table");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM test_table");
+    EXPECT_FALSE(res.success());
+    EXPECT_TRUE(res.error().find("node rejected query") != std::string::npos);
+}
+
 }  // namespace
