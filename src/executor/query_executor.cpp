@@ -20,6 +20,7 @@
 
 #include "catalog/catalog.hpp"
 #include "common/cluster_manager.hpp"
+#include "common/hll.hpp"
 #include "common/value.hpp"
 #include "distributed/raft_group.hpp"
 #include "distributed/raft_manager.hpp"
@@ -995,7 +996,7 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
 
     // Collect per-column stats by scanning the table (single pass)
     std::vector<ColumnInfo> col_stats(table_meta->columns.size());
-    std::vector<std::unordered_set<std::string>> ndv_sets(table_meta->columns.size());
+    std::vector<common::HyperLogLog> ndv_estimators(table_meta->columns.size());
 
     auto iter = table.scan();
     Tuple tuple;
@@ -1010,17 +1011,20 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
             if (val.is_null()) {
                 col_stats[col_idx].null_count++;
             } else {
-                // Collect NDV in same pass - use prefix for text to limit memory
-                std::string ndv_key = val.to_string();
+                // Collect NDV via HyperLogLog — memory-bounded vs unbounded unordered_set
+                uint64_t hash = 0;
                 if (col_info.type == common::ValueType::TYPE_TEXT ||
                     col_info.type == common::ValueType::TYPE_VARCHAR ||
                     col_info.type == common::ValueType::TYPE_CHAR) {
-                    // Truncate to first 64 chars to limit memory in NDV set.
-                    // Note: distinct strings with the same 64-char prefix will be
-                    // counted as one NDV. Use HyperLogLog for production accuracy.
-                    ndv_key.resize(std::min(ndv_key.size(), size_t(64)));
+                    // Use 64-char prefix for text hashing
+                    const std::string& s = val.as_text();
+                    size_t prefix_len = std::min(s.size(), size_t(64));
+                    hash = common::HyperLogLog::hash_bytes(s.data(), prefix_len);
+                } else {
+                    // Use common::Value::Hash for numeric and other types
+                    hash = static_cast<uint64_t>(common::Value::Hash{}(val));
                 }
-                ndv_sets[col_idx].insert(std::move(ndv_key));
+                ndv_estimators[col_idx].insert(hash);
 
                 switch (col_info.type) {
                     case common::ValueType::TYPE_INT64:
@@ -1075,9 +1079,9 @@ QueryResult QueryExecutor::execute_analyze(const parser::AnalyzeStatement& stmt)
         }
     }
 
-    // Compute NDV from sets collected in single pass
+    // Compute NDV from HLL estimators collected in single pass
     for (size_t col_idx = 0; col_idx < table_meta->columns.size(); ++col_idx) {
-        col_stats[col_idx].ndv = static_cast<uint64_t>(ndv_sets[col_idx].size());
+        col_stats[col_idx].ndv = ndv_estimators[col_idx].cardinality();
     }
 
     // Update table-level stats
