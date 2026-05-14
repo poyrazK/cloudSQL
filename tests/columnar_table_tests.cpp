@@ -340,4 +340,30 @@ TEST_F(ColumnarTableTests, SchemaAccessor) {
     ASSERT_EQ(retrieved_schema.get_column(1).type(), common::ValueType::TYPE_FLOAT64);
 }
 
+// Test: read_batch with start_row beyond table rows returns false
+// Line 124: start_row >= row_count_ returns false
+TEST_F(ColumnarTableTests, ReadBatch_StartRowBeyondTable) {
+    const std::string name = "col_test_offset";
+    cleanup_table(name);
+
+    Schema schema;
+    schema.add_column("id", common::ValueType::TYPE_INT64);
+
+    ColumnarTable table(name, *sm_, schema);
+    ASSERT_TRUE(table.create());
+
+    // Insert 5 rows
+    auto batch = VectorBatch::create(schema);
+    for (int i = 0; i < 5; i++) {
+        batch->get_column(0).append(common::Value::make_int64(i));
+    }
+    batch->set_row_count(5);
+    ASSERT_TRUE(table.append_batch(*batch));
+    ASSERT_EQ(table.row_count(), 5U);
+
+    // Query with start_row = 100, way beyond table rows
+    auto out = VectorBatch::create(schema);
+    ASSERT_FALSE(table.read_batch(100, 10, *out));  // start_row >= row_count_
+}
+
 }  // namespace

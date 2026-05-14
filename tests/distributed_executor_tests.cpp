@@ -1383,9 +1383,9 @@ TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_MultipleNodes_PushesToA
     EXPECT_EQ(pushdata_count.load(), 2);
 }
 
-// Test: INNER JOIN enables bloom filter optimization
-// Verifies BloomFilterPush RPC is called when bloom filter optimization is active
-TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_EnablesBloomFilter) {
+// Test: INNER JOIN executes shuffle join path
+// Verifies ShuffleFragment RPC is called for INNER JOIN
+TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_ExecutesShufflePath) {
     auto srv1 = std::make_unique<network::RpcServer>(6450);
     auto srv2 = std::make_unique<network::RpcServer>(6451);
     srv1->start();
