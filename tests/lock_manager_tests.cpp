@@ -406,4 +406,15 @@ TEST(LockManagerTests, LockUpgrade) {
     static_cast<void>(lm.unlock(&txn, rid));
 }
 
+// Test: unlock on RID that was never locked
+// Line 117: returns false when RID not found in lock_table_
+TEST(LockManagerTests, UnlockNeverLocked_ReturnsFalse) {
+    LockManager lm;
+    Transaction txn(1);
+    HeapTable::TupleId rid(999, 999);  // Never acquired
+
+    // Unlock without ever acquiring should return false
+    EXPECT_FALSE(lm.unlock(&txn, rid));
+}
+
 }  // namespace
