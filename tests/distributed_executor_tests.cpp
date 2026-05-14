@@ -567,6 +567,47 @@ TEST_F(DistributedExecutorWithNodesTests, InsertShardRouting) {
     EXPECT_TRUE(res.success());
 }
 
+// Test: ShuffleFragment returns success=false
+// Line 268: when ShuffleFragment RPC returns reply.success=false,
+// sets error "Shuffle failed on node: " + reply.error_msg
+TEST_F(DistributedExecutorWithNodesTests, ShuffleFragmentFailure_ReturnsError) {
+    auto srv1 = std::make_unique<network::RpcServer>(6510);
+    auto srv2 = std::make_unique<network::RpcServer>(6511);
+    srv1->start();
+    srv2->start();
+    servers_.push_back(std::move(srv1));
+    servers_.push_back(std::move(srv2));
+
+    cm_->register_node("node_1", "127.0.0.1", 6510, config::RunMode::Data);
+    cm_->register_node("node_2", "127.0.0.1", 6511, config::RunMode::Data);
+
+    // Handler for ShuffleFragment that returns failure
+    servers_[0]->set_handler(
+        network::RpcType::ShuffleFragment,
+        [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+            network::QueryResultsReply reply;
+            reply.success = false;
+            reply.error_msg = "shard rejected shuffle";
+            network::RpcHeader resp_h;
+            resp_h.type = network::RpcType::QueryResults;
+            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+            char h_buf[network::RpcHeader::HEADER_SIZE];
+            resp_h.encode(h_buf);
+            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+            auto data = reply.serialize();
+            if (!data.empty()) send(fd, data.data(), data.size(), 0);
+        });
+
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    EXPECT_FALSE(res.success());
+    EXPECT_TRUE(res.error().find("shard rejected shuffle") != std::string::npos);
+}
+
 // Test: INSERT with connect failure
 // Verifies error handling when node has no active server
 TEST_F(DistributedExecutorWithNodesTests, InsertConnectFailure) {
