@@ -31,9 +31,9 @@ namespace common {
  */
 class HyperLogLog {
    public:
-    static constexpr size_t kNumRegisters = 2048;   // 2^11 for 11-bit index
-    static constexpr double kPowBase = 2.0;          // base for 2^(-reg) computation
-    static constexpr int kIndexBits = 11;            // bits used for register index
+    static constexpr size_t kNumRegisters = 2048;  // 2^11 for 11-bit index
+    static constexpr double kPowBase = 2.0;        // base for 2^(-reg) computation
+    static constexpr int kIndexBits = 11;          // bits used for register index
 
     // Linear counting fallback: when nonzero registers < m / kLinearCountingThreshold,
     // raw HLL formula overestimates severely (e.g., 3 distinct values → 23k estimate).
@@ -93,8 +93,8 @@ class HyperLogLog {
         int empty_count = static_cast<int>(m) - nonzero_count;
 
         // For sparse data (few registers used), use linear counting to avoid
-        // HLL's extreme overestimation. When registers are sparse (nonzero < m/kLinearCountingThreshold),
-        // the HLL raw formula gives wildly incorrect results.
+        // HLL's extreme overestimation. When registers are sparse (nonzero <
+        // m/kLinearCountingThreshold), the HLL raw formula gives wildly incorrect results.
         if (nonzero_count < static_cast<int>(m / kLinearCountingThreshold)) {
             // Linear counting: E[n] ≈ -m * log(V/m) where V = empty fraction
             double linear_est = -m * std::log2(static_cast<double>(empty_count) / m);

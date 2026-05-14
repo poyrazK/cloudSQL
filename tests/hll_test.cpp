@@ -140,9 +140,8 @@ TEST(HyperLogLogTests, MergeCombinesDistinctSets) {
  */
 TEST(HyperLogLogTests, TextValueInsertion) {
     HyperLogLog hll;
-    std::vector<std::string> texts = {
-        "alpha", "beta", "gamma", "delta", "epsilon",
-        "zeta", "eta", "theta", "iota", "kappa"};
+    std::vector<std::string> texts = {"alpha", "beta", "gamma", "delta", "epsilon",
+                                      "zeta",  "eta",  "theta", "iota",  "kappa"};
     for (const auto& t : texts) {
         uint64_t hash = HyperLogLog::hash_bytes(t.data(), t.size());
         hll.insert(hash);
@@ -270,7 +269,7 @@ TEST(HyperLogLogTests, ValueTypeColumnCoverage) {
 
     // TEXT values via hash_bytes (mimics execute_analyze path)
     std::vector<std::string> texts = {"alpha", "beta", "gamma", "delta", "epsilon",
-                                      "zeta", "eta", "theta", "iota", "kappa"};
+                                      "zeta",  "eta",  "theta", "iota",  "kappa"};
     for (const auto& t : texts) {
         uint64_t hash = HyperLogLog::hash_bytes(t.data(), t.size());
         hll_text.insert(hash);
