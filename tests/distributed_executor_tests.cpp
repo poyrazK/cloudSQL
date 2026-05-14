@@ -1146,6 +1146,22 @@ TEST_F(DistributedExecutorTests, Join_NaturalNotSupported_ReturnsError) {
     (void)res;
 }
 
+TEST_F(DistributedExecutorWithNodesTests, Join_NonEqualityCondition_ReturnsError) {
+    // Register a node (no server needed - we want to test the join validation before RPC)
+    cm_->register_node("node_1", "127.0.0.1", 6499, config::RunMode::Data);
+
+    // JOIN with non-equality condition (e.g., t1.id > t2.id) should return error
+    // because Shuffle Join requires equality join condition
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 JOIN t2 ON t1.id > t2.id");
+    Parser parser(std::move(lexer));
+    auto stmt = parser.parse_statement();
+    ASSERT_NE(stmt, nullptr);
+
+    auto res = exec_->execute(*stmt, "SELECT * FROM t1 JOIN t2 ON t1.id > t2.id");
+    ASSERT_FALSE(res.success()) << "Non-equality JOIN should return error";
+    EXPECT_TRUE(res.error().find("equality") != std::string::npos);
+}
+
 // ============= broadcast_table Coverage =============
 
 TEST_F(DistributedExecutorWithNodesTests, BroadcastTable_Basic) {

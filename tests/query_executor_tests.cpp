@@ -574,6 +574,23 @@ TEST_F(QueryExecutorTests, LeftJoin) {
     EXPECT_EQ(res.row_count(), 2U);
 }
 
+// Test: Non-equality JOIN returns error (NestedLoopJoin not implemented)
+TEST_F(QueryExecutorTests, NonEqualityJoin_ReturnsError) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE t1 (id INT, name TEXT)");
+    execute_sql(env.executor, "CREATE TABLE t2 (id INT, val INT)");
+    execute_sql(env.executor, "INSERT INTO t1 VALUES (1, 'Alice')");
+    execute_sql(env.executor, "INSERT INTO t2 VALUES (1, 100), (2, 200)");
+
+    // JOIN with arithmetic in condition (id = val + 0) is not an equi-join
+    // Should return error from build_plan when NestedLoopJoin is not implemented
+    const auto res = execute_sql(env.executor,
+                                 "SELECT t1.name, t2.val FROM t1 JOIN t2 ON t1.id = t2.val + 0");
+    EXPECT_FALSE(res.success()) << "Non-equality JOIN should fail";
+    EXPECT_TRUE(res.error().find("execution plan") != std::string::npos ||
+                    res.error().find("Failed to build") != std::string::npos);
+}
+
 // ============= Error Handling Tests =============
 
 TEST_F(QueryExecutorTests, InvalidSQLSyntax) {
