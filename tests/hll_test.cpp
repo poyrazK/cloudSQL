@@ -236,4 +236,46 @@ TEST(HyperLogLogTests, DifferentSeedsDiffer) {
     EXPECT_NE(hll1.cardinality(), hll2.cardinality());
 }
 
+/**
+ * @brief Tests HLL with different ValueType columns.
+ * Verifies the integration path used by execute_analyze() — Value::Hash{}
+ * for numeric types, hash_bytes() for text types.
+ */
+TEST(HyperLogLogTests, ValueTypeColumnCoverage) {
+    HyperLogLog hll_int;
+    HyperLogLog hll_bigint;
+    HyperLogLog hll_double;
+    HyperLogLog hll_text;
+
+    // INT64 values
+    for (int64_t i = 0; i < 200; ++i) {
+        Value v = Value::make_int64(i);
+        hll_int.insert(static_cast<uint64_t>(Value::Hash{}(v)));
+    }
+    EXPECT_GT(hll_int.cardinality(), 0U);
+
+    // BIGINT values (larger range)
+    for (int64_t i = 0; i < 200; ++i) {
+        Value v = Value::make_int64(i * 1000000000LL);
+        hll_bigint.insert(static_cast<uint64_t>(Value::Hash{}(v)));
+    }
+    EXPECT_GT(hll_bigint.cardinality(), 0U);
+
+    // DOUBLE (float64) values
+    for (int i = 0; i < 200; ++i) {
+        Value v = Value::make_float64(static_cast<double>(i) * 1.5);
+        hll_double.insert(static_cast<uint64_t>(Value::Hash{}(v)));
+    }
+    EXPECT_GT(hll_double.cardinality(), 0U);
+
+    // TEXT values via hash_bytes (mimics execute_analyze path)
+    std::vector<std::string> texts = {"alpha", "beta", "gamma", "delta", "epsilon",
+                                      "zeta", "eta", "theta", "iota", "kappa"};
+    for (const auto& t : texts) {
+        uint64_t hash = HyperLogLog::hash_bytes(t.data(), t.size());
+        hll_text.insert(hash);
+    }
+    EXPECT_GT(hll_text.cardinality(), 0U);
+}
+
 }  // namespace
