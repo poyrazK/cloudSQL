@@ -506,4 +506,25 @@ TEST(BufferPoolTests, FetchPageReadFailure) {
     static_cast<void>(std::remove(short_file.c_str()));
 }
 
+// Test: Double unpin returns false
+// Line 130: unpin returns false when pin_count_ is already zero
+TEST(BufferPoolTests, DoubleUnpin_ReturnsFalse) {
+    static_cast<void>(std::remove("./test_data/double_unpin.db"));
+    StorageManager disk_manager("./test_data");
+    BufferPoolManager bpm(2, disk_manager);
+
+    const std::string file_name = "double_unpin.db";
+    uint32_t page_id = 0;
+    Page* page = bpm.new_page(file_name, &page_id);
+    ASSERT_NE(page, nullptr);
+
+    // First unpin - should succeed
+    EXPECT_TRUE(bpm.unpin_page(file_name, page_id, true));
+
+    // Second unpin on same page - pin_count_ already 0, should return false
+    EXPECT_FALSE(bpm.unpin_page(file_name, page_id, true));
+
+    static_cast<void>(std::remove("./test_data/double_unpin.db"));
+}
+
 }  // namespace
