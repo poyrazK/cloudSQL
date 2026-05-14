@@ -591,6 +591,37 @@ TEST_F(QueryExecutorTests, NonEqualityJoin_ReturnsError) {
                     res.error().find("Failed to build") != std::string::npos);
 }
 
+// Test: Non-equality JOIN with comparison operator returns error
+// Line 1297: build_plan returns nullptr when NestedLoopJoin not implemented
+TEST_F(QueryExecutorTests, NonEqualityJoin_GreaterThan_ReturnsError) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE t1 (id INT)");
+    execute_sql(env.executor, "CREATE TABLE t2 (id INT, val INT)");
+    execute_sql(env.executor, "INSERT INTO t1 VALUES (1), (2)");
+    execute_sql(env.executor, "INSERT INTO t2 VALUES (1, 100), (2, 200)");
+
+    // JOIN with > condition - cannot use HashJoin, NestedLoopJoin not implemented
+    const auto res = execute_sql(env.executor,
+                                 "SELECT * FROM t1 JOIN t2 ON t1.id > t2.val");
+    EXPECT_FALSE(res.success()) << "Non-equality JOIN with > should fail";
+}
+
+// Test: JOIN references table that does not exist
+// Line 1223-1224: build_plan returns nullptr when join_table not found
+TEST_F(QueryExecutorTests, JoinTableNotFound_ReturnsError) {
+    TestEnvironment env;
+    execute_sql(env.executor, "CREATE TABLE t1 (id INT)");
+    execute_sql(env.executor, "INSERT INTO t1 VALUES (1)");
+
+    // t2 does not exist - join path should return error
+    const auto res = execute_sql(env.executor,
+                                 "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    EXPECT_FALSE(res.success()) << "JOIN with missing table should fail";
+    EXPECT_TRUE(res.error().find("table") != std::string::npos ||
+                    res.error().find("not found") != std::string::npos ||
+                    res.error().find("Failed to build") != std::string::npos);
+}
+
 // ============= Error Handling Tests =============
 
 TEST_F(QueryExecutorTests, InvalidSQLSyntax) {
