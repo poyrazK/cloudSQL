@@ -102,6 +102,7 @@ class BTreeIndex {
 
     [[nodiscard]] const std::string& index_name() const { return index_name_; }
     [[nodiscard]] common::ValueType key_type() const { return key_type_; }
+    [[nodiscard]] uint32_t root_page() const { return root_page_; }
 
     bool create();
     bool open();
