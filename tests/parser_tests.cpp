@@ -53,6 +53,16 @@ TEST(ParserTests, GarbageInput) {
     EXPECT_EQ(stmt, nullptr);
 }
 
+// Test: SELECT without FROM clause
+// Line 171-175: parser returns nullptr when FROM is missing
+TEST(ParserTests, SelectWithoutFrom) {
+    auto stmt = parse("SELECT 1");
+    EXPECT_EQ(stmt, nullptr);
+
+    auto stmt2 = parse("SELECT col1");
+    EXPECT_EQ(stmt2, nullptr);
+}
+
 // ============= SELECT Statement Tests =============
 
 TEST(ParserTests, SelectSimple) {
