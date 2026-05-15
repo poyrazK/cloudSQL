@@ -178,8 +178,20 @@ if(BUILD_BENCHMARKS)
     add_cloudsql_benchmark(storage_bench benchmarks/storage_bench.cpp)
     add_cloudsql_benchmark(execution_bench benchmarks/execution_bench.cpp)
     add_cloudsql_benchmark(network_bench benchmarks/network_bench.cpp)
-    
+
     # SQLite comparison benchmark
     add_executable(sqlite_comparison_bench benchmarks/sqlite_comparison_bench.cpp)
     target_link_libraries(sqlite_comparison_bench sqlEngineCore benchmark::benchmark benchmark::benchmark_main sqlite3)
+
+    # DuckDB comparison benchmark
+    find_library(DUCKDB_LIBRARY duckdb PATHS /opt/homebrew/lib)
+    find_path(DUCKDB_INCLUDE_DIR duckdb.hpp PATHS /opt/homebrew/include)
+    if(DUCKDB_LIBRARY AND DUCKDB_INCLUDE_DIR)
+        add_executable(duckdb_comparison_bench benchmarks/duckdb_comparison_bench.cpp)
+        target_include_directories(duckdb_comparison_bench PRIVATE ${DUCKDB_INCLUDE_DIR})
+        target_link_libraries(duckdb_comparison_bench sqlEngineCore benchmark::benchmark benchmark::benchmark_main ${DUCKDB_LIBRARY})
+        message(STATUS "DuckDB benchmark enabled")
+    else()
+        message(STATUS "DuckDB not found, skipping duckdb_comparison_bench")
+    endif()
 endif()
