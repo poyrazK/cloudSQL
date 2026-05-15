@@ -582,21 +582,23 @@ TEST_F(DistributedExecutorWithNodesTests, ShuffleFragmentFailure_ReturnsError) {
     cm_->register_node("node_2", "127.0.0.1", 6511, config::RunMode::Data);
 
     // Handler for ShuffleFragment that returns failure
-    servers_[0]->set_handler(
-        network::RpcType::ShuffleFragment,
-        [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-            network::QueryResultsReply reply;
-            reply.success = false;
-            reply.error_msg = "shard rejected shuffle";
-            network::RpcHeader resp_h;
-            resp_h.type = network::RpcType::QueryResults;
-            resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
-            char h_buf[network::RpcHeader::HEADER_SIZE];
-            resp_h.encode(h_buf);
-            send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
-            auto data = reply.serialize();
-            if (!data.empty()) send(fd, data.data(), data.size(), 0);
-        });
+    auto failure_h = [](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
+        network::QueryResultsReply reply;
+        reply.success = false;
+        reply.error_msg = "shard rejected shuffle";
+        network::RpcHeader resp_h;
+        resp_h.type = network::RpcType::QueryResults;
+        resp_h.payload_len = static_cast<uint16_t>(reply.serialize().size());
+        char h_buf[network::RpcHeader::HEADER_SIZE];
+        resp_h.encode(h_buf);
+        send(fd, h_buf, network::RpcHeader::HEADER_SIZE, 0);
+        auto data = reply.serialize();
+        if (!data.empty()) send(fd, data.data(), data.size(), 0);
+    };
+    // Register on ALL servers so shard routing always hits a server with the handler
+    for (auto& srv : servers_) {
+        srv->set_handler(network::RpcType::ShuffleFragment, failure_h);
+    }
 
     auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
@@ -1397,6 +1399,7 @@ TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_ExecutesShufflePath) 
     cm_->register_node("node_2", "127.0.0.1", 6451, config::RunMode::Data);
 
     std::atomic<int> shuffle_call_count{0};
+    std::atomic<int> bloom_filter_push_count{0};
 
     auto success_h = [this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
         send_success_reply(fd);
@@ -1409,15 +1412,23 @@ TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_ExecutesShufflePath) 
             send_success_reply(fd);
         };
 
+    // Count BloomFilterPush calls to verify bloom filter path is exercised
+    auto bloom_filter_counting_h =
+        [&bloom_filter_push_count, this](const network::RpcHeader&, const std::vector<uint8_t>&,
+                                         int fd) {
+            ++bloom_filter_push_count;
+            send_success_reply(fd);
+        };
+
     // Phase 1 shuffle - COUNTING
     servers_[0]->set_handler(network::RpcType::ShuffleFragment, counting_success_h);
     servers_[1]->set_handler(network::RpcType::ShuffleFragment, counting_success_h);
     // BloomFilterBits aggregation
     servers_[0]->set_handler(network::RpcType::BloomFilterBits, success_h);
     servers_[1]->set_handler(network::RpcType::BloomFilterBits, success_h);
-    // BloomFilterPush
-    servers_[0]->set_handler(network::RpcType::BloomFilterPush, success_h);
-    servers_[1]->set_handler(network::RpcType::BloomFilterPush, success_h);
+    // BloomFilterPush - COUNTED
+    servers_[0]->set_handler(network::RpcType::BloomFilterPush, bloom_filter_counting_h);
+    servers_[1]->set_handler(network::RpcType::BloomFilterPush, bloom_filter_counting_h);
     // ExecuteFragment for final results
     servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
@@ -1432,6 +1443,8 @@ TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_ExecutesShufflePath) 
     EXPECT_TRUE(res.success());
     // ShuffleFragment should be called (proves we're in the shuffle join path)
     EXPECT_GE(shuffle_call_count.load(), 1);
+    // BloomFilterPush should also be called for INNER JOIN
+    EXPECT_GE(bloom_filter_push_count.load(), 1);
 }
 
 // Test: RIGHT JOIN skips bloom filter optimization

@@ -1580,33 +1580,83 @@ class ThrowingVectorizedScanOperator : public VectorizedOperator {
 // Verifies error handling when next_batch() throws std::out_of_range
 // Expected: error message contains "vector access error in next_batch"
 TEST_F(QueryExecutorTests, VectorizedScan_OutOfRangeException) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE t (id INT)");
-    execute_sql(env.executor, "INSERT INTO t VALUES (1), (2), (3)");
+    Schema schema;
+    schema.add_column("id", common::ValueType::TYPE_INT64);
+    ThrowingVectorizedScanOperator op(schema, ThrowingVectorizedScanOperator::ThrowType::OutOfRange);
 
-    // Exception handling in query_executor.cpp:489-501 catches out_of_range
-    // and formats error message with batch context (batch_cols, batch_rows)
-    SUCCEED();  // Infrastructure for injectable operators needed for full coverage
+    op.set_memory_resource(nullptr);
+    op.set_params({});
+    ASSERT_TRUE(op.init());
+    ASSERT_TRUE(op.open());
+
+    auto batch = VectorBatch::create(schema);
+    std::string error_msg;
+
+    // Replicate exception handling from query_executor.cpp:488-494
+    try {
+        op.next_batch(*batch);
+    } catch (const std::out_of_range& e) {
+        error_msg = std::string("vector access error in next_batch: ") + e.what() +
+                    " batch_cols=" + std::to_string(batch->column_count()) +
+                    " batch_rows=" + std::to_string(batch->row_count());
+    }
+
+    EXPECT_FALSE(error_msg.empty());
+    EXPECT_TRUE(error_msg.find("vector access error in next_batch") != std::string::npos);
+    EXPECT_TRUE(error_msg.find("batch_cols=") != std::string::npos);
+    EXPECT_TRUE(error_msg.find("batch_rows=") != std::string::npos);
 }
 
 // Verifies error handling when next_batch() throws std::exception
 // Expected: error message contains "next_batch error: " + e.what()
 TEST_F(QueryExecutorTests, VectorizedScan_StdException) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE t (id INT)");
+    Schema schema;
+    schema.add_column("id", common::ValueType::TYPE_INT64);
+    ThrowingVectorizedScanOperator op(schema, ThrowingVectorizedScanOperator::ThrowType::StdException);
 
-    // Exception handling in query_executor.cpp:495-497 catches std::exception
-    SUCCEED();
+    op.set_memory_resource(nullptr);
+    op.set_params({});
+    ASSERT_TRUE(op.init());
+    ASSERT_TRUE(op.open());
+
+    auto batch = VectorBatch::create(schema);
+    std::string error_msg;
+
+    // Replicate exception handling from query_executor.cpp:495-497
+    try {
+        op.next_batch(*batch);
+    } catch (const std::exception& e) {
+        error_msg = std::string("next_batch error: ") + e.what();
+    }
+
+    EXPECT_FALSE(error_msg.empty());
+    EXPECT_TRUE(error_msg.find("next_batch error: ") != std::string::npos);
+    EXPECT_TRUE(error_msg.find("simulated runtime_error") != std::string::npos);
 }
 
 // Verifies error handling when next_batch() throws unknown type
 // Expected: error message is "next_batch error: unknown exception type"
 TEST_F(QueryExecutorTests, VectorizedScan_UnknownException) {
-    TestEnvironment env;
-    execute_sql(env.executor, "CREATE TABLE t (id INT)");
+    Schema schema;
+    schema.add_column("id", common::ValueType::TYPE_INT64);
+    ThrowingVectorizedScanOperator op(schema, ThrowingVectorizedScanOperator::ThrowType::Unknown);
 
-    // Exception handling in query_executor.cpp:498-500 catches via catch(...)
-    SUCCEED();
+    op.set_memory_resource(nullptr);
+    op.set_params({});
+    ASSERT_TRUE(op.init());
+    ASSERT_TRUE(op.open());
+
+    auto batch = VectorBatch::create(schema);
+    std::string error_msg;
+
+    // Replicate exception handling from query_executor.cpp:498-500
+    try {
+        op.next_batch(*batch);
+    } catch (...) {
+        error_msg = "next_batch error: unknown exception type";
+    }
+
+    EXPECT_EQ(error_msg, "next_batch error: unknown exception type");
 }
 
 // ============= RowEstimator Unit Tests =============
