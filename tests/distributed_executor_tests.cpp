@@ -1406,19 +1406,19 @@ TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_ExecutesShufflePath) 
     };
 
     // Count ShuffleFragment calls to verify join path is being executed
-    auto counting_success_h =
-        [&shuffle_call_count, this](const network::RpcHeader&, const std::vector<uint8_t>&, int fd) {
-            ++shuffle_call_count;
-            send_success_reply(fd);
-        };
+    auto counting_success_h = [&shuffle_call_count, this](const network::RpcHeader&,
+                                                          const std::vector<uint8_t>&, int fd) {
+        ++shuffle_call_count;
+        send_success_reply(fd);
+    };
 
     // Count BloomFilterPush calls to verify bloom filter path is exercised
-    auto bloom_filter_counting_h =
-        [&bloom_filter_push_count, this](const network::RpcHeader&, const std::vector<uint8_t>&,
-                                         int fd) {
-            ++bloom_filter_push_count;
-            send_success_reply(fd);
-        };
+    auto bloom_filter_counting_h = [&bloom_filter_push_count, this](const network::RpcHeader&,
+                                                                    const std::vector<uint8_t>&,
+                                                                    int fd) {
+        ++bloom_filter_push_count;
+        send_success_reply(fd);
+    };
 
     // Phase 1 shuffle - COUNTING
     servers_[0]->set_handler(network::RpcType::ShuffleFragment, counting_success_h);
@@ -1433,8 +1433,7 @@ TEST_F(DistributedExecutorWithNodesTests, InnerJoinShuffle_ExecutesShufflePath) 
     servers_[0]->set_handler(network::RpcType::ExecuteFragment, success_h);
     servers_[1]->set_handler(network::RpcType::ExecuteFragment, success_h);
 
-    auto lexer =
-        std::make_unique<Lexer>("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    auto lexer = std::make_unique<Lexer>("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
     Parser parser(std::move(lexer));
     auto stmt = parser.parse_statement();
     ASSERT_NE(stmt, nullptr);
@@ -1466,9 +1465,9 @@ TEST_F(DistributedExecutorWithNodesTests, RightJoinShuffle_SkipsBloomFilter) {
         send_success_reply(fd);
     };
 
-    auto bloom_filter_counting_h = [&bloom_filter_push_count,
-                                    this](const network::RpcHeader&, const std::vector<uint8_t>&,
-                                          int fd) {
+    auto bloom_filter_counting_h = [&bloom_filter_push_count, this](const network::RpcHeader&,
+                                                                    const std::vector<uint8_t>&,
+                                                                    int fd) {
         ++bloom_filter_push_count;
         send_success_reply(fd);
     };
@@ -1511,8 +1510,7 @@ TEST_F(DistributedExecutorWithNodesTests, SelectErrorFromNode_ReturnsError) {
     servers_[0]->set_handler(
         network::RpcType::ExecuteFragment,
         [](const network::RpcHeader&, const std::vector<uint8_t>& payload, int fd) {
-            [[maybe_unused]] auto args =
-                network::ExecuteFragmentArgs::deserialize(payload);
+            [[maybe_unused]] auto args = network::ExecuteFragmentArgs::deserialize(payload);
             network::QueryResultsReply reply;
             reply.success = false;
             reply.error_msg = "node rejected query";

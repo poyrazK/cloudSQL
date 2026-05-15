@@ -584,11 +584,11 @@ TEST_F(QueryExecutorTests, NonEqualityJoin_ReturnsError) {
 
     // JOIN with arithmetic in condition (id = val + 0) is not an equi-join
     // Should return error from build_plan when NestedLoopJoin is not implemented
-    const auto res = execute_sql(env.executor,
-                                 "SELECT t1.name, t2.val FROM t1 JOIN t2 ON t1.id = t2.val + 0");
+    const auto res =
+        execute_sql(env.executor, "SELECT t1.name, t2.val FROM t1 JOIN t2 ON t1.id = t2.val + 0");
     EXPECT_FALSE(res.success()) << "Non-equality JOIN should fail";
     EXPECT_TRUE(res.error().find("execution plan") != std::string::npos ||
-                    res.error().find("Failed to build") != std::string::npos);
+                res.error().find("Failed to build") != std::string::npos);
 }
 
 // Test: Non-equality JOIN with comparison operator returns error
@@ -601,8 +601,7 @@ TEST_F(QueryExecutorTests, NonEqualityJoin_GreaterThan_ReturnsError) {
     execute_sql(env.executor, "INSERT INTO t2 VALUES (1, 100), (2, 200)");
 
     // JOIN with > condition - cannot use HashJoin, NestedLoopJoin not implemented
-    const auto res = execute_sql(env.executor,
-                                 "SELECT * FROM t1 JOIN t2 ON t1.id > t2.val");
+    const auto res = execute_sql(env.executor, "SELECT * FROM t1 JOIN t2 ON t1.id > t2.val");
     EXPECT_FALSE(res.success()) << "Non-equality JOIN with > should fail";
 }
 
@@ -614,12 +613,11 @@ TEST_F(QueryExecutorTests, JoinTableNotFound_ReturnsError) {
     execute_sql(env.executor, "INSERT INTO t1 VALUES (1)");
 
     // t2 does not exist - join path should return error
-    const auto res = execute_sql(env.executor,
-                                 "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+    const auto res = execute_sql(env.executor, "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
     EXPECT_FALSE(res.success()) << "JOIN with missing table should fail";
     EXPECT_TRUE(res.error().find("table") != std::string::npos ||
-                    res.error().find("not found") != std::string::npos ||
-                    res.error().find("Failed to build") != std::string::npos);
+                res.error().find("not found") != std::string::npos ||
+                res.error().find("Failed to build") != std::string::npos);
 }
 
 // ============= Error Handling Tests =============
@@ -1582,7 +1580,8 @@ class ThrowingVectorizedScanOperator : public VectorizedOperator {
 TEST_F(QueryExecutorTests, VectorizedScan_OutOfRangeException) {
     Schema schema;
     schema.add_column("id", common::ValueType::TYPE_INT64);
-    ThrowingVectorizedScanOperator op(schema, ThrowingVectorizedScanOperator::ThrowType::OutOfRange);
+    ThrowingVectorizedScanOperator op(schema,
+                                      ThrowingVectorizedScanOperator::ThrowType::OutOfRange);
 
     op.set_memory_resource(nullptr);
     op.set_params({});
@@ -1612,7 +1611,8 @@ TEST_F(QueryExecutorTests, VectorizedScan_OutOfRangeException) {
 TEST_F(QueryExecutorTests, VectorizedScan_StdException) {
     Schema schema;
     schema.add_column("id", common::ValueType::TYPE_INT64);
-    ThrowingVectorizedScanOperator op(schema, ThrowingVectorizedScanOperator::ThrowType::StdException);
+    ThrowingVectorizedScanOperator op(schema,
+                                      ThrowingVectorizedScanOperator::ThrowType::StdException);
 
     op.set_memory_resource(nullptr);
     op.set_params({});

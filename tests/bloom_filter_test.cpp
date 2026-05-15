@@ -291,9 +291,9 @@ TEST(BloomFilterTests, CorruptedSerialization_InertNoCrash) {
     // Minimum valid requires: 3*8 bytes (headers) + 1 byte (bits) = 25 bytes
     // Use exactly 25 bytes but with garbage values so bit_bytes validation fails
     std::vector<uint8_t> data(25, 0);
-    data[0] = 0xFF;  // num_bits = very large, will fail validation
-    data[8] = 0xFF;  // num_hashes = very large
-    data[16] = 0xFF; // expected = very large
+    data[0] = 0xFF;   // num_bits = very large, will fail validation
+    data[8] = 0xFF;   // num_hashes = very large
+    data[16] = 0xFF;  // expected = very large
 
     // Constructor from serialized data - invalid bit_bytes triggers early return
     BloomFilter bf(data.data(), data.size());
