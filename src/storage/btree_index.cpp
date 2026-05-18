@@ -103,7 +103,7 @@ bool BTreeIndex::serialize_entry(const common::Value& key, HeapTable::TupleId tu
     cursor += 4;
     std::memcpy(cursor, &slot_num, 2);
 
-    bytes_written = static_cast<uint16_t>(cursor - out_buf + 2);
+    bytes_written = static_cast<uint16_t>(cursor - out_buf);
     return true;
 }
 
@@ -680,7 +680,6 @@ bool BTreeIndex::create_new_root(const common::Value& sep_key, uint32_t left_chi
 /* === split_internal === */
 
 bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert_pos,
-                                uint32_t left_child, uint32_t right_child,
                                 uint32_t& out_right_page) {
     (void)insert_pos;  // Not needed - split_point determines placement
     NodeHeader header{};
@@ -758,10 +757,11 @@ bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert
     write_page(page_num, buffer);
     write_page(right_page_num, right_buffer);
 
-    // Update child parent pointers
+    // Update child parent pointer for promoted_left_child
     if (!update_child_parent(promoted_left_child, page_num)) return false;
-    if (!update_child_parent(left_child, page_num)) return false;
-    if (!update_child_parent(right_child, right_page_num)) return false;
+    // Note: left_child and right_child passed from insert_into_parent are the
+    // new entry's children, NOT children of this internal node. They are updated
+    // by insert_into_parent after the split completes.
 
     // Store promoted key for cascade
     pending_separator_ = promoted_key;
@@ -843,7 +843,7 @@ bool BTreeIndex::insert_into_parent(const common::Value& sep_key, uint32_t left_
         if (new_entry_offset < slot_array_end) {
             // Parent is full — split it
             uint32_t new_right_page = 0;
-            if (!split_internal(parent_page, buffer.data(), insert_pos, left_page, right_page, new_right_page)) {
+            if (!split_internal(parent_page, buffer.data(), insert_pos, new_right_page)) {
                 return false;
             }
             // After split, promoted key is in pending_separator_

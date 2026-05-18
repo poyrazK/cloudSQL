@@ -121,7 +121,6 @@ class BTreeIndex {
     [[nodiscard]] uint32_t find_leaf(const common::Value& key) const;
     [[nodiscard]] uint32_t split_leaf(uint32_t page_num, char* buffer);
     bool split_internal(uint32_t page_num, char* buffer, uint16_t insert_pos,
-                        uint32_t left_child, uint32_t right_child,
                         uint32_t& out_right_page);
 
     bool read_page(uint32_t page_num, char* buffer) const;
