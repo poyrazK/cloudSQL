@@ -441,9 +441,11 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
                 // COUNT(*) - always increment
                 state.counts[i]++;
-            } else if (agg.type == AggregateType::Sum && agg.input_col_idx >= 0) {
+            } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
+                       agg.input_col_idx >= 0) {
                 auto& col = batch.get_column(agg.input_col_idx);
                 if (!col.is_null(row_idx)) {
+                    state.counts[i]++;  // Track count for AVG
                     if (col.type() == common::ValueType::TYPE_INT64) {
                         auto& num_col = dynamic_cast<NumericVector<int64_t>&>(col);
                         state.sums_int64[i] += num_col.raw_data()[row_idx];
@@ -524,6 +526,17 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         break;
                     case AggregateType::Max:
                         out_batch.get_column(col_idx).append(state.maxes[i]);
+                        break;
+                    case AggregateType::Avg:
+                        if (state.counts[i] > 0) {
+                            double avg_val = state.has_float_value_[i]
+                                               ? state.sums_float64[i] / static_cast<double>(state.counts[i])
+                                               : static_cast<double>(state.sums_int64[i]) /
+                                                 static_cast<double>(state.counts[i]);
+                            out_batch.get_column(col_idx).append(common::Value::make_float64(avg_val));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
                         break;
                     default:
                         out_batch.get_column(col_idx).append(common::Value::make_null());

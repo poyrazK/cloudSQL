@@ -562,7 +562,8 @@ bool AggregateOperator::open() {
         }
     };
 
-    std::map<std::string, GroupState> groups_map;
+    std::unordered_map<std::string, GroupState> groups_map;
+    groups_map.reserve(1024);  // Pre-reserve to avoid rehashing during insert
     const bool is_global = group_by_.empty();
 
     /* Pre-initialize if global aggregation */
@@ -573,17 +574,28 @@ bool AggregateOperator::open() {
     Tuple tuple;
     auto child_schema = child_->output_schema();
     while (child_->next(tuple)) {
-        std::string key = "GLOBAL";
+        std::string key;
+        key.reserve(64);  // Pre-reserve to avoid repeated allocations
         std::vector<common::Value> gb_vals;
 
         if (!is_global) {
-            key = "";
             for (const auto& gb : group_by_) {
                 auto val = gb ? gb->evaluate(&tuple, &child_schema, get_params())
                               : common::Value::make_null();
-                key += val.to_string() + "|";
+                // Binary key encoding: type tag + length + data (no string allocation)
+                if (val.is_null()) {
+                    key.append("\1NULL\0", 6);
+                } else {
+                    std::string val_str = val.to_string();
+                    key.push_back('\0');  // non-NULL marker
+                    uint32_t len = static_cast<uint32_t>(val_str.size());
+                    key.append(reinterpret_cast<const char*>(&len), 4);
+                    key.append(val_str);
+                }
                 gb_vals.push_back(std::move(val));
             }
+        } else {
+            key = "GLOBAL";
         }
 
         auto it = groups_map.find(key);

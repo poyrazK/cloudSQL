@@ -407,7 +407,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
 
     // Cost-based Volcano/Vectorized chooser using row estimates
     bool use_vectorized = false;
-    if (parallel_ && storage_manager_ && !has_sort_or_limit) {
+    if (storage_manager_ && !has_sort_or_limit) {
         // Extract table name from FROM clause (only for simple column refs)
         // Fall through to Volcano for JOINs, subqueries, and aliased tables
         const auto* from_expr = stmt.from();
@@ -1694,7 +1694,18 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                     info.type = AggregateType::Max;
                 else
                     info.type = AggregateType::Avg;
-                info.input_col_idx = -1;  // default
+                // Resolve input column index from aggregate function arguments
+                info.input_col_idx = -1;  // default: COUNT(*)
+                if (!func->args().empty()) {
+                    const auto& arg = func->args()[0];
+                    if (arg->type() == parser::ExprType::Column) {
+                        const auto* col = dynamic_cast<const parser::ColumnExpr*>(arg.get());
+                        if (col != nullptr) {
+                            info.input_col_idx =
+                                static_cast<int>(current_root->output_schema().find_column(col->name()));
+                        }
+                    }
+                }
                 agg_infos.push_back(info);
             }
         }
