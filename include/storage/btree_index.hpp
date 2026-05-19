@@ -156,7 +156,7 @@ class BTreeIndex {
     [[nodiscard]] bool serialize_internal_entry(const common::Value& key, uint32_t child_page_num,
                                                 char* out_buf, uint16_t buf_size,
                                                 uint16_t& bytes_written) const;
-    bool insert_into_parent(const common::Value& sep_key, uint32_t left_page, uint32_t right_page);
+    bool insert_into_parent(common::Value sep_key, uint32_t left_page, uint32_t right_page);
     bool create_new_root(const common::Value& sep_key, uint32_t left_child, uint32_t right_child);
     bool update_child_parent(uint32_t child_page, uint32_t parent_page);
 };
