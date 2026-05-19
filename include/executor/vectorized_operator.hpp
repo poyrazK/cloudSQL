@@ -63,15 +63,35 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
     std::string table_name_;
     std::shared_ptr<storage::ColumnarTable> table_;
     uint64_t current_row_ = 0;
-    uint32_t batch_size_ = 1024;
+    uint32_t batch_size_ = 4096;
+    std::shared_ptr<ThreadPool> thread_pool_;
+    bool parallel_enabled_ = false;
+    size_t num_threads_ = 1;
+    std::vector<std::unique_ptr<VectorBatch>> parallel_results_;
+    size_t parallel_idx_ = 0;
 
    public:
-    VectorizedSeqScanOperator(std::string table_name, std::shared_ptr<storage::ColumnarTable> table)
+    VectorizedSeqScanOperator(std::string table_name, std::shared_ptr<storage::ColumnarTable> table,
+                              std::shared_ptr<ThreadPool> thread_pool = nullptr)
         : VectorizedOperator(table->schema()),
           table_name_(std::move(table_name)),
-          table_(std::move(table)) {}
+          table_(std::move(table)),
+          thread_pool_(std::move(thread_pool)) {
+        if (thread_pool_ && thread_pool_->num_threads() > 1) {
+            num_threads_ = thread_pool_->num_threads();
+            parallel_enabled_ = table_->row_count() > 50000;
+        }
+    }
 
     bool next_batch(VectorBatch& out_batch) override {
+        if (!parallel_enabled_ || !thread_pool_) {
+            return next_batch_sequential(out_batch);
+        }
+        return next_batch_parallel(out_batch);
+    }
+
+   private:
+    bool next_batch_sequential(VectorBatch& out_batch) {
         if (current_row_ >= table_->row_count()) {
             return false;
         }
@@ -79,6 +99,59 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
         if (table_->read_batch(current_row_, batch_size_, out_batch)) {
             current_row_ += out_batch.row_count();
             return true;
+        }
+        return false;
+    }
+
+    bool next_batch_parallel(VectorBatch& out_batch) {
+        if (parallel_idx_ >= parallel_results_.size()) {
+            size_t total_rows = table_->row_count();
+            if (current_row_ >= total_rows) {
+                return false;
+            }
+
+            size_t range_size = (total_rows - current_row_ + num_threads_ - 1) / num_threads_;
+
+            parallel_results_.clear();
+            parallel_idx_ = 0;
+
+            std::vector<size_t> task_starts;
+            task_starts.reserve(num_threads_);
+
+            for (size_t t = 0; t < num_threads_ && current_row_ < total_rows; ++t) {
+                size_t start = current_row_;
+                task_starts.push_back(start);
+                size_t end = std::min(start + range_size, total_rows);
+                current_row_ = end;
+
+                auto batch = VectorBatch::create(output_schema_);
+                parallel_results_.push_back(std::move(batch));
+            }
+
+            for (size_t t = 0; t < task_starts.size(); ++t) {
+                size_t start = task_starts[t];
+                size_t rows_to_read = std::min(range_size, total_rows - start);
+                if (start >= total_rows) {
+                    parallel_results_[t]->set_row_count(0);
+                    continue;
+                }
+                thread_pool_->submit([this, t, start, rows_to_read]() {
+                    table_->read_batch(start, static_cast<uint32_t>(rows_to_read), *parallel_results_[t]);
+                });
+            }
+
+            thread_pool_->wait();
+        }
+
+        if (parallel_idx_ < parallel_results_.size()) {
+            auto& src = *parallel_results_[parallel_idx_];
+            out_batch.init_from_schema(output_schema_);
+            for (size_t c = 0; c < src.column_count(); ++c) {
+                out_batch.get_column(c).steal(std::move(src.get_column(c)));
+            }
+            out_batch.set_row_count(src.row_count());
+            parallel_idx_++;
+            return out_batch.row_count() > 0;
         }
         return false;
     }
