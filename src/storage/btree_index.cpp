@@ -325,12 +325,30 @@ bool BTreeIndex::insert(const common::Value& key, HeapTable::TupleId tuple_id) {
         }
 
         // If a split happened, insert separator into parent
-        if (right_page_num != 0) {
-            if (!insert_into_parent(pending_separator_, leaf_page, right_page_num)) {
-                return false;
-            }
-            right_page_num = 0;  // Reset to prevent duplicate insert_into_parent on retry
+        // The separator at slot[split_point] is promoted to parent.
+    // But we need to pass the ORIGINAL next_leaf (the leftmost child of the right node after split)
+    // as the right_page to insert_into_parent, NOT the newly allocated right_page_num.
+    // The newly allocated right page is for the NEW right sibling, not the right child of the separator.
+    // Wait - that's not right either. Let me reconsider.
+    //
+    // When leaf L splits into L' (left) and R (right):
+    // - L' contains keys < separator
+    // - R contains keys >= separator
+    // - L'.next_leaf = R (the newly created right page)
+    // - The separator goes to parent, with left_child=L' and right_child=R
+    //
+    // But the parent entry for separator points to R (the new right page), not the old next_leaf.
+    // So right_page_num IS correct for insert_into_parent.
+    //
+    // The issue must be something else. Let me add debug to see what's happening.
+    if (right_page_num != 0) {
+        fprintf(stderr, "DEBUG insert: split happened, calling insert_into_parent sep=%s left=%u right=%u\n",
+                pending_separator_.to_string().c_str(), leaf_page, right_page_num);
+        if (!insert_into_parent(pending_separator_, leaf_page, right_page_num)) {
+            return false;
         }
+        right_page_num = 0;  // Reset to prevent duplicate insert_into_parent on retry
+    }
         return true;
     }
     return false;  // Should not reach here
@@ -357,7 +375,7 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
     std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
     fprintf(stderr, "DEBUG search: leaf_page=%u num_keys=%u\n", leaf_page, header.num_keys);
 
-    for (uint16_t i = 0; i < header.num_keys && i < 5; ++i) {
+    for (uint16_t i = 0; i < header.num_keys; ++i) {
         SlotEntry slot_entry;
         if (!get_slot(buffer.data(), i, slot_entry)) {
             continue;
@@ -380,9 +398,6 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
         if (entry_key == key) {
             results.emplace_back(tid);
         }
-    }
-    if (header.num_keys > 5) {
-        fprintf(stderr, "DEBUG search: leaf=%u ... (%u more keys)\n", leaf_page, header.num_keys - 5);
     }
 
     return results;
@@ -712,6 +727,7 @@ uint32_t BTreeIndex::split_leaf(uint32_t page_num, char* buffer) {
     // Update left leaf header
     header.num_keys = left_num_keys;
     header.next_leaf = 0;  // Will be updated after right page allocation
+    fprintf(stderr, "DEBUG split_leaf: left leaf page=%u num_keys=%u next_leaf=0 (temp)\n", page_num, left_num_keys);
     std::memcpy(buffer, &header, sizeof(NodeHeader));
 
     // Allocate new right page
@@ -725,6 +741,7 @@ uint32_t BTreeIndex::split_leaf(uint32_t page_num, char* buffer) {
     std::memcpy(&left_header, buffer, sizeof(NodeHeader));
     left_header.next_leaf = right_page_num;
     std::memcpy(buffer, &left_header, sizeof(NodeHeader));
+    fprintf(stderr, "DEBUG split_leaf: left leaf page=%u next_leaf updated to %u\n", page_num, right_page_num);
 
     // Write both pages
     write_page(page_num, buffer);
