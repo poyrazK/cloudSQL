@@ -9,6 +9,8 @@
 #include "storage/storage_manager.hpp"
 
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -34,11 +36,7 @@ StorageManager::StorageManager(std::string data_dir) : data_dir_(std::move(data_
  * @brief Destroy the Storage Manager and close all files
  */
 StorageManager::~StorageManager() {
-    for (auto& pair : open_files_) {
-        if (pair.second->is_open()) {
-            pair.second->close();
-        }
-    }
+    // Note: write_page uses raw POSIX I/O, so no cleanup needed here
 }
 
 /**
@@ -54,7 +52,7 @@ bool StorageManager::open_file(const std::string& filename) {
     }
 
     const std::string filepath = data_dir_ + "/" + filename;
-    auto file = std::make_unique<std::fstream>();
+    auto* file = new std::fstream();
 
     /* Open for read/write in binary mode. */
     file->open(filepath, std::ios::in | std::ios::out | std::ios::binary);
@@ -63,6 +61,7 @@ bool StorageManager::open_file(const std::string& filename) {
         /* Create empty file then reopen */
         file->open(filepath, std::ios::out | std::ios::binary);
         if (!file->is_open()) {
+            delete file;
             return false;
         }
         file->close();
@@ -70,10 +69,11 @@ bool StorageManager::open_file(const std::string& filename) {
     }
 
     if (!file->is_open()) {
+        delete file;
         return false;
     }
 
-    open_files_[filename] = std::move(file);
+    open_files_[filename] = file;
     static_cast<void>(stats_.files_opened.fetch_add(1));
     return true;
 }
@@ -96,32 +96,28 @@ bool StorageManager::close_file(const std::string& filename) {
  * @brief Read a page from storage
  */
 bool StorageManager::read_page(const std::string& filename, uint32_t page_num, char* buffer) {
-    if (open_files_.find(filename) == open_files_.end()) {
-        if (!open_file(filename)) {
-            return false;
-        }
-    }
+    const std::string filepath = data_dir_ + "/" + filename;
 
-    auto& file = open_files_[filename];
-    file->clear(); /* Clear flags like EOF */
-    file->seekg(static_cast<std::streamoff>(page_num) * static_cast<std::streamoff>(PAGE_SIZE),
-                std::ios::beg);
-
-    if (file->fail()) {
+    int fd = open(filepath.c_str(), O_RDONLY);
+    if (fd < 0) {
         return false;
     }
 
-    static_cast<void>(file->read(buffer, PAGE_SIZE));
-
-    if (file->gcount() < static_cast<std::streamsize>(PAGE_SIZE)) {
-        if (file->eof() || file->gcount() == 0) {
-            /* If we reached end of file or read nothing, zero-fill the rest */
-            std::fill(std::next(buffer, file->gcount()),
-                      std::next(buffer, static_cast<std::ptrdiff_t>(PAGE_SIZE)), 0);
-            file->clear();
-            return true;
-        }
+    off_t seek_result = lseek(fd, static_cast<off_t>(page_num) * PAGE_SIZE, SEEK_SET);
+    if (seek_result < 0) {
+        close(fd);
         return false;
+    }
+
+    ssize_t bytes_read = read(fd, buffer, PAGE_SIZE);
+    close(fd);
+
+    if (bytes_read < 0) {
+        return false;
+    }
+
+    if (static_cast<std::size_t>(bytes_read) < PAGE_SIZE) {
+        std::fill(std::next(buffer, bytes_read), std::next(buffer, static_cast<std::ptrdiff_t>(PAGE_SIZE)), 0);
     }
 
     static_cast<void>(stats_.pages_read.fetch_add(1));
@@ -134,13 +130,16 @@ bool StorageManager::read_page(const std::string& filename, uint32_t page_num, c
  */
 bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
                                 const char* buffer) {
+    const std::string filepath = data_dir_ + "/" + filename;
+
+    // Ensure file is open via open_files_ map (which uses fstream)
     if (open_files_.find(filename) == open_files_.end()) {
         if (!open_file(filename)) {
             return false;
         }
     }
 
-    auto& file = open_files_[filename];
+    auto* file = open_files_[filename];
     file->clear();
     file->seekp(static_cast<std::streamoff>(page_num) * static_cast<std::streamoff>(PAGE_SIZE),
                 std::ios::beg);
@@ -156,6 +155,26 @@ bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
 
     file->flush();
 
+    // Force sync to disk using raw syscall
+    int sync_fd = open(filepath.c_str(), O_RDWR);
+    if (sync_fd >= 0) {
+        fsync(sync_fd);
+        close(sync_fd);
+    }
+
+    // Update file size tracker - track actual written pages
+    {
+        std::scoped_lock<std::mutex> lock(file_sizes_mutex_);
+        auto it = file_sizes_.find(filename);
+        std::streamoff tracked_size = (it != file_sizes_.end()) ? it->second : 0;
+        std::streamoff page_end = static_cast<std::streamoff>(page_num + 1) * static_cast<std::streamoff>(PAGE_SIZE);
+        if (it == file_sizes_.end()) {
+            file_sizes_[filename] = page_end;
+        } else if (tracked_size < page_end) {
+            it->second = page_end;
+        }
+    }
+
     static_cast<void>(stats_.pages_written.fetch_add(1));
     static_cast<void>(stats_.bytes_written.fetch_add(PAGE_SIZE));
     return true;
@@ -165,18 +184,21 @@ bool StorageManager::write_page(const std::string& filename, uint32_t page_num,
  * @brief Allocate a new page in the database file
  */
 uint32_t StorageManager::allocate_page(const std::string& filename) {
-    if (open_files_.find(filename) == open_files_.end()) {
-        if (!open_file(filename)) {
-            return 0;
-        }
+    // First check in-memory tracker
+    auto it = file_sizes_.find(filename);
+    if (it != file_sizes_.end()) {
+        return static_cast<uint32_t>(static_cast<uint64_t>(it->second) / PAGE_SIZE);
     }
 
-    auto& file = open_files_[filename];
-    file->clear();
-    file->seekg(0, std::ios::end);
-    const std::streamoff size = file->tellg();
+    // Fallback: check actual file size via stat
+    const std::string filepath = data_dir_ + "/" + filename;
+    struct stat st {};
+    if (stat(filepath.c_str(), &st) == 0) {
+        file_sizes_[filename] = st.st_size;
+        return static_cast<uint32_t>(static_cast<uint64_t>(st.st_size) / PAGE_SIZE);
+    }
 
-    return static_cast<uint32_t>(static_cast<uint64_t>(size) / PAGE_SIZE);
+    return 0;
 }
 
 /**

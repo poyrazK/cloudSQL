@@ -9,6 +9,7 @@
 #include <atomic>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -115,7 +116,9 @@ class StorageManager {
 
    private:
     std::string data_dir_;
-    std::unordered_map<std::string, std::unique_ptr<std::fstream>> open_files_;
+    std::unordered_map<std::string, std::fstream*> open_files_;
+    std::unordered_map<std::string, std::streamoff> file_sizes_;
+    std::mutex file_sizes_mutex_;
     Stats stats_;
 };
 

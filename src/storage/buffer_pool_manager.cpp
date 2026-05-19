@@ -164,7 +164,11 @@ bool BufferPoolManager::flush_page(const std::string& file_name, uint32_t page_i
 Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_id) {
     const std::scoped_lock<std::mutex> lock(latch_);
 
+    fprintf(stderr, "DEBUG BPM new_page: free_list_ size=%zu replacer_.size()=%d\n",
+            free_list_.size(), replacer_.size());
+
     const uint32_t target_page_id = storage_manager_.allocate_page(file_name);
+    fprintf(stderr, "DEBUG BPM new_page: allocate_page returned target_page_id=%u\n", target_page_id);
     if (page_id != nullptr) {
         *page_id = target_page_id;
     }
@@ -176,8 +180,12 @@ Page* BufferPoolManager::new_page(const std::string& file_name, uint32_t* page_i
     if (!free_list_.empty()) {
         frame_id = free_list_.back();
         free_list_.pop_back();
+        fprintf(stderr, "DEBUG BPM new_page: used free_list_, frame_id=%u\n", frame_id);
     } else if (!replacer_.victim(&frame_id)) {
+        fprintf(stderr, "DEBUG BPM new_page: replacer.victim failed, returning nullptr\n");
         return nullptr;
+    } else {
+        fprintf(stderr, "DEBUG BPM new_page: used replacer, frame_id=%u\n", frame_id);
     }
 
     Page* const page = &pages_[frame_id];
