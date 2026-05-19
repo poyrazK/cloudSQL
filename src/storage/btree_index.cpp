@@ -150,12 +150,16 @@ bool BTreeIndex::deserialize_entry(const char* buf, uint16_t buf_size,
 /* === Key Comparison === */
 
 int BTreeIndex::compare_keys(const common::Value& a, const common::Value& b) const {
+    fprintf(stderr, "DEBUG compare_keys: a=%s b=%s\n", a.to_string().c_str(), b.to_string().c_str());
     if (a < b) {
+        fprintf(stderr, "DEBUG compare_keys: a < b returning -1\n");
         return -1;
     }
     if (b < a) {
+        fprintf(stderr, "DEBUG compare_keys: b < a returning 1\n");
         return 1;
     }
+    fprintf(stderr, "DEBUG compare_keys: equal returning 0\n");
     return 0;
 }
 
@@ -175,12 +179,27 @@ bool BTreeIndex::Iterator::next(Entry& out_entry) {
         NodeHeader header{};
         std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
 
+        // If current node is internal, descend to leftmost leaf
+        while (header.type == NodeType::Internal) {
+            uint32_t child_page = index_.get_child_page(buffer.data(), 0);
+            current_page_ = child_page;
+            if (!index_.read_page(current_page_, buffer.data())) {
+                eof_ = true;
+                return false;
+            }
+            std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
+            current_slot_ = 0;
+        }
+
         if (current_slot_ >= header.num_keys) {
             if (header.next_leaf != 0) {
                 current_page_ = header.next_leaf;
                 current_slot_ = 0;
+                fprintf(stderr, "DEBUG Iterator: advanced to next_leaf=%u\n", current_page_);
                 continue;
             }
+            fprintf(stderr, "DEBUG Iterator: at end, next_leaf=0, slot_idx=%u num_keys=%u\n",
+                    current_slot_, header.num_keys);
             eof_ = true;
             return false;
         }
@@ -310,6 +329,7 @@ bool BTreeIndex::insert(const common::Value& key, HeapTable::TupleId tuple_id) {
             if (!insert_into_parent(pending_separator_, leaf_page, right_page_num)) {
                 return false;
             }
+            right_page_num = 0;  // Reset to prevent duplicate insert_into_parent on retry
         }
         return true;
     }
@@ -325,6 +345,7 @@ bool BTreeIndex::remove(const common::Value& key, HeapTable::TupleId tuple_id) {
 
 std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
     const uint32_t leaf_page = find_leaf(key);
+    fprintf(stderr, "DEBUG search: key=%s leaf_page=%u\n", key.to_string().c_str(), leaf_page);
     std::array<char, Page::PAGE_SIZE> buffer{};
     if (!read_page(leaf_page, buffer.data())) {
         return {};
@@ -334,10 +355,15 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
 
     NodeHeader header{};
     std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
+    fprintf(stderr, "DEBUG search: leaf_page=%u num_keys=%u\n", leaf_page, header.num_keys);
 
-    for (uint16_t i = 0; i < header.num_keys; ++i) {
+    for (uint16_t i = 0; i < header.num_keys && i < 5; ++i) {
         SlotEntry slot_entry;
         if (!get_slot(buffer.data(), i, slot_entry)) {
+            continue;
+        }
+
+        if (slot_entry.offset < sizeof(NodeHeader) || slot_entry.offset >= Page::PAGE_SIZE) {
             continue;
         }
 
@@ -350,9 +376,13 @@ std::vector<HeapTable::TupleId> BTreeIndex::search(const common::Value& key) {
             continue;
         }
 
+        fprintf(stderr, "DEBUG search: leaf=%u slot[%u] key=%s tid=%u\n", leaf_page, i, entry_key.to_string().c_str(), tid);
         if (entry_key == key) {
             results.emplace_back(tid);
         }
+    }
+    if (header.num_keys > 5) {
+        fprintf(stderr, "DEBUG search: leaf=%u ... (%u more keys)\n", leaf_page, header.num_keys - 5);
     }
 
     return results;
@@ -365,6 +395,22 @@ BTreeIndex::Iterator BTreeIndex::scan() {
 /* === Internal Node Navigation === */
 
 uint32_t BTreeIndex::get_child_page(const char* buffer, uint16_t slot_idx) const {
+    NodeHeader header;
+    std::memcpy(&header, buffer, sizeof(NodeHeader));
+
+    // For internal nodes with N keys, children are 0 through N (N+1 children total)
+    // Slots 0 through N-1 store children 0 through N-1
+    // Child N (rightmost) is stored in next_leaf
+    fprintf(stderr, "DEBUG get_child_page: slot_idx=%u num_keys=%u header.next_leaf=%u type=%d\n",
+            slot_idx, header.num_keys, header.next_leaf, static_cast<int>(header.type));
+    if (slot_idx >= header.num_keys) {
+        if (header.type == NodeType::Internal) {
+            fprintf(stderr, "DEBUG get_child_page: slot_idx >= num_keys, returning next_leaf=%u\n", header.next_leaf);
+            return header.next_leaf;  // Rightmost child
+        }
+        return 0;  // Invalid for leaf nodes
+    }
+
     SlotEntry slot;
     if (!get_slot(buffer, slot_idx, slot)) {
         return 0;
@@ -373,16 +419,18 @@ uint32_t BTreeIndex::get_child_page(const char* buffer, uint16_t slot_idx) const
     // Entry format: type(1) + key_len(4) + key_data(N) + child_page_num(4)
     const char* entry_ptr = buffer + slot.offset;
 
-    // Skip type + key_len
     uint32_t key_len = 0;
     common::ValueType type = static_cast<common::ValueType>(static_cast<uint8_t>(entry_ptr[0]));
     std::memcpy(&key_len, entry_ptr + 1, 4);
 
-    size_t key_data_offset = 1 + 4;  // type + key_len
-    size_t child_offset = slot.offset + key_data_offset + key_len;
+    // For fixed-size keys (INT64), key_len=0 but actual data is 8 bytes
+    size_t key_data_size = (key_len == 0) ? 8 : key_len;
+    size_t child_offset = slot.offset + 1 + 4 + key_data_size;
 
     uint32_t child_page = 0;
     std::memcpy(&child_page, buffer + child_offset, 4);
+    fprintf(stderr, "DEBUG get_child_page: slot_idx=%u slot.offset=%u type=%d key_len=%u key_data_size=%zu child_offset=%zu child_page=%u\n",
+            slot_idx, slot.offset, static_cast<int>(type), key_len, key_data_size, child_offset, child_page);
     return child_page;
 }
 
@@ -394,9 +442,6 @@ int BTreeIndex::compare_separator(const char* buffer, uint16_t sep_idx, const co
 
     common::Value entry_key;
     HeapTable::TupleId tid;
-    // Use a temporary buffer to deserialize just the key portion
-    // The entry format is: type(1) + key_len(4) + key_data(N) + child_page_num(4)
-    // We need to skip the child_page_num at the end
     const char* entry_ptr = buffer + slot.offset;
 
     common::ValueType type = static_cast<common::ValueType>(static_cast<uint8_t>(entry_ptr[0]));
@@ -407,6 +452,7 @@ int BTreeIndex::compare_separator(const char* buffer, uint16_t sep_idx, const co
         int64_t val = 0;
         std::memcpy(&val, entry_ptr + 1 + 4, 8);
         entry_key = common::Value::make_int64(val);
+        fprintf(stderr, "DEBUG compare_separator: sep_idx=%u sep_key=%ld key=%s\n", sep_idx, val, key.to_string().c_str());
     } else {
         std::string s(entry_ptr + 1 + 4, key_len);
         entry_key = common::Value::make_text(s);
@@ -438,22 +484,48 @@ uint32_t BTreeIndex::find_child_for_key(const char* buffer, const common::Value&
         }
     }
 
-    // Child pointers: child i is stored at slot i, so:
-    // result = -1 → return child at slot 0
-    // result >= 0 → return child at slot (result + 1)
+    // result = -1: all separators >= key, return child 0 (leftmost)
+    // result >= 0: separator at result is < key, so key >= separator[result]
+    //   Therefore key should go to child at result+1
+    fprintf(stderr, "DEBUG find_child_for_key: key=%s num_keys=%u result=%d\n", key.to_string().c_str(), num_keys, result);
     if (result == -1) {
-        return get_child_page(buffer, 0);
+        uint32_t child = get_child_page(buffer, 0);
+        fprintf(stderr, "DEBUG find_child_for_key: result=-1, get_child_page(buffer, 0)=%u\n", child);
+        return child;
     }
-    return get_child_page(buffer, static_cast<uint16_t>(result + 1));
+    uint32_t child = get_child_page(buffer, static_cast<uint16_t>(result + 1));
+
+    // Debug: show the separator at result
+    SlotEntry slot;
+    get_slot(buffer, static_cast<uint16_t>(result), slot);
+    common::Value sep_key;
+    HeapTable::TupleId tid;
+    const char* entry_ptr = buffer + slot.offset;
+    uint32_t key_len = 0;
+    std::memcpy(&key_len, entry_ptr + 1, 4);
+    common::ValueType type = static_cast<common::ValueType>(static_cast<uint8_t>(entry_ptr[0]));
+    if (type == common::ValueType::TYPE_INT64) {
+        int64_t val = 0;
+        std::memcpy(&val, entry_ptr + 1 + 4, 8);
+        sep_key = common::Value::make_int64(val);
+    } else {
+        std::string s(entry_ptr + 1 + 4, key_len);
+        sep_key = common::Value::make_text(s);
+    }
+    fprintf(stderr, "DEBUG find_child_for_key: separator[%d]=%s child=%u\n", result, sep_key.to_string().c_str(), child);
+
+    return child;
 }
 
 uint32_t BTreeIndex::find_leaf(const common::Value& key) const {
+    fprintf(stderr, "DEBUG find_leaf: ENTRY key=%s root_page_=%u\n", key.to_string().c_str(), root_page_);
     if (root_page_ == 0) {
         return 0;
     }
 
     std::array<char, Page::PAGE_SIZE> buffer{};
     if (!read_page(root_page_, buffer.data())) {
+        fprintf(stderr, "DEBUG find_leaf: read_page failed for root_page_=%u\n", root_page_);
         return 0;
     }
 
@@ -461,14 +533,39 @@ uint32_t BTreeIndex::find_leaf(const common::Value& key) const {
     std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
     uint32_t current = root_page_;
 
+    // Debug: dump root structure
+    fprintf(stderr, "DEBUG find_leaf: ROOT page=%u type=%d num_keys=%u next_leaf=%u\n",
+            root_page_, static_cast<int>(header.type), header.num_keys, header.next_leaf);
+    if (header.num_keys > 0) {
+        for (uint16_t i = 0; i < header.num_keys && i < 5; ++i) {
+            SlotEntry slot;
+            get_slot(buffer.data(), i, slot);
+            uint32_t child = get_child_page(buffer.data(), i);
+            const char* entry_ptr = buffer.data() + slot.offset;
+            uint32_t key_len = 0;
+            std::memcpy(&key_len, entry_ptr + 1, 4);
+            common::ValueType type = static_cast<common::ValueType>(static_cast<uint8_t>(entry_ptr[0]));
+            if (type == common::ValueType::TYPE_INT64) {
+                int64_t val = 0;
+                std::memcpy(&val, entry_ptr + 1 + 4, 8);
+                fprintf(stderr, "DEBUG find_leaf:   slot[%u] child=%u sep_key=%ld slot.offset=%u\n", i, child, val, slot.offset);
+            }
+        }
+        if (header.num_keys > 5) {
+            fprintf(stderr, "DEBUG find_leaf:   ... (%u more slots)\n", header.num_keys - 5);
+        }
+    }
+
     while (header.type == NodeType::Internal) {
         uint32_t child = find_child_for_key(buffer.data(), key, header.num_keys);
+        current = child;
+        fprintf(stderr, "DEBUG find_leaf: key=%s at internal page=%u going to child=%u\n", key.to_string().c_str(), current, child);
         if (!read_page(child, buffer.data())) {
             return current;
         }
         std::memcpy(&header, buffer.data(), sizeof(NodeHeader));
-        current = child;
     }
+    fprintf(stderr, "DEBUG find_leaf: key=%s final leaf_page=%u\n", key.to_string().c_str(), current);
     return current;
 }
 
@@ -476,11 +573,15 @@ uint32_t BTreeIndex::find_leaf(const common::Value& key) const {
 
 uint32_t BTreeIndex::allocate_page() {
     uint32_t new_page_num = 0;
+    fprintf(stderr, "DEBUG allocate_page: calling bpm_.new_page for file '%s'\n", filename_.c_str());
     Page* page = bpm_.new_page(filename_, &new_page_num);
+    fprintf(stderr, "DEBUG allocate_page: new_page returned page=%p new_page_num=%u\n", (void*)page, new_page_num);
     if (!page) {
+        fprintf(stderr, "DEBUG allocate_page: page was null, returning 0\n");
         return 0;
     }
     bpm_.unpin_page(filename_, new_page_num, false);
+    fprintf(stderr, "DEBUG allocate_page: success, returning %u\n", new_page_num);
     return new_page_num;
 }
 
@@ -541,8 +642,11 @@ bool BTreeIndex::serialize_internal_entry(const common::Value& key, uint32_t chi
 /* === split_leaf === */
 
 uint32_t BTreeIndex::split_leaf(uint32_t page_num, char* buffer) {
+    fprintf(stderr, "DEBUG split_leaf: called for page=%u\n", page_num);
     NodeHeader header{};
     std::memcpy(&header, buffer, sizeof(NodeHeader));
+    fprintf(stderr, "DEBUG split_leaf: page=%u num_keys=%u next_leaf=%u parent=%u\n",
+            page_num, header.num_keys, header.next_leaf, header.parent_page);
 
     if (header.num_keys <= 1) {
         return 0;  // Degenerate case
@@ -554,7 +658,7 @@ uint32_t BTreeIndex::split_leaf(uint32_t page_num, char* buffer) {
     }
 
     uint16_t left_num_keys = split_point;
-    uint16_t right_num_keys = header.num_keys - split_point;
+    uint16_t right_num_keys = header.num_keys - split_point - 1;  // -1 for separator promoted to parent
 
     // Create right leaf buffer
     char right_buffer[Page::PAGE_SIZE] = {0};
@@ -564,11 +668,22 @@ uint32_t BTreeIndex::split_leaf(uint32_t page_num, char* buffer) {
     right_header.parent_page = header.parent_page;
     right_header.next_leaf = header.next_leaf;
 
-    // Copy entries [split_point, num_keys) to right buffer
+    // Write header early so get_slot can read from right_buffer
+    std::memcpy(right_buffer, &right_header, sizeof(NodeHeader));
+
+    // Extract separator key (slot at split_point, which gets promoted to parent)
+    // We need to do this BEFORE we modify the buffer
+    SlotEntry sep_slot;
+    get_slot(buffer, split_point, sep_slot);
+    pending_separator_ = extract_key_from_entry(buffer + sep_slot.offset, sep_slot.length);
+
+    // Copy entries [split_point + 1, num_keys) to right buffer
+    // (entries 0 through split_point-1 stay in left, split_point entry promoted to parent)
     // Process in reverse order so entries pack at top of right page
+    // Note: we start at header.num_keys - 1 and go down to split_point + 1 (split_point entry promoted to parent)
     int16_t current_right_offset = Page::PAGE_SIZE;
     for (int16_t i = static_cast<int16_t>(header.num_keys) - 1;
-         i >= static_cast<int16_t>(split_point);
+         i > static_cast<int16_t>(split_point);
          --i) {
         SlotEntry old_slot;
         get_slot(buffer, static_cast<uint16_t>(i), old_slot);
@@ -587,13 +702,12 @@ uint32_t BTreeIndex::split_leaf(uint32_t page_num, char* buffer) {
         SlotEntry new_slot{};
         new_slot.offset = current_right_offset;
         new_slot.length = entry_size;
-        put_slot(right_buffer, static_cast<uint16_t>(i - split_point), new_slot);
+        // Right page slots: entries from [split_point+1, num_keys) go to slots
+        // [0, right_num_keys-1]. Since we iterate i from high to low, the first
+        // entry (i=num_keys-1) goes to slot 0, next to slot 1, etc.
+        // So slot_idx = num_keys - 1 - i
+        put_slot(right_buffer, static_cast<uint16_t>(header.num_keys - 1 - i), new_slot);
     }
-
-    // Extract separator key (first key of right leaf = slot at split_point)
-    SlotEntry sep_slot;
-    get_slot(buffer, split_point, sep_slot);
-    pending_separator_ = extract_key_from_entry(buffer + sep_slot.offset, sep_slot.length);
 
     // Update left leaf header
     header.num_keys = left_num_keys;
@@ -642,7 +756,7 @@ bool BTreeIndex::create_new_root(const common::Value& sep_key, uint32_t left_chi
     header.type = NodeType::Internal;
     header.num_keys = 1;
     header.parent_page = 0;
-    header.next_leaf = right_child;
+    header.next_leaf = right_child;  // Rightmost child (child 1)
 
     uint16_t entry_size = 1 + 4;  // type + key_len
     if (sep_key.type() == common::ValueType::TYPE_INT64) {
@@ -654,7 +768,7 @@ bool BTreeIndex::create_new_root(const common::Value& sep_key, uint32_t left_chi
 
     uint16_t entry_offset = Page::PAGE_SIZE - entry_size;
     uint16_t bytes_written = 0;
-    serialize_internal_entry(sep_key, right_child, buffer + entry_offset, entry_size, bytes_written);
+    serialize_internal_entry(sep_key, left_child, buffer + entry_offset, entry_size, bytes_written);
 
     SlotEntry slot{};
     slot.offset = entry_offset;
@@ -682,6 +796,7 @@ bool BTreeIndex::create_new_root(const common::Value& sep_key, uint32_t left_chi
 bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert_pos,
                                 uint32_t& out_right_page) {
     (void)insert_pos;  // Not needed - split_point determines placement
+    fprintf(stderr, "DEBUG split_internal: called for page=%u\n", page_num);
     NodeHeader header{};
     std::memcpy(&header, buffer, sizeof(NodeHeader));
 
@@ -708,6 +823,9 @@ bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert
     right_header.num_keys = right_num_keys;
     right_header.parent_page = header.parent_page;
     right_header.next_leaf = header.next_leaf;
+
+    // Write header early
+    std::memcpy(right_buffer, &right_header, sizeof(NodeHeader));
 
     // Copy entries [split_point+1, num_keys) to right buffer
     int16_t right_offset = Page::PAGE_SIZE;
@@ -742,9 +860,11 @@ bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert
 
     std::memcpy(right_buffer, &right_header, sizeof(NodeHeader));
 
-    // Update left node header
+    // Update left node header - preserve next_leaf (rightmost child) since left node
+    // still has children 0 through split_point (split_point+1 children), and
+    // split_point entry was promoted as separator, not moved to right node
     header.num_keys = left_num_keys;
-    header.next_leaf = promoted_left_child;
+    // header.next_leaf already points to the rightmost child of the left node
     std::memcpy(buffer, &header, sizeof(NodeHeader));
 
     // Allocate right page
@@ -759,9 +879,6 @@ bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert
 
     // Update child parent pointer for promoted_left_child
     if (!update_child_parent(promoted_left_child, page_num)) return false;
-    // Note: left_child and right_child passed from insert_into_parent are the
-    // new entry's children, NOT children of this internal node. They are updated
-    // by insert_into_parent after the split completes.
 
     // Store promoted key for cascade
     pending_separator_ = promoted_key;
@@ -772,7 +889,9 @@ bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert
 
 /* === insert_into_parent (Phase 4 full) === */
 
-bool BTreeIndex::insert_into_parent(const common::Value& sep_key, uint32_t left_page, uint32_t right_page) {
+bool BTreeIndex::insert_into_parent(common::Value sep_key, uint32_t left_page, uint32_t right_page) {
+    fprintf(stderr, "DEBUG insert_into_parent: sep_key=%s left_page=%u right_page=%u\n",
+            sep_key.to_string().c_str(), left_page, right_page);
     // Get parent page from left child
     std::array<char, Page::PAGE_SIZE> parent_buffer{};
     if (!read_page(left_page, parent_buffer.data())) {
@@ -781,6 +900,7 @@ bool BTreeIndex::insert_into_parent(const common::Value& sep_key, uint32_t left_
     NodeHeader left_header{};
     std::memcpy(&left_header, parent_buffer.data(), sizeof(NodeHeader));
     uint32_t parent_page = left_header.parent_page;
+    fprintf(stderr, "DEBUG insert_into_parent: left_page=%u parent_page=%u\n", left_page, parent_page);
 
     // Root split case: left_page is the root, but there is no parent
     if (parent_page == 0) {
@@ -847,7 +967,8 @@ bool BTreeIndex::insert_into_parent(const common::Value& sep_key, uint32_t left_
                 return false;
             }
             // After split, promoted key is in pending_separator_
-            // Retry with the promoted key and new right page
+            // Update sep_key and retry with the promoted key and new right page
+            sep_key = pending_separator_;
             parent_page = new_right_page;
             continue;
         }
@@ -892,7 +1013,9 @@ bool BTreeIndex::insert_into_parent(const common::Value& sep_key, uint32_t left_
 }
 
 bool BTreeIndex::read_page(uint32_t page_num, char* buffer) const {
+    fprintf(stderr, "DEBUG read_page: page_num=%u\n", page_num);
     Page* page = bpm_.fetch_page(filename_, page_num);
+    fprintf(stderr, "DEBUG read_page: fetch_page returned page=%p\n", (void*)page);
     if (!page) {
         return false;
     }
@@ -911,6 +1034,8 @@ bool BTreeIndex::write_page(uint32_t page_num, const char* buffer) {
     }
     std::memcpy(page->get_data(), buffer, Page::PAGE_SIZE);
     bpm_.unpin_page(filename_, page_num, true);
+    // Flush immediately to storage so allocate_page can see the written data
+    bpm_.flush_page(filename_, page_num);
     return true;
 }
 

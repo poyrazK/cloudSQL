@@ -348,10 +348,8 @@ TEST_F(BTreeIndexTests, InsertManyTextKeys_FillLeaf) {
         }
         count = i + 1;
     }
-    // Verify we inserted some and that the leaf-full branch was reached.
-    // insert(...) must have returned false at least once (count < 500).
-    EXPECT_GT(count, 0);
-    ASSERT_LT(count, 500) << "insert should fail when leaf is full";
+    // With working B+ tree splits, all 500 entries are inserted successfully
+    EXPECT_EQ(count, 500);
     // Note: text_index cleanup handled by TearDown (text_fill_idx.idx added)
     text_index->close();
 }
@@ -411,19 +409,28 @@ TEST_F(BTreeIndexTests, InsertReturnsFalse_WhenLeafFull) {
     fill_index->close();
 }
 
-TEST_F(BTreeIndexTests, MultiLevelTree_ThreeLevelsDeep) {
+TEST_F(BTreeIndexTests, MultiLevelTree_DeepStressTest) {
     ASSERT_TRUE(index_->create());
     ASSERT_TRUE(index_->open());
 
-    // Insert entries to exercise leaf splits and initial internal node growth.
+    // Stress test with 5000 entries to trigger deep tree growth and cascade splits.
     // With ~4000 byte data area and ~11 byte int64 entries, each leaf holds
-    // ~360 entries. At 100 entries, we trigger at least one leaf split and
-    // the creation of a parent internal node — but don't yet trigger the
-    // internal split cascade (which has a latent bug at ~177 entries).
-    const int kTargetEntries = 100;
+    // ~360 entries. At 5000 entries: ~14 leaf pages, multiple internal splits,
+    // and likely root splits. This tests the full cascade path.
+    const int kTargetEntries = 5000;
+    int failed_at = -1;
     for (int i = 0; i < kTargetEntries; ++i) {
-        ASSERT_TRUE(index_->insert(Value::make_int64(i * 10), make_rid(i / 100, i % 100)))
-            << "Failed at entry " << i;
+        if (!index_->insert(Value::make_int64(i * 10), make_rid(i / 100, i % 100))) {
+            failed_at = i;
+            break;
+        }
+    }
+
+    if (failed_at >= 0) {
+        // Print diagnostic info before failing
+        std::cerr << "Insert failed at entry " << failed_at << " of " << kTargetEntries << "\n";
+        std::cerr << "root_page = " << index_->root_page() << "\n";
+        GTEST_FATAL_FAILURE_("Insert failed");
     }
 
     // Verify tree is functional: scan returns all entries
@@ -434,9 +441,10 @@ TEST_F(BTreeIndexTests, MultiLevelTree_ThreeLevelsDeep) {
     EXPECT_EQ(count, kTargetEntries);
 
     // Verify search works at various positions
-    EXPECT_EQ(index_->search(Value::make_int64(0)).size(), 1U);     // first
-    EXPECT_EQ(index_->search(Value::make_int64(500)).size(), 1U);  // middle
-    EXPECT_EQ(index_->search(Value::make_int64(990)).size(), 1U);  // last
+    EXPECT_EQ(index_->search(Value::make_int64(0)).size(), 1U);       // first
+    EXPECT_EQ(index_->search(Value::make_int64(25000)).size(), 1U);   // middle
+    EXPECT_EQ(index_->search(Value::make_int64(49990)).size(), 1U);   // last
+    EXPECT_EQ(index_->search(Value::make_int64(99999)).size(), 0U);   // non-existent
 }
 
 TEST_F(BTreeIndexTests, RootSplit_CreatesNewRootInternalNode) {
