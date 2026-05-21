@@ -4,16 +4,18 @@
  */
 
 #include "storage/memory_mapped_column.hpp"
+
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
+
 #include <cstring>
 
 namespace cloudsql::storage {
 
 bool MemoryMappedColumn::map(const std::string& data_path, const std::string& null_path,
-                              size_t element_size, size_t row_count) {
+                             size_t element_size, size_t row_count) {
     // Map data file
     int data_fd = ::open(data_path.c_str(), O_RDONLY);
     if (data_fd < 0) return false;

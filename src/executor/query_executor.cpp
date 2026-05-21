@@ -1706,8 +1706,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                     if (arg->type() == parser::ExprType::Column) {
                         const auto* col = dynamic_cast<const parser::ColumnExpr*>(arg.get());
                         if (col != nullptr) {
-                            info.input_col_idx =
-                                static_cast<int>(current_root->output_schema().find_column(col->name()));
+                            info.input_col_idx = static_cast<int>(
+                                current_root->output_schema().find_column(col->name()));
                         }
                     }
                 }

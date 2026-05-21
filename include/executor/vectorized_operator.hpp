@@ -136,7 +136,8 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
                     continue;
                 }
                 thread_pool_->submit([this, t, start, rows_to_read]() {
-                    table_->read_batch(start, static_cast<uint32_t>(rows_to_read), *parallel_results_[t]);
+                    table_->read_batch(start, static_cast<uint32_t>(rows_to_read),
+                                       *parallel_results_[t]);
                 });
             }
 
@@ -727,7 +728,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 size_t col_idx = group_by_.size() + i;
                 switch (aggregates_[i].type) {
                     case AggregateType::Count:
-                        out_batch.get_column(col_idx).append(common::Value::make_int64(slot.counts[i]));
+                        out_batch.get_column(col_idx).append(
+                            common::Value::make_int64(slot.counts[i]));
                         break;
                     case AggregateType::Sum:
                         if (output_schema_.get_column(col_idx).type() ==
@@ -736,18 +738,19 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                                 common::Value::make_int64(slot.sums_int64[i]));
                         } else {
                             double float_val = slot.has_float_value[i]
-                                                       ? slot.sums_float64[i]
-                                                       : static_cast<double>(slot.sums_int64[i]);
+                                                   ? slot.sums_float64[i]
+                                                   : static_cast<double>(slot.sums_int64[i]);
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_float64(float_val));
                         }
                         break;
                     case AggregateType::Avg:
                         if (slot.counts[i] > 0) {
-                            double avg_val = slot.has_float_value[i]
-                                               ? slot.sums_float64[i] / static_cast<double>(slot.counts[i])
-                                               : static_cast<double>(slot.sums_int64[i]) /
-                                                 static_cast<double>(slot.counts[i]);
+                            double avg_val =
+                                slot.has_float_value[i]
+                                    ? slot.sums_float64[i] / static_cast<double>(slot.counts[i])
+                                    : static_cast<double>(slot.sums_int64[i]) /
+                                          static_cast<double>(slot.counts[i]);
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_float64(avg_val));
                         } else {
@@ -823,11 +826,13 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         break;
                     case AggregateType::Avg:
                         if (state.counts[i] > 0) {
-                            double avg_val = state.has_float_value_[i]
-                                               ? state.sums_float64[i] / static_cast<double>(state.counts[i])
-                                               : static_cast<double>(state.sums_int64[i]) /
-                                                 static_cast<double>(state.counts[i]);
-                            out_batch.get_column(col_idx).append(common::Value::make_float64(avg_val));
+                            double avg_val =
+                                state.has_float_value_[i]
+                                    ? state.sums_float64[i] / static_cast<double>(state.counts[i])
+                                    : static_cast<double>(state.sums_int64[i]) /
+                                          static_cast<double>(state.counts[i]);
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_float64(avg_val));
                         } else {
                             out_batch.get_column(col_idx).append(common::Value::make_null());
                         }

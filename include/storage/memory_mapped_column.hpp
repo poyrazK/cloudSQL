@@ -17,26 +17,26 @@ namespace cloudsql::storage {
  * For fixed-width types, provides O(1) access to any row via pointer arithmetic.
  */
 class MemoryMappedColumn {
-public:
+   public:
     struct MappedRegion {
-        void* addr;  // mmap'd base address
+        void* addr;   // mmap'd base address
         size_t size;  // mapped size in bytes
-        int fd;  // file descriptor (for munmap)
+        int fd;       // file descriptor (for munmap)
     };
 
-private:
+   private:
     MappedRegion data_region_{nullptr, 0, -1};
     MappedRegion null_region_{nullptr, 0, -1};
     size_t element_size_ = 0;  // stride for fixed-width columns
     bool is_fixed_width_ = false;
     size_t row_count_ = 0;
 
-public:
+   public:
     ~MemoryMappedColumn() { unmap(); }
 
     // Map a column's data and nulls files. Returns true on success.
-    bool map(const std::string& data_path, const std::string& null_path,
-             size_t element_size, size_t row_count);
+    bool map(const std::string& data_path, const std::string& null_path, size_t element_size,
+             size_t row_count);
 
     // Unmap and release resources
     void unmap();
