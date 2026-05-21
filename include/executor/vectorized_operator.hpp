@@ -364,6 +364,86 @@ class VectorizedAggregateOperator : public VectorizedOperator {
 };
 
 /**
+ * @brief Direct-indexed aggregation for low-cardinality integer GROUP BY.
+ *
+ * When the number of distinct GROUP BY values is small, we can use a
+ * simple vector indexed by key value rather than a hash table. This avoids:
+ * - Hash computation per row
+ * - Hash table probing and collision handling
+ * - String key allocation and comparison
+ *
+ * For each row: slot_idx = (key - min_key) where min_key is the
+ * minimum key value observed. This gives O(1) direct indexing.
+ */
+class DirectIndexAgg {
+   public:
+    static constexpr size_t MAX_AGGREGATES = 8;
+    static constexpr size_t MAX_GROUP_KEYS = 2;
+
+   private:
+    struct GroupSlot {
+        bool valid = false;
+        int64_t key1 = 0;
+        int64_t key2 = 0;
+        int64_t counts[MAX_AGGREGATES] = {0};
+        int64_t sums_int64[MAX_AGGREGATES] = {0};
+        double sums_float64[MAX_AGGREGATES / 2] = {0.0};
+        bool has_float_value[MAX_AGGREGATES] = {false};
+    };
+
+    std::vector<GroupSlot> slots_;
+    mutable size_t max_aggregates_ = 0;
+    mutable size_t max_group_keys_ = 0;
+    mutable int64_t min_key_ = INT64_MAX;
+    mutable int64_t max_key_ = INT64_MIN;
+
+    // Track valid slots for iteration
+    std::vector<size_t> valid_slot_indices_;
+
+   public:
+    void init(size_t capacity_hint, size_t max_aggregates, size_t max_group_keys = 1) {
+        max_aggregates_ = max_aggregates;
+        max_group_keys_ = max_group_keys;
+        min_key_ = INT64_MAX;
+        max_key_ = INT64_MIN;
+        slots_.resize(capacity_hint);
+        valid_slot_indices_.reserve(capacity_hint);
+    }
+
+    GroupSlot& slot(size_t idx) { return slots_[idx]; }
+    const GroupSlot& slot(size_t idx) const { return slots_[idx]; }
+
+    size_t find_or_insert(int64_t key1, int64_t key2 = 0) {
+        // Expand if key outside current range
+        if (key1 < min_key_ || key1 > max_key_) {
+            if (key1 < min_key_) min_key_ = key1;
+            if (key1 > max_key_) max_key_ = key1;
+            size_t new_size = static_cast<size_t>(max_key_ - min_key_ + 1);
+            if (new_size > slots_.size()) {
+                size_t alloc_size = 1;
+                while (alloc_size < new_size) alloc_size *= 2;
+                slots_.resize(alloc_size);
+            }
+        }
+        size_t idx = static_cast<size_t>(key1 - min_key_);
+        return idx;
+    }
+
+    size_t group_count() const {
+        size_t count = 0;
+        for (const auto& s : slots_) {
+            if (s.valid) ++count;
+        }
+        return count;
+    }
+
+    const std::vector<size_t>& valid_slots() const { return valid_slot_indices_; }
+
+    int64_t min_key() const { return min_key_; }
+    int64_t max_key() const { return max_key_; }
+};
+
+/**
  * @brief Group state for vectorized GROUP BY - accumulator data per group
  */
 struct VectorizedGroupState {
@@ -415,6 +495,11 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     std::unique_ptr<VectorBatch> input_batch_;
     std::unique_ptr<VectorBatch> group_key_batch_;
 
+    // Direct-index aggregation (for low-cardinality integer GROUP BY)
+    DirectIndexAgg agg_;
+    bool is_direct_indexable_ = false;
+    std::vector<int64_t> direct_group_keys_;  // Ordered keys for direct index output
+
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
                               std::vector<std::unique_ptr<parser::Expression>> group_by,
@@ -430,6 +515,20 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         for (size_t i = 0; i < group_by_.size(); ++i) {
             size_t col_idx = schema.find_column(group_by_[i]->to_string());
             group_by_col_indices_.push_back(col_idx);
+        }
+
+        // Check if we can use direct indexing (single integer GROUP BY column)
+        bool is_int_key = (group_by_col_indices_[0] != static_cast<size_t>(-1));
+        if (is_int_key) {
+            auto col_type = schema.get_column(group_by_col_indices_[0]).type();
+            is_int_key = (col_type == common::ValueType::TYPE_INT64 ||
+                          col_type == common::ValueType::TYPE_INT32 ||
+                          col_type == common::ValueType::TYPE_INT16 ||
+                          col_type == common::ValueType::TYPE_INT8);
+        }
+        is_direct_indexable_ = (group_by_.size() == 1 && is_int_key);
+        if (is_direct_indexable_) {
+            agg_.init(65536, aggregates_.size(), group_by_.size());
         }
 
         // Create schema for group key evaluation
@@ -455,9 +554,57 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
    private:
     void process_input_batch(VectorBatch& batch) {
-        // For each row, compute hash key using collision-safe encoding
+        if (is_direct_indexable_) {
+            process_input_batch_direct(batch);
+        } else {
+            process_input_batch_hash(batch);
+        }
+    }
+
+    void process_input_batch_direct(VectorBatch& batch) {
+        // Fast path: direct integer key indexing
+        const size_t gb_col_idx = group_by_col_indices_[0];
+        const auto& gb_col = batch.get_column(gb_col_idx);
+
         for (size_t r = 0; r < batch.row_count(); ++r) {
-            // Build key using length-prefixed, type-tagged encoding
+            int64_t key = gb_col.get(r).to_int64();
+            size_t slot_idx = agg_.find_or_insert(key, 0);
+            auto& slot = agg_.slot(slot_idx);
+
+            if (!slot.valid) {
+                slot.valid = true;
+                slot.key1 = key;
+                direct_group_keys_.push_back(key);
+            }
+
+            // Update accumulators directly in slot
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                const auto& agg = aggregates_[i];
+                if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+                    slot.counts[i]++;
+                } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
+                           agg.input_col_idx >= 0) {
+                    const auto& col = batch.get_column(agg.input_col_idx);
+                    if (!col.is_null(r)) {
+                        slot.counts[i]++;
+                        if (col.type() == common::ValueType::TYPE_INT64) {
+                            auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
+                            slot.sums_int64[i] += num_col.raw_data()[r];
+                        } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                            auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
+                            slot.sums_float64[i] += num_col.raw_data()[r];
+                            slot.has_float_value[i] = true;
+                        }
+                    }
+                }
+            }
+        }
+        input_batch_->clear();
+    }
+
+    void process_input_batch_hash(VectorBatch& batch) {
+        // Build key using length-prefixed, type-tagged encoding
+        for (size_t r = 0; r < batch.row_count(); ++r) {
             std::string key;
             for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
                 size_t col_idx = group_by_col_indices_[i];
@@ -547,6 +694,80 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 
     bool produce_output_batch(VectorBatch& out_batch) {
+        if (is_direct_indexable_) {
+            return produce_output_batch_direct(out_batch);
+        }
+        return produce_output_batch_hash(out_batch);
+    }
+
+    bool produce_output_batch_direct(VectorBatch& out_batch) {
+        if (current_group_idx_ >= direct_group_keys_.size()) {
+            return false;  // EOF
+        }
+
+        out_batch.clear();
+        if (out_batch.column_count() == 0) {
+            out_batch.init_from_schema(output_schema_);
+        }
+
+        constexpr size_t BATCH_SIZE = 1024;
+        size_t output_count = 0;
+
+        // Iterate through direct_group_keys_ and emit groups
+        while (current_group_idx_ < direct_group_keys_.size() && output_count < BATCH_SIZE) {
+            int64_t key = direct_group_keys_[current_group_idx_];
+            size_t slot_idx = static_cast<size_t>(key - agg_.min_key());
+            const auto& slot = agg_.slot(slot_idx);
+
+            // Append group key column
+            out_batch.get_column(0).append(common::Value::make_int64(key));
+
+            // Append aggregate result columns
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                size_t col_idx = group_by_.size() + i;
+                switch (aggregates_[i].type) {
+                    case AggregateType::Count:
+                        out_batch.get_column(col_idx).append(common::Value::make_int64(slot.counts[i]));
+                        break;
+                    case AggregateType::Sum:
+                        if (output_schema_.get_column(col_idx).type() ==
+                            common::ValueType::TYPE_INT64) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(slot.sums_int64[i]));
+                        } else {
+                            double float_val = slot.has_float_value[i]
+                                                       ? slot.sums_float64[i]
+                                                       : static_cast<double>(slot.sums_int64[i]);
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_float64(float_val));
+                        }
+                        break;
+                    case AggregateType::Avg:
+                        if (slot.counts[i] > 0) {
+                            double avg_val = slot.has_float_value[i]
+                                               ? slot.sums_float64[i] / static_cast<double>(slot.counts[i])
+                                               : static_cast<double>(slot.sums_int64[i]) /
+                                                 static_cast<double>(slot.counts[i]);
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_float64(avg_val));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
+                        break;
+                    default:
+                        out_batch.get_column(col_idx).append(common::Value::make_null());
+                        break;
+                }
+            }
+            output_count++;
+            current_group_idx_++;
+        }
+
+        out_batch.set_row_count(output_count);
+        return true;
+    }
+
+    bool produce_output_batch_hash(VectorBatch& out_batch) {
         if (current_group_idx_ >= group_keys_.size()) {
             return false;  // EOF
         }
