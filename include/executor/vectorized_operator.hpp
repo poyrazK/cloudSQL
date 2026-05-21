@@ -398,9 +398,6 @@ class DirectIndexAgg {
     mutable int64_t min_key_ = INT64_MAX;
     mutable int64_t max_key_ = INT64_MIN;
 
-    // Track valid slots for iteration
-    std::vector<size_t> valid_slot_indices_;
-
    public:
     void init(size_t capacity_hint, size_t max_aggregates, size_t max_group_keys = 1) {
         max_aggregates_ = max_aggregates;
@@ -408,7 +405,6 @@ class DirectIndexAgg {
         min_key_ = INT64_MAX;
         max_key_ = INT64_MIN;
         slots_.resize(capacity_hint);
-        valid_slot_indices_.reserve(capacity_hint);
     }
 
     GroupSlot& slot(size_t idx) { return slots_[idx]; }
@@ -427,6 +423,7 @@ class DirectIndexAgg {
             }
         }
         size_t idx = static_cast<size_t>(key1 - min_key_);
+        slots_[idx].valid = true;  // Mark valid on first insertion
         return idx;
     }
 
@@ -437,8 +434,6 @@ class DirectIndexAgg {
         }
         return count;
     }
-
-    const std::vector<size_t>& valid_slots() const { return valid_slot_indices_; }
 
     int64_t min_key() const { return min_key_; }
     int64_t max_key() const { return max_key_; }
