@@ -385,17 +385,17 @@ class OpenAddressHashAgg {
    private:
     struct HashBucket {
         bool occupied = false;
-        bool is_new = false;          // True if this bucket was just allocated
+        bool is_new = false;  // True if this bucket was just allocated
         uint64_t key_hash = 0;
-        int64_t key_int64 = 0;        // Direct storage for int64 keys
-        std::string key_string;       // Fallback for strings/long keys
+        int64_t key_int64 = 0;   // Direct storage for int64 keys
+        std::string key_string;  // Fallback for strings/long keys
         int64_t counts[MAX_AGGREGATES] = {0};
         int64_t sums_int64[MAX_AGGREGATES] = {0};
         double sums_float64[MAX_AGGREGATES / 2] = {0.0};
         bool has_float_value[MAX_AGGREGATES] = {false};
-        uint8_t key_type = 0;         // 0x02=INT64, 0x04=STRING
-        uint32_t key_len = 0;         // For non-int64 keys
-        uint8_t key_data[64];        // Stored key bytes for iteration
+        uint8_t key_type = 0;  // 0x02=INT64, 0x04=STRING
+        uint32_t key_len = 0;  // For non-int64 keys
+        uint8_t key_data[64];  // Stored key bytes for iteration
     };
 
     std::vector<HashBucket> buckets_;
