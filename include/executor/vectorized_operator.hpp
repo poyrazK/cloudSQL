@@ -6,6 +6,7 @@
 #ifndef CLOUDSQL_EXECUTOR_VECTORIZED_OPERATOR_HPP
 #define CLOUDSQL_EXECUTOR_VECTORIZED_OPERATOR_HPP
 
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -365,6 +366,155 @@ class VectorizedAggregateOperator : public VectorizedOperator {
 };
 
 /**
+ * @brief Open-addressing hash aggregation for arbitrary GROUP BY keys.
+ *
+ * Uses linear probing with power-of-2 capacity. Binary key encoding avoids
+ * string allocation for common key types. Stores hash to avoid recomputation
+ * on collision resolution.
+ *
+ * Key encoding scheme:
+ * [1 byte: type tag] 0x01=NULL, 0x02=INT64, 0x03=FLOAT64, 0x04=STRING
+ * [4 bytes: key length (little-endian)]
+ * [key data...]
+ */
+class OpenAddressHashAgg {
+   public:
+    static constexpr size_t MAX_AGGREGATES = 8;
+    static constexpr float kLoadFactor = 0.5f;
+
+   private:
+    struct HashBucket {
+        bool occupied = false;
+        bool is_new = false;          // True if this bucket was just allocated
+        uint64_t key_hash = 0;
+        int64_t key_int64 = 0;        // Direct storage for int64 keys
+        std::string key_string;       // Fallback for strings/long keys
+        int64_t counts[MAX_AGGREGATES] = {0};
+        int64_t sums_int64[MAX_AGGREGATES] = {0};
+        double sums_float64[MAX_AGGREGATES / 2] = {0.0};
+        bool has_float_value[MAX_AGGREGATES] = {false};
+        uint8_t key_type = 0;         // 0x02=INT64, 0x04=STRING
+        uint32_t key_len = 0;         // For non-int64 keys
+        uint8_t key_data[64];        // Stored key bytes for iteration
+    };
+
+    std::vector<HashBucket> buckets_;
+    size_t mask_ = 0;
+    size_t num_occupied_ = 0;
+    size_t max_aggregates_ = 0;
+    std::vector<size_t> valid_indices_;  // For iteration
+
+    static constexpr size_t kInitialCapacity = 1024;
+
+   public:
+    static uint64_t hash_bytes(const uint8_t* data, size_t len) {
+        // FNV-1a 64-bit hash
+        uint64_t hash = 14695981039346656037ull;
+        for (size_t i = 0; i < len; ++i) {
+            hash ^= data[i];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    void init(size_t capacity_hint, size_t max_aggregates) {
+        max_aggregates_ = max_aggregates;
+        num_occupied_ = 0;
+        valid_indices_.clear();
+
+        size_t cap = kInitialCapacity;
+        while (cap < capacity_hint) cap *= 2;
+        buckets_.assign(cap, HashBucket());
+        mask_ = cap - 1;
+    }
+
+    HashBucket& find_or_insert(const uint8_t* key, size_t key_len, uint64_t hash) {
+        // Grow if load factor exceeded
+        if (num_occupied_ >= buckets_.size() * kLoadFactor) {
+            grow();
+        }
+
+        size_t idx = hash & mask_;
+        for (size_t probes = 0; probes < buckets_.size(); ++probes) {
+            auto& bucket = buckets_[idx];
+            if (!bucket.occupied) {
+                bucket.occupied = true;
+                bucket.is_new = true;
+                bucket.key_hash = hash;
+                bucket.key_len = static_cast<uint32_t>(key_len);
+                std::memcpy(bucket.key_data, key, key_len);
+                num_occupied_++;
+                valid_indices_.push_back(idx);
+                return bucket;
+            }
+            if (bucket.key_hash == hash && bucket.key_len == key_len &&
+                std::memcmp(bucket.key_data, key, key_len) == 0) {
+                bucket.is_new = false;
+                return bucket;  // Found
+            }
+            idx = (idx + 1) & mask_;  // Linear probe
+        }
+        return buckets_[idx];  // Shouldn't reach here
+    }
+
+    HashBucket& find_or_insert_int64(int64_t key, uint64_t hash) {
+        if (num_occupied_ >= buckets_.size() * kLoadFactor) {
+            grow();
+        }
+
+        uint8_t key_buf[sizeof(int64_t) + 1];
+        key_buf[0] = 0x02;
+        std::memcpy(&key_buf[1], &key, sizeof(int64_t));
+
+        size_t idx = hash & mask_;
+        for (size_t probes = 0; probes < buckets_.size(); ++probes) {
+            auto& bucket = buckets_[idx];
+            if (!bucket.occupied) {
+                bucket.occupied = true;
+                bucket.is_new = true;
+                bucket.key_hash = hash;
+                bucket.key_int64 = key;
+                bucket.key_type = 0x02;
+                bucket.key_len = sizeof(int64_t) + 1;
+                std::memcpy(bucket.key_data, key_buf, bucket.key_len);
+                num_occupied_++;
+                valid_indices_.push_back(idx);
+                return bucket;
+            }
+            if (bucket.key_type == 0x02 && bucket.key_int64 == key) {
+                bucket.is_new = false;
+                return bucket;
+            }
+            idx = (idx + 1) & mask_;
+        }
+        return buckets_[idx];
+    }
+
+    void grow() {
+        auto old_buckets = std::move(buckets_);
+        size_t new_cap = old_buckets.empty() ? kInitialCapacity : old_buckets.size() * 2;
+        buckets_.assign(new_cap, HashBucket());
+        mask_ = new_cap - 1;
+        num_occupied_ = 0;
+        valid_indices_.clear();
+
+        for (size_t i = 0; i < old_buckets.size(); ++i) {
+            if (old_buckets[i].occupied) {
+                if (old_buckets[i].key_type == 0x02) {
+                    find_or_insert_int64(old_buckets[i].key_int64, old_buckets[i].key_hash);
+                } else {
+                    find_or_insert(old_buckets[i].key_data, old_buckets[i].key_len,
+                                   old_buckets[i].key_hash);
+                }
+            }
+        }
+    }
+
+    size_t group_count() const { return valid_indices_.size(); }
+    const std::vector<size_t>& valid_slots() const { return valid_indices_; }
+};
+
+/**
  * @brief Direct-indexed aggregation for low-cardinality integer GROUP BY.
  *
  * When the number of distinct GROUP BY values is small, we can use a
@@ -496,6 +646,10 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     bool is_direct_indexable_ = false;
     std::vector<int64_t> direct_group_keys_;  // Ordered keys for direct index output
 
+    // Open-addressing hash aggregation (for general GROUP BY)
+    OpenAddressHashAgg hash_agg_;
+    std::vector<int64_t> hash_group_keys_;  // Ordered int64 keys for iteration
+
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
                               std::vector<std::unique_ptr<parser::Expression>> group_by,
@@ -525,6 +679,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         is_direct_indexable_ = (group_by_.size() == 1 && is_int_key);
         if (is_direct_indexable_) {
             agg_.init(65536, aggregates_.size(), group_by_.size());
+        } else {
+            hash_agg_.init(65536, aggregates_.size());
         }
 
         // Create schema for group key evaluation
@@ -590,6 +746,77 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                             auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
                             slot.sums_float64[i] += num_col.raw_data()[r];
                             slot.has_float_value[i] = true;
+                        }
+                    }
+                }
+            }
+        }
+        input_batch_->clear();
+    }
+
+    void process_input_batch_open_addressing(VectorBatch& batch) {
+        // Fast path: open-addressing hash with binary key encoding
+        for (size_t r = 0; r < batch.row_count(); ++r) {
+            // Encode key: [type tag][len][data]
+            uint8_t key_buf[64];
+            size_t key_len = 0;
+
+            for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
+                size_t col_idx = group_by_col_indices_[i];
+                if (col_idx == static_cast<size_t>(-1)) {
+                    set_error("GROUP BY: column not found in input schema: " +
+                              group_by_[i]->to_string());
+                    return;
+                }
+
+                const auto& val = batch.get_column(col_idx).get(r);
+                if (val.is_null()) {
+                    key_buf[key_len++] = 0x01;  // NULL tag
+                } else if (val.type() == common::ValueType::TYPE_INT64) {
+                    key_buf[key_len++] = 0x02;  // INT64 tag
+                    int64_t v = val.to_int64();
+                    std::memcpy(&key_buf[key_len], &v, sizeof(int64_t));
+                    key_len += sizeof(int64_t);
+                } else {
+                    key_buf[key_len++] = 0x04;  // STRING tag
+                    std::string val_str = val.as_text();
+                    uint32_t len = static_cast<uint32_t>(val_str.size());
+                    std::memcpy(&key_buf[key_len], &len, 4);
+                    key_len += 4;
+                    if (key_len + val_str.size() > sizeof(key_buf)) {
+                        set_error("GROUP BY key too large for buffer");
+                        return;
+                    }
+                    std::memcpy(&key_buf[key_len], val_str.data(), val_str.size());
+                    key_len += val_str.size();
+                }
+            }
+
+            uint64_t hash = OpenAddressHashAgg::hash_bytes(key_buf, key_len);
+            auto& bucket = hash_agg_.find_or_insert(key_buf, key_len, hash);
+
+            // Store key for output if first time
+            if (bucket.is_new) {
+                hash_group_keys_.push_back(bucket.key_int64);
+            }
+
+            // Update accumulators directly in bucket
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                const auto& agg = aggregates_[i];
+                if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+                    bucket.counts[i]++;
+                } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
+                           agg.input_col_idx >= 0) {
+                    const auto& col = batch.get_column(agg.input_col_idx);
+                    if (!col.is_null(r)) {
+                        bucket.counts[i]++;
+                        if (col.type() == common::ValueType::TYPE_INT64) {
+                            auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
+                            bucket.sums_int64[i] += num_col.raw_data()[r];
+                        } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                            auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
+                            bucket.sums_float64[i] += num_col.raw_data()[r];
+                            bucket.has_float_value[i] = true;
                         }
                     }
                 }
