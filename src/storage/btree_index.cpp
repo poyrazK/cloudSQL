@@ -877,6 +877,8 @@ bool BTreeIndex::split_internal(uint32_t page_num, char* buffer, uint16_t insert
 
     std::memcpy(right_buffer, &right_header, sizeof(NodeHeader));
 
+    std::memcpy(right_buffer, &right_header, sizeof(NodeHeader));
+
     // Update left node header - preserve next_leaf (rightmost child) since left node
     // still has children 0 through split_point (split_point+1 children), and
     // split_point entry was promoted as separator, not moved to right node
