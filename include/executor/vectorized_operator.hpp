@@ -709,7 +709,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         if (is_direct_indexable_) {
             process_input_batch_direct(batch);
         } else {
-            process_input_batch_hash(batch);
+            process_input_batch_open_addressing(batch);
         }
     }
 
