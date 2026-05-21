@@ -407,6 +407,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
 
     // Cost-based Volcano/Vectorized chooser using row estimates
     bool use_vectorized = false;
+    uint64_t estimated_rows = 0;
     if (storage_manager_ && !has_sort_or_limit) {
         // Extract table name from FROM clause (only for simple column refs)
         // Fall through to Volcano for JOINs, subqueries, and aliased tables
@@ -418,7 +419,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                 const auto* table_meta = table_meta_opt.value();
                 // Start with scan estimate as baseline; filter selectivity will override if
                 // eligible
-                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+                estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
 
                 // Use filter selectivity when WHERE clause is simple and stats available
                 if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary) {
@@ -450,7 +451,10 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                 }
 
                 // Use Vectorized for large scans (>10k rows — heuristic crossover point)
-                use_vectorized = estimated_rows > kVectorizedRowThreshold;
+                // Force vectorized for GROUP BY when ANALYZE hasn't been run (num_rows=0)
+                // to benefit from DirectIndexAgg optimization
+                use_vectorized = (estimated_rows > kVectorizedRowThreshold) ||
+                                 (!stmt.group_by().empty() && table_meta->num_rows == 0);
             }
         }
     }
