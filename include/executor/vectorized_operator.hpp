@@ -442,12 +442,14 @@ class OpenAddressHashAgg {
                 bucket.is_new = true;
                 bucket.key_hash = hash;
                 bucket.key_len = static_cast<uint32_t>(key_len);
+                bucket.key_type = key[0];
                 std::memcpy(bucket.key_data, key, key_len);
                 num_occupied_++;
                 valid_indices_.push_back(idx);
                 return bucket;
             }
             if (bucket.key_hash == hash && bucket.key_len == key_len &&
+                bucket.key_type == key[0] &&
                 std::memcmp(bucket.key_data, key, key_len) == 0) {
                 bucket.is_new = false;
                 return bucket;  // Found
