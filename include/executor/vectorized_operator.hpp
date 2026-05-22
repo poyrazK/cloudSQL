@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "executor/operator.hpp"
+#include "executor/thread_pool.hpp"
 #include "executor/types.hpp"
 #include "parser/expression.hpp"
 #include "storage/columnar_table.hpp"
