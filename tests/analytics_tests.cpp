@@ -54,7 +54,7 @@ TEST(AnalyticsTests, ColumnarTableLifecycle) {
 
     // 3. Scan and verify round-trip integrity
     auto table_ptr = std::make_shared<ColumnarTable>(table);
-    VectorizedSeqScanOperator scan("lifecycle_test", table_ptr);
+    VectorizedSeqScanOperator scan("lifecycle_test", table_ptr, nullptr);
 
     auto result_batch = VectorBatch::create(schema);
     ASSERT_TRUE(scan.next_batch(*result_batch));
