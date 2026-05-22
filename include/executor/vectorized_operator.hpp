@@ -513,6 +513,8 @@ class OpenAddressHashAgg {
 
     size_t group_count() const { return valid_indices_.size(); }
     const std::vector<size_t>& valid_slots() const { return valid_indices_; }
+    HashBucket& slot(size_t idx) { return buckets_[idx]; }
+    const HashBucket& slot(size_t idx) const { return buckets_[idx]; }
 };
 
 /**
@@ -924,7 +926,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         if (is_direct_indexable_) {
             return produce_output_batch_direct(out_batch);
         }
-        return produce_output_batch_hash(out_batch);
+        return produce_output_batch_open_addressing(out_batch);
     }
 
     bool produce_output_batch_direct(VectorBatch& out_batch) {
@@ -977,6 +979,74 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                                     ? slot.sums_float64[i] / static_cast<double>(slot.counts[i])
                                     : static_cast<double>(slot.sums_int64[i]) /
                                           static_cast<double>(slot.counts[i]);
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_float64(avg_val));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
+                        break;
+                    default:
+                        out_batch.get_column(col_idx).append(common::Value::make_null());
+                        break;
+                }
+            }
+            output_count++;
+            current_group_idx_++;
+        }
+
+        out_batch.set_row_count(output_count);
+        return true;
+    }
+
+    bool produce_output_batch_open_addressing(VectorBatch& out_batch) {
+        if (current_group_idx_ >= hash_agg_.group_count()) {
+            return false;  // EOF
+        }
+
+        out_batch.clear();
+        if (out_batch.column_count() == 0) {
+            out_batch.init_from_schema(output_schema_);
+        }
+
+        constexpr size_t BATCH_SIZE = 1024;
+        size_t output_count = 0;
+
+        while (current_group_idx_ < hash_group_keys_.size() && output_count < BATCH_SIZE) {
+            int64_t key = hash_group_keys_[current_group_idx_];
+            size_t slot_idx = hash_agg_.valid_slots()[current_group_idx_];
+            const auto& bucket = hash_agg_.slot(slot_idx);
+
+            // Append group key column
+            out_batch.get_column(0).append(common::Value::make_int64(key));
+
+            // Append aggregate result columns
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                size_t col_idx = group_by_.size() + i;
+                switch (aggregates_[i].type) {
+                    case AggregateType::Count:
+                        out_batch.get_column(col_idx).append(
+                            common::Value::make_int64(bucket.counts[i]));
+                        break;
+                    case AggregateType::Sum:
+                        if (output_schema_.get_column(col_idx).type() ==
+                            common::ValueType::TYPE_INT64) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(bucket.sums_int64[i]));
+                        } else {
+                            double float_val = bucket.has_float_value[i]
+                                                   ? bucket.sums_float64[i]
+                                                   : static_cast<double>(bucket.sums_int64[i]);
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_float64(float_val));
+                        }
+                        break;
+                    case AggregateType::Avg:
+                        if (bucket.counts[i] > 0) {
+                            double avg_val =
+                                bucket.has_float_value[i]
+                                    ? bucket.sums_float64[i] / static_cast<double>(bucket.counts[i])
+                                    : static_cast<double>(bucket.sums_int64[i]) /
+                                          static_cast<double>(bucket.counts[i]);
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_float64(avg_val));
                         } else {
