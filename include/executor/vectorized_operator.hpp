@@ -651,7 +651,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
     // Open-addressing hash aggregation (for general GROUP BY)
     OpenAddressHashAgg hash_agg_;
-    std::vector<int64_t> hash_group_keys_;  // Ordered int64 keys for iteration
+    std::vector<std::vector<common::Value>> hash_group_keys_;  // Ordered group keys for iteration
 
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
@@ -803,7 +803,11 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
             // Store key for output if first time
             if (bucket.is_new) {
-                hash_group_keys_.push_back(bucket.key_int64);
+                std::vector<common::Value> key_vals;
+                for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
+                    key_vals.push_back(batch.get_column(group_by_col_indices_[i]).get(r));
+                }
+                hash_group_keys_.push_back(std::move(key_vals));
             }
 
             // Update accumulators directly in bucket
@@ -960,12 +964,14 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         size_t output_count = 0;
 
         while (current_group_idx_ < hash_group_keys_.size() && output_count < BATCH_SIZE) {
-            int64_t key = hash_group_keys_[current_group_idx_];
             size_t slot_idx = hash_agg_.valid_slots()[current_group_idx_];
             const auto& bucket = hash_agg_.slot(slot_idx);
 
-            // Append group key column
-            out_batch.get_column(0).append(common::Value::make_int64(key));
+            // Append group key columns
+            const auto& key_vals = hash_group_keys_[current_group_idx_];
+            for (size_t i = 0; i < key_vals.size(); ++i) {
+                out_batch.get_column(i).append(key_vals[i]);
+            }
 
             // Append aggregate result columns
             for (size_t i = 0; i < aggregates_.size(); ++i) {
