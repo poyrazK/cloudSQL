@@ -396,9 +396,9 @@ class OpenAddressHashAgg {
         int64_t mins[MAX_AGGREGATES] = {0};
         int64_t maxes[MAX_AGGREGATES] = {0};
         bool has_mins[MAX_AGGREGATES] = {false};  // Track if initialized
-        uint8_t key_type = 0;  // 0x02=INT64, 0x04=STRING
-        uint32_t key_len = 0;  // For non-int64 keys
-        uint8_t key_data[64];  // Stored key bytes for iteration
+        uint8_t key_type = 0;                     // 0x02=INT64, 0x04=STRING
+        uint32_t key_len = 0;                     // For non-int64 keys
+        uint8_t key_data[64];                     // Stored key bytes for iteration
     };
 
     std::vector<HashBucket> buckets_;
