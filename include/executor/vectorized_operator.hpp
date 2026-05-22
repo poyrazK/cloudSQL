@@ -387,8 +387,8 @@ class OpenAddressHashAgg {
         bool occupied = false;
         bool is_new = false;  // True if this bucket was just allocated
         uint64_t key_hash = 0;
-        int64_t key_int64 = 0;   // Direct storage for int64 keys
-                int64_t counts[MAX_AGGREGATES] = {0};
+        int64_t key_int64 = 0;  // Direct storage for int64 keys
+        int64_t counts[MAX_AGGREGATES] = {0};
         int64_t sums_int64[MAX_AGGREGATES] = {0};
         double sums_float64[MAX_AGGREGATES / 2] = {0.0};
         bool has_float_value[MAX_AGGREGATES] = {false};
