@@ -761,6 +761,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         for (size_t r = 0; r < batch.row_count(); ++r) {
             // Encode key: [type tag][len][data]
             uint8_t key_buf[64];
+            uint8_t* key_ptr = key_buf;
+            std::vector<uint8_t> heap_key;
             size_t key_len = 0;
 
             for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
@@ -773,29 +775,30 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
                 const auto& val = batch.get_column(col_idx).get(r);
                 if (val.is_null()) {
-                    key_buf[key_len++] = 0x01;  // NULL tag
+                    key_ptr[key_len++] = 0x01;  // NULL tag
                 } else if (val.type() == common::ValueType::TYPE_INT64) {
-                    key_buf[key_len++] = 0x02;  // INT64 tag
+                    key_ptr[key_len++] = 0x02;  // INT64 tag
                     int64_t v = val.to_int64();
-                    std::memcpy(&key_buf[key_len], &v, sizeof(int64_t));
+                    std::memcpy(&key_ptr[key_len], &v, sizeof(int64_t));
                     key_len += sizeof(int64_t);
                 } else {
-                    key_buf[key_len++] = 0x04;  // STRING tag
+                    key_ptr[key_len++] = 0x04;  // STRING tag
                     std::string val_str = val.as_text();
                     uint32_t len = static_cast<uint32_t>(val_str.size());
-                    std::memcpy(&key_buf[key_len], &len, 4);
-                    key_len += 4;
-                    if (key_len + val_str.size() > sizeof(key_buf)) {
-                        set_error("GROUP BY key too large for buffer");
-                        return;
+                    if (key_len + 4 + val_str.size() > 64) {
+                        heap_key.resize(key_len + 4 + val_str.size());
+                        std::memcpy(heap_key.data(), key_ptr, key_len);
+                        key_ptr = heap_key.data();
                     }
-                    std::memcpy(&key_buf[key_len], val_str.data(), val_str.size());
+                    std::memcpy(&key_ptr[key_len], &len, 4);
+                    key_len += 4;
+                    std::memcpy(&key_ptr[key_len], val_str.data(), val_str.size());
                     key_len += val_str.size();
                 }
             }
 
-            uint64_t hash = OpenAddressHashAgg::hash_bytes(key_buf, key_len);
-            auto& bucket = hash_agg_.find_or_insert(key_buf, key_len, hash);
+            uint64_t hash = OpenAddressHashAgg::hash_bytes(key_ptr, key_len);
+            auto& bucket = hash_agg_.find_or_insert(key_ptr, key_len, hash);
 
             // Store key for output if first time
             if (bucket.is_new) {
