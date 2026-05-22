@@ -114,7 +114,7 @@ TEST_F(VectorizedSeqScanTests, SequentialCallsUntilEOF) {
     ASSERT_TRUE(table.append_batch(*batch));
 
     auto table_ptr = std::make_shared<ColumnarTable>(table);
-    VectorizedSeqScanOperator scan("sequential_scan", table_ptr);
+    VectorizedSeqScanOperator scan("sequential_scan", table_ptr, nullptr);
 
     auto result = VectorBatch::create(schema);
     int64_t expected = 0;

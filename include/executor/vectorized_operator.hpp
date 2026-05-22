@@ -393,6 +393,9 @@ class OpenAddressHashAgg {
         int64_t sums_int64[MAX_AGGREGATES] = {0};
         double sums_float64[MAX_AGGREGATES / 2] = {0.0};
         bool has_float_value[MAX_AGGREGATES] = {false};
+        int64_t mins[MAX_AGGREGATES] = {0};
+        int64_t maxes[MAX_AGGREGATES] = {0};
+        bool has_mins[MAX_AGGREGATES] = {false};  // Track if initialized
         uint8_t key_type = 0;  // 0x02=INT64, 0x04=STRING
         uint32_t key_len = 0;  // For non-int64 keys
         uint8_t key_data[64];  // Stored key bytes for iteration
@@ -829,6 +832,20 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                             bucket.has_float_value[i] = true;
                         }
                     }
+                } else if ((agg.type == AggregateType::Min || agg.type == AggregateType::Max) &&
+                           agg.input_col_idx >= 0) {
+                    const auto& col = batch.get_column(agg.input_col_idx);
+                    if (!col.is_null(r)) {
+                        auto val = col.get(r).to_int64();
+                        if (!bucket.has_mins[i]) {
+                            bucket.mins[i] = val;
+                            bucket.maxes[i] = val;
+                            bucket.has_mins[i] = true;
+                        } else {
+                            bucket.mins[i] = std::min(bucket.mins[i], val);
+                            bucket.maxes[i] = std::max(bucket.maxes[i], val);
+                        }
+                    }
                 }
             }
         }
@@ -1003,6 +1020,22 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                                           static_cast<double>(bucket.counts[i]);
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_float64(avg_val));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
+                        break;
+                    case AggregateType::Min:
+                        if (bucket.has_mins[i]) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(bucket.mins[i]));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
+                        break;
+                    case AggregateType::Max:
+                        if (bucket.has_mins[i]) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(bucket.maxes[i]));
                         } else {
                             out_batch.get_column(col_idx).append(common::Value::make_null());
                         }
