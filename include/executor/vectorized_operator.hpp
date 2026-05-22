@@ -388,8 +388,7 @@ class OpenAddressHashAgg {
         bool is_new = false;  // True if this bucket was just allocated
         uint64_t key_hash = 0;
         int64_t key_int64 = 0;   // Direct storage for int64 keys
-        std::string key_string;  // Fallback for strings/long keys
-        int64_t counts[MAX_AGGREGATES] = {0};
+                int64_t counts[MAX_AGGREGATES] = {0};
         int64_t sums_int64[MAX_AGGREGATES] = {0};
         double sums_float64[MAX_AGGREGATES / 2] = {0.0};
         bool has_float_value[MAX_AGGREGATES] = {false};
@@ -827,58 +826,6 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                     }
                 }
             }
-        }
-        input_batch_->clear();
-    }
-
-    void process_input_batch_hash(VectorBatch& batch) {
-        // Build key using length-prefixed, type-tagged encoding
-        for (size_t r = 0; r < batch.row_count(); ++r) {
-            std::string key;
-            for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
-                size_t col_idx = group_by_col_indices_[i];
-                if (col_idx == static_cast<size_t>(-1)) {
-                    // Column not found in schema - fail fast
-                    set_error("GROUP BY: column not found in input schema: " +
-                              group_by_[i]->to_string());
-                    return;
-                }
-
-                const auto& val = batch.get_column(col_idx).get(r);
-                if (val.is_null()) {
-                    // Use a dedicated NULL marker for null values
-                    key.append("\1NULL\0", 6);
-                } else {
-                    // Length-prefixed value: marker + length (4 bytes) + data
-                    std::string val_str = val.to_string();
-                    key.push_back('\0');  // non-NULL marker
-                    uint32_t len = static_cast<uint32_t>(val_str.size());
-                    key.append(reinterpret_cast<const char*>(&len), 4);
-                    key.append(val_str);
-                }
-            }
-
-            // Get or create group state
-            auto it = groups_.find(key);
-            if (it == groups_.end()) {
-                // Store group key values for output
-                std::vector<common::Value> key_vals;
-                for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
-                    size_t col_idx = group_by_col_indices_[i];
-                    if (col_idx == static_cast<size_t>(-1)) {
-                        key_vals.push_back(common::Value::make_null());
-                    } else {
-                        key_vals.push_back(batch.get_column(col_idx).get(r));
-                    }
-                }
-                auto result = groups_.emplace(key, VectorizedGroupState(aggregates_.size()));
-                it = result.first;
-                group_keys_.push_back(key);
-                group_values_.push_back(std::move(key_vals));
-            }
-
-            // Update accumulators for this row
-            update_accumulators(it->second, batch, r);
         }
         input_batch_->clear();
     }
@@ -1385,7 +1332,6 @@ class VectorizedHashJoinOperator : public VectorizedOperator {
                         if (out_batch.row_count() >= BATCH_SIZE) {
                             // Batch full - save state and return
                             resuming_bucket_scan_ = true;
-                            resumed_bucket_idx_ = resumed_bucket_idx_;
                             resumed_entry_idx_ = i;
                             resumed_key_val_ = key_val;
                             return true;  // Caller must consume batch before continuing
