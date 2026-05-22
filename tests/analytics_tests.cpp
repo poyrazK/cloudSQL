@@ -99,7 +99,7 @@ TEST(AnalyticsTests, VectorizedExecutionPipeline) {
     ASSERT_TRUE(table->append_batch(*input_batch));
 
     // 2. Build Pipeline: Scan -> Filter(id > 500) -> Project(val)
-    auto scan = std::make_unique<VectorizedSeqScanOperator>("pipeline_test", table);
+    auto scan = std::make_unique<VectorizedSeqScanOperator>("pipeline_test", table, nullptr);
 
     // Filter condition: id > 500
     auto col_expr = std::make_unique<ColumnExpr>("id");
@@ -158,7 +158,7 @@ TEST(AnalyticsTests, VectorizedAggregation) {
     ASSERT_TRUE(table->append_batch(*input_batch));
 
     // 2. Build Agg Pipeline: Scan -> Aggregate(COUNT(*), SUM(val), SUM(fval))
-    auto scan = std::make_unique<VectorizedSeqScanOperator>("agg_test", table);
+    auto scan = std::make_unique<VectorizedSeqScanOperator>("agg_test", table, nullptr);
 
     Schema out_schema;
     out_schema.add_column("count", common::ValueType::TYPE_INT64);
@@ -200,7 +200,7 @@ TEST(AnalyticsTests, AggregateNullHandling) {
     ASSERT_TRUE(table->append_batch(*input_batch));
 
     // 2. Build Agg Pipeline: Scan -> Aggregate(COUNT(*), SUM(val))
-    auto scan = std::make_unique<VectorizedSeqScanOperator>("null_agg_test", table);
+    auto scan = std::make_unique<VectorizedSeqScanOperator>("null_agg_test", table, nullptr);
 
     Schema out_schema;
     out_schema.add_column("count", common::ValueType::TYPE_INT64);
