@@ -646,8 +646,33 @@ bool AggregateOperator::open() {
     }
 
     groups_.clear();
+
+    // Sort group keys lexicographically for deterministic GROUP BY ordering
+    std::vector<std::string> sorted_keys;
+    sorted_keys.reserve(groups_map.size());
     for (auto& pair : groups_map) {
-        auto& state = pair.second;
+        sorted_keys.push_back(pair.first);
+    }
+    std::sort(sorted_keys.begin(), sorted_keys.end(),
+              [&groups_map](const std::string& a, const std::string& b) {
+                  const auto& a_vals = groups_map[a].group_values;
+                  const auto& b_vals = groups_map[b].group_values;
+                  if (a_vals.size() != b_vals.size()) {
+                      return a_vals.size() < b_vals.size();
+                  }
+                  for (size_t i = 0; i < a_vals.size(); ++i) {
+                      if (a_vals[i] < b_vals[i]) {
+                          return true;
+                      }
+                      if (b_vals[i] < a_vals[i]) {
+                          return false;
+                      }
+                  }
+                  return false;
+              });
+
+    for (auto& key : sorted_keys) {
+        auto& state = groups_map[key];
         std::vector<common::Value> row = std::move(state.group_values);
         for (size_t i = 0; i < aggregates_.size(); ++i) {
             switch (aggregates_[i].type) {
