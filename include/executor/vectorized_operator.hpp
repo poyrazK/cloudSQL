@@ -720,6 +720,17 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                           [this](size_t a, size_t b) {
                               return hash_group_keys_[a] < hash_group_keys_[b];
                           });
+                fprintf(stderr, "DEBUG: VectorizedGroupBy sorted %zu groups\n", hash_group_keys_.size());
+                for (size_t i = 0; i < sorted_indices_.size() && i < 5; ++i) {
+                    fprintf(stderr, "DEBUG: sorted_indices_[%zu]=%zu key=", i, sorted_indices_[i]);
+                    const auto& key = hash_group_keys_[sorted_indices_[i]];
+                    for (const auto& k : key) {
+                        fprintf(stderr, "%s ", k.to_string().c_str());
+                    }
+                    fprintf(stderr, "\n");
+                }
+            } else {
+                fprintf(stderr, "DEBUG: VectorizedGroupBy hash_group_keys_ is empty\n");
             }
         }
 
