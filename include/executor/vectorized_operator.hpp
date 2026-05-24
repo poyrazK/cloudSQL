@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -655,6 +656,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     // Open-addressing hash aggregation (for general GROUP BY)
     OpenAddressHashAgg hash_agg_;
     std::vector<std::vector<common::Value>> hash_group_keys_;  // Ordered group keys for iteration
+    std::vector<size_t> sorted_indices_;  // Indices sorted by group key for lexicographic output
 
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
@@ -704,6 +706,16 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 process_input_batch(*input_batch_);
             }
             process_phase_ = ProcessPhase::Output;
+
+            // Sort indices by group key values for lexicographic GROUP BY ordering
+            if (!hash_group_keys_.empty()) {
+                sorted_indices_.resize(hash_group_keys_.size());
+                std::iota(sorted_indices_.begin(), sorted_indices_.end(), 0);
+                std::sort(sorted_indices_.begin(), sorted_indices_.end(),
+                          [this](size_t a, size_t b) {
+                              return hash_group_keys_[a] < hash_group_keys_[b];
+                          });
+            }
         }
 
         // Phase 2: Produce grouped output batches
@@ -968,7 +980,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 
     bool produce_output_batch_open_addressing(VectorBatch& out_batch) {
-        if (current_group_idx_ >= hash_agg_.group_count()) {
+        if (current_group_idx_ >= hash_group_keys_.size()) {
             return false;  // EOF
         }
 
@@ -981,11 +993,12 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         size_t output_count = 0;
 
         while (current_group_idx_ < hash_group_keys_.size() && output_count < BATCH_SIZE) {
-            size_t slot_idx = hash_agg_.valid_slots()[current_group_idx_];
+            size_t sorted_idx = sorted_indices_[current_group_idx_];
+            size_t slot_idx = hash_agg_.valid_slots()[sorted_idx];
             const auto& bucket = hash_agg_.slot(slot_idx);
 
-            // Append group key columns
-            const auto& key_vals = hash_group_keys_[current_group_idx_];
+            // Append group key columns using sorted order
+            const auto& key_vals = hash_group_keys_[sorted_idx];
             for (size_t i = 0; i < key_vals.size(); ++i) {
                 out_batch.get_column(i).append(key_vals[i]);
             }
