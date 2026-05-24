@@ -451,10 +451,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                 }
 
                 // Use Vectorized for large scans (>10k rows — heuristic crossover point)
-                // Force vectorized for GROUP BY when ANALYZE hasn't been run (num_rows=0)
-                // to benefit from DirectIndexAgg optimization
-                use_vectorized = (estimated_rows > kVectorizedRowThreshold) ||
-                                 (!stmt.group_by().empty() && table_meta->num_rows == 0);
+                use_vectorized = estimated_rows > kVectorizedRowThreshold;
             }
         }
     }
