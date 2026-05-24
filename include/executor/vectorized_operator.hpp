@@ -6,6 +6,7 @@
 #ifndef CLOUDSQL_EXECUTOR_VECTORIZED_OPERATOR_HPP
 #define CLOUDSQL_EXECUTOR_VECTORIZED_OPERATOR_HPP
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <numeric>
