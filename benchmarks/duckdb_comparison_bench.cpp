@@ -54,6 +54,7 @@ struct CloudSQLContext {
         txn_manager = std::make_unique<transaction::TransactionManager>(*lock_manager, *catalog, *bpm);
         executor = std::make_unique<QueryExecutor>(*catalog, *bpm, *lock_manager, *txn_manager);
         executor->set_local_only(true);
+        executor->set_storage_manager(storage.get());  // Enable use_vectorized for large scans
 
         // Create lineitem table (TPC-H schema, simplified)
         CreateTableStatement create_stmt;

@@ -114,22 +114,21 @@ TEST_F(VectorizedSeqScanTests, SequentialCallsUntilEOF) {
     ASSERT_TRUE(table.append_batch(*batch));
 
     auto table_ptr = std::make_shared<ColumnarTable>(table);
-    VectorizedSeqScanOperator scan("sequential_scan", table_ptr);
+    VectorizedSeqScanOperator scan("sequential_scan", table_ptr, nullptr);
 
     auto result = VectorBatch::create(schema);
     int64_t expected = 0;
     int batch_count = 0;
     while (scan.next_batch(*result)) {
         ++batch_count;
-        // Batches 1-3 are full (1024), batch 4 has remainder (428)
-        size_t expected_batch_size = (batch_count < 4) ? 1024u : 428u;
-        EXPECT_EQ(result->row_count(), expected_batch_size);
+        // batch_size_ is 4096, so 3500 rows fit in 1 batch
+        EXPECT_EQ(result->row_count(), 3500u);
         for (size_t i = 0; i < result->row_count(); ++i) {
             EXPECT_EQ(result->get_column(0).get(i).as_int64(), expected++);
         }
         result->clear();
     }
-    EXPECT_EQ(batch_count, 4);
+    EXPECT_EQ(batch_count, 1);
     EXPECT_EQ(expected, 3500);
 }
 

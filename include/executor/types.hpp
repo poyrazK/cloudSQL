@@ -243,6 +243,13 @@ class ColumnVector {
         size_ = 0;
         null_bitmap_.clear();
     }
+
+    /**
+     * @brief Steals data from another column vector by swapping internal buffers.
+     * After steal(), 'other' is emptied and 'this' holds the original data from 'other'.
+     * Throws std::runtime_error if types are incompatible.
+     */
+    virtual void steal(ColumnVector&& other) = 0;
 };
 
 /**
@@ -328,6 +335,14 @@ class NumericVector : public ColumnVector {
         ColumnVector::clear();
         data_.clear();
     }
+
+    void steal(ColumnVector&& other) override {
+        auto* other_num = dynamic_cast<NumericVector<T>*>(&other);
+        if (!other_num) throw std::runtime_error("NumericVector::steal: type mismatch");
+        data_.swap(other_num->data_);
+        null_bitmap_.swap(other_num->null_bitmap_);
+        std::swap(size_, other_num->size_);
+    }
 };
 
 /**
@@ -391,6 +406,14 @@ class StringVector : public ColumnVector {
     void clear() override {
         ColumnVector::clear();
         data_.clear();
+    }
+
+    void steal(ColumnVector&& other) override {
+        auto* other_str = dynamic_cast<StringVector*>(&other);
+        if (!other_str) throw std::runtime_error("StringVector::steal: type mismatch");
+        data_.swap(other_str->data_);
+        null_bitmap_.swap(other_str->null_bitmap_);
+        std::swap(size_, other_str->size_);
     }
 };
 

@@ -407,7 +407,8 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
 
     // Cost-based Volcano/Vectorized chooser using row estimates
     bool use_vectorized = false;
-    if (parallel_ && storage_manager_ && !has_sort_or_limit) {
+    uint64_t estimated_rows = 0;
+    if (storage_manager_ && !has_sort_or_limit) {
         // Extract table name from FROM clause (only for simple column refs)
         // Fall through to Volcano for JOINs, subqueries, and aliased tables
         const auto* from_expr = stmt.from();
@@ -418,7 +419,7 @@ QueryResult QueryExecutor::execute_select(const parser::SelectStatement& stmt,
                 const auto* table_meta = table_meta_opt.value();
                 // Start with scan estimate as baseline; filter selectivity will override if
                 // eligible
-                uint64_t estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
+                estimated_rows = optimizer::RowEstimator::estimate_scan_rows(*table_meta);
 
                 // Use filter selectivity when WHERE clause is simple and stats available
                 if (stmt.where() && stmt.where()->type() == parser::ExprType::Binary) {
@@ -1508,8 +1509,9 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         return nullptr;  // Table not found or not columnar
     }
 
+    auto thread_pool = std::make_shared<executor::ThreadPool>(std::thread::hardware_concurrency());
     std::unique_ptr<VectorizedOperator> current_root =
-        std::make_unique<VectorizedSeqScanOperator>(base_table_name, col_table);
+        std::make_unique<VectorizedSeqScanOperator>(base_table_name, col_table, thread_pool);
 
     // Track estimated output rows for join reordering decisions
     uint64_t current_est_rows = optimizer::RowEstimator::estimate_scan_rows(*base_table_meta);
@@ -1694,7 +1696,18 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                     info.type = AggregateType::Max;
                 else
                     info.type = AggregateType::Avg;
-                info.input_col_idx = -1;  // default
+                // Resolve input column index from aggregate function arguments
+                info.input_col_idx = -1;  // default: COUNT(*)
+                if (!func->args().empty()) {
+                    const auto& arg = func->args()[0];
+                    if (arg->type() == parser::ExprType::Column) {
+                        const auto* col = dynamic_cast<const parser::ColumnExpr*>(arg.get());
+                        if (col != nullptr) {
+                            info.input_col_idx = static_cast<int>(
+                                current_root->output_schema().find_column(col->name()));
+                        }
+                    }
+                }
                 agg_infos.push_back(info);
             }
         }
