@@ -658,6 +658,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     OpenAddressHashAgg hash_agg_;
     std::vector<std::vector<common::Value>> hash_group_keys_;  // Ordered group keys for iteration
     std::vector<size_t> sorted_indices_;  // Indices sorted by group key for lexicographic output
+    // Note: sorted_indices_ is populated after input phase to ensure correct GROUP BY ordering
 
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
