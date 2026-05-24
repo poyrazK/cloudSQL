@@ -393,7 +393,7 @@ class OpenAddressHashAgg {
         int64_t key_int64 = 0;  // Direct storage for int64 keys
         int64_t counts[MAX_AGGREGATES] = {0};
         int64_t sums_int64[MAX_AGGREGATES] = {0};
-        double sums_float64[MAX_AGGREGATES / 2] = {0.0};
+        double sums_float64[MAX_AGGREGATES] = {0.0};
         bool has_float_value[MAX_AGGREGATES] = {false};
         int64_t mins[MAX_AGGREGATES] = {0};
         int64_t maxes[MAX_AGGREGATES] = {0};
@@ -546,8 +546,11 @@ class DirectIndexAgg {
         int64_t key2 = 0;
         int64_t counts[MAX_AGGREGATES] = {0};
         int64_t sums_int64[MAX_AGGREGATES] = {0};
-        double sums_float64[MAX_AGGREGATES / 2] = {0.0};
+        double sums_float64[MAX_AGGREGATES] = {0.0};
         bool has_float_value[MAX_AGGREGATES] = {false};
+        int64_t mins[MAX_AGGREGATES] = {0};
+        int64_t maxes[MAX_AGGREGATES] = {0};
+        bool has_mins[MAX_AGGREGATES] = {false};
     };
 
     std::vector<GroupSlot> slots_;
@@ -768,6 +771,20 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                             slot.has_float_value[i] = true;
                         }
                     }
+                } else if ((agg.type == AggregateType::Min || agg.type == AggregateType::Max) &&
+                           agg.input_col_idx >= 0) {
+                    const auto& col = batch.get_column(agg.input_col_idx);
+                    if (!col.is_null(r)) {
+                        auto val = col.get(r).to_int64();
+                        if (!slot.has_mins[i]) {
+                            slot.mins[i] = val;
+                            slot.maxes[i] = val;
+                            slot.has_mins[i] = true;
+                        } else {
+                            slot.mins[i] = std::min(slot.mins[i], val);
+                            slot.maxes[i] = std::max(slot.maxes[i], val);
+                        }
+                    }
                 }
             }
         }
@@ -964,6 +981,22 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                                           static_cast<double>(slot.counts[i]);
                             out_batch.get_column(col_idx).append(
                                 common::Value::make_float64(avg_val));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
+                        break;
+                    case AggregateType::Min:
+                        if (slot.has_mins[i]) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(slot.mins[i]));
+                        } else {
+                            out_batch.get_column(col_idx).append(common::Value::make_null());
+                        }
+                        break;
+                    case AggregateType::Max:
+                        if (slot.has_mins[i]) {
+                            out_batch.get_column(col_idx).append(
+                                common::Value::make_int64(slot.maxes[i]));
                         } else {
                             out_batch.get_column(col_idx).append(common::Value::make_null());
                         }

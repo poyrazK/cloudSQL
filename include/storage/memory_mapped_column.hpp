@@ -34,6 +34,41 @@ class MemoryMappedColumn {
    public:
     ~MemoryMappedColumn() { unmap(); }
 
+    // Non-copyable
+    MemoryMappedColumn(const MemoryMappedColumn&) = delete;
+    MemoryMappedColumn& operator=(const MemoryMappedColumn&) = delete;
+
+    // Moveable
+    MemoryMappedColumn(MemoryMappedColumn&& other) noexcept
+        : data_region_(other.data_region_),
+          null_region_(other.null_region_),
+          element_size_(other.element_size_),
+          is_fixed_width_(other.is_fixed_width_),
+          row_count_(other.row_count_) {
+        other.data_region_ = {nullptr, 0, -1};
+        other.null_region_ = {nullptr, 0, -1};
+        other.element_size_ = 0;
+        other.is_fixed_width_ = false;
+        other.row_count_ = 0;
+    }
+
+    MemoryMappedColumn& operator=(MemoryMappedColumn&& other) noexcept {
+        if (this != &other) {
+            unmap();
+            data_region_ = other.data_region_;
+            null_region_ = other.null_region_;
+            element_size_ = other.element_size_;
+            is_fixed_width_ = other.is_fixed_width_;
+            row_count_ = other.row_count_;
+            other.data_region_ = {nullptr, 0, -1};
+            other.null_region_ = {nullptr, 0, -1};
+            other.element_size_ = 0;
+            other.is_fixed_width_ = false;
+            other.row_count_ = 0;
+        }
+        return *this;
+    }
+
     // Map a column's data and nulls files. Returns true on success.
     bool map(const std::string& data_path, const std::string& null_path, size_t element_size,
              size_t row_count);
