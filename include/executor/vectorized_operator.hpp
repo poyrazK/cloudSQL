@@ -715,6 +715,15 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     std::vector<size_t> sorted_indices_;  // Indices sorted by group key for lexicographic output
     // Note: sorted_indices_ is populated after input phase to ensure correct GROUP BY ordering
 
+    // Batch encoding scratch space (Phase 1 optimization)
+    static constexpr size_t MAX_BATCH_SIZE = 4096;
+    static constexpr size_t MAX_KEY_LEN = 256;
+    std::vector<uint8_t> batch_key_buffer_;   // batch_size * MAX_KEY_LEN
+    std::vector<uint64_t> batch_hashes_;      // batch_size
+    std::vector<int64_t> batch_int64_keys_;   // batch_size (for int64-only path)
+    std::vector<size_t> batch_key_lens_;      // batch_size
+    bool all_int64_keys_ = false;             // True when all GROUP BY cols are INT64
+
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
                               std::vector<std::unique_ptr<parser::Expression>> group_by,
@@ -742,11 +751,18 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                           col_type == common::ValueType::TYPE_INT8);
         }
         is_direct_indexable_ = (group_by_.size() == 1 && is_int_key);
+        all_int64_keys_ = is_direct_indexable_;  // Can use fast int64 path
         if (is_direct_indexable_) {
             agg_.init(65536, aggregates_.size(), group_by_.size());
         } else {
             hash_agg_.init(65536, aggregates_.size());
         }
+
+        // Initialize batch encoding scratch space
+        batch_key_buffer_.resize(MAX_BATCH_SIZE * MAX_KEY_LEN);
+        batch_hashes_.resize(MAX_BATCH_SIZE);
+        batch_int64_keys_.resize(MAX_BATCH_SIZE);
+        batch_key_lens_.resize(MAX_BATCH_SIZE);
 
         // Create schema for group key evaluation
         Schema key_schema;
@@ -844,48 +860,75 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 
     void process_input_batch_open_addressing(VectorBatch& batch) {
-        // Fast path: open-addressing hash with binary key encoding
-        for (size_t r = 0; r < batch.row_count(); ++r) {
-            // Encode key: [type tag][len][data]
-            uint8_t key_buf[64];
-            uint8_t* key_ptr = key_buf;
-            std::vector<uint8_t> heap_key;
-            size_t key_len = 0;
+        // Phase 1: Batch key encoding & hash precomputation
+        size_t n = batch.row_count();
 
-            for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
-                size_t col_idx = group_by_col_indices_[i];
-                if (col_idx == static_cast<size_t>(-1)) {
-                    set_error("GROUP BY: column not found in input schema: " +
-                              group_by_[i]->to_string());
-                    return;
-                }
-
-                const auto& val = batch.get_column(col_idx).get(r);
-                if (val.is_null()) {
-                    key_ptr[key_len++] = 0x01;  // NULL tag
-                } else if (val.type() == common::ValueType::TYPE_INT64) {
-                    key_ptr[key_len++] = 0x02;  // INT64 tag
-                    int64_t v = val.to_int64();
-                    std::memcpy(&key_ptr[key_len], &v, sizeof(int64_t));
-                    key_len += sizeof(int64_t);
+        if (all_int64_keys_) {
+            // Fast path: extract int64 keys directly
+            const auto& col = batch.get_column(group_by_col_indices_[0]);
+            for (size_t r = 0; r < n; ++r) {
+                if (col.is_null(r)) {
+                    batch_int64_keys_[r] = 0;  // NULL represented as 0
                 } else {
-                    key_ptr[key_len++] = 0x04;  // STRING tag
-                    std::string val_str = val.as_text();
-                    uint32_t len = static_cast<uint32_t>(val_str.size());
-                    if (key_len + 4 + val_str.size() > 64) {
-                        heap_key.resize(key_len + 4 + val_str.size());
-                        std::memcpy(heap_key.data(), key_ptr, key_len);
-                        key_ptr = heap_key.data();
-                    }
-                    std::memcpy(&key_ptr[key_len], &len, 4);
-                    key_len += 4;
-                    std::memcpy(&key_ptr[key_len], val_str.data(), val_str.size());
-                    key_len += val_str.size();
+                    batch_int64_keys_[r] = col.get(r).to_int64();
                 }
             }
+            // Batch compute hashes
+            for (size_t i = 0; i < n; ++i) {
+                batch_hashes_[i] = OpenAddressHashAgg::hash_int64(batch_int64_keys_[i]);
+            }
+        } else {
+            // General path: encode all keys into batch_key_buffer_
+            for (size_t r = 0; r < n; ++r) {
+                size_t key_offset = r * MAX_KEY_LEN;
+                size_t key_len = 0;
+                uint8_t* key_ptr = &batch_key_buffer_[key_offset];
 
-            uint64_t hash = OpenAddressHashAgg::hash_bytes(key_ptr, key_len);
-            auto& bucket = hash_agg_.find_or_insert(key_ptr, key_len, hash);
+                for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
+                    size_t col_idx = group_by_col_indices_[i];
+                    if (col_idx == static_cast<size_t>(-1)) {
+                        set_error("GROUP BY: column not found in input schema: " +
+                                  group_by_[i]->to_string());
+                        return;
+                    }
+
+                    const auto& val = batch.get_column(col_idx).get(r);
+                    if (val.is_null()) {
+                        key_ptr[key_len++] = 0x01;  // NULL tag
+                    } else if (val.type() == common::ValueType::TYPE_INT64) {
+                        key_ptr[key_len++] = 0x02;  // INT64 tag
+                        int64_t v = val.to_int64();
+                        std::memcpy(&key_ptr[key_len], &v, sizeof(int64_t));
+                        key_len += sizeof(int64_t);
+                    } else {
+                        key_ptr[key_len++] = 0x04;  // STRING tag
+                        std::string val_str = val.as_text();
+                        uint32_t len = static_cast<uint32_t>(val_str.size());
+                        if (key_offset + key_len + 4 + val_str.size() > MAX_BATCH_SIZE * MAX_KEY_LEN) {
+                            // Key too large, skip
+                            key_ptr[key_len++] = 0x01;  // Fallback to NULL
+                        } else {
+                            std::memcpy(&key_ptr[key_len], &len, 4);
+                            key_len += 4;
+                            std::memcpy(&key_ptr[key_len], val_str.data(), val_str.size());
+                            key_len += val_str.size();
+                        }
+                    }
+                }
+                batch_key_lens_[r] = key_len;
+                // Compute hash for this key
+                batch_hashes_[r] = OpenAddressHashAgg::hash_bytes(key_ptr, key_len);
+            }
+        }
+
+        // Phase 2: Row-by-row hash table lookup and accumulator updates
+        // (Hash computation done in batch above; lookup is fast)
+        for (size_t r = 0; r < n; ++r) {
+            auto& bucket =
+                all_int64_keys_
+                    ? hash_agg_.find_or_insert_int64(batch_int64_keys_[r], batch_hashes_[r])
+                    : hash_agg_.find_or_insert(&batch_key_buffer_[r * MAX_KEY_LEN],
+                                               batch_key_lens_[r], batch_hashes_[r]);
 
             // Store key for output if first time
             if (bucket.is_new) {
