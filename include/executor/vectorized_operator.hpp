@@ -441,8 +441,11 @@ class OpenAddressHashAgg {
         num_occupied_ = 0;
         valid_indices_.clear();
 
+        // Pre-allocate to avoid grow(): capacity = next power of 2 above (capacity_hint / kLoadFactor)
+        // This ensures we never grow for capacity_hint rows at 0.5 load factor
+        size_t min_cap = static_cast<size_t>(capacity_hint / kLoadFactor);
         size_t cap = kInitialCapacity;
-        while (cap < capacity_hint) cap *= 2;
+        while (cap < min_cap) cap *= 2;
         buckets_.assign(cap, HashBucket());
         mask_ = cap - 1;
     }
