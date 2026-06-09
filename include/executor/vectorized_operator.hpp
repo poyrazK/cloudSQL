@@ -422,6 +422,20 @@ class OpenAddressHashAgg {
         return hash;
     }
 
+    // Fast path for int64 keys: hash of [0x02][8-byte-int64] without buffer construction
+    static uint64_t hash_int64(int64_t key) {
+        uint64_t h = 14695981039346656037ull;
+        h ^= 0x02;  // type tag for INT64
+        h *= 1099511628211ull;
+        // XOR each byte of key in big-endian order
+        uint64_t v = static_cast<uint64_t>(key);
+        for (int i = 7; i >= 0; --i) {
+            h ^= (v >> (i * 8)) & 0xFF;
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+
     void init(size_t capacity_hint, size_t max_aggregates) {
         max_aggregates_ = max_aggregates;
         num_occupied_ = 0;
@@ -487,7 +501,7 @@ class OpenAddressHashAgg {
                 valid_indices_.push_back(idx);
                 return bucket;
             }
-            if (bucket.key_type == 0x02 && bucket.key_int64 == key) {
+            if (bucket.key_hash == hash && bucket.key_type == 0x02 && bucket.key_int64 == key) {
                 bucket.is_new = false;
                 return bucket;
             }
@@ -520,6 +534,44 @@ class OpenAddressHashAgg {
     const std::vector<size_t>& valid_slots() const { return valid_indices_; }
     HashBucket& slot(size_t idx) { return buckets_[idx]; }
     const HashBucket& slot(size_t idx) const { return buckets_[idx]; }
+
+    /**
+     * @brief Insert a batch of int64 keys with precomputed hashes.
+     * @param keys Array of int64 keys (n keys)
+     * @param hashes Array of precomputed FNV-1a hashes (must be precomputed!)
+     * @param n Number of keys
+     * @return Number of new groups inserted (keys not found before)
+     */
+    size_t insert_batch_int64(const int64_t* keys, const uint64_t* hashes, size_t n) {
+        size_t new_groups = 0;
+        for (size_t i = 0; i < n; ++i) {
+            auto& bucket = find_or_insert_int64(keys[i], hashes[i]);
+            if (bucket.is_new) {
+                new_groups++;
+            }
+        }
+        return new_groups;
+    }
+
+    /**
+     * @brief Insert a batch of string keys with precomputed hashes.
+     * @param keys Array of key byte arrays
+     * @param key_lens Array of key lengths
+     * @param hashes Array of precomputed hashes
+     * @param n Number of keys
+     * @return Number of new groups inserted
+     */
+    size_t insert_batch_bytes(const uint8_t** keys, const size_t* key_lens,
+                               const uint64_t* hashes, size_t n) {
+        size_t new_groups = 0;
+        for (size_t i = 0; i < n; ++i) {
+            auto& bucket = find_or_insert(keys[i], key_lens[i], hashes[i]);
+            if (bucket.is_new) {
+                new_groups++;
+            }
+        }
+        return new_groups;
+    }
 };
 
 /**
