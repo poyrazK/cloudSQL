@@ -561,8 +561,8 @@ class OpenAddressHashAgg {
      * @param n Number of keys
      * @return Number of new groups inserted
      */
-    size_t insert_batch_bytes(const uint8_t** keys, const size_t* key_lens,
-                               const uint64_t* hashes, size_t n) {
+    size_t insert_batch_bytes(const uint8_t** keys, const size_t* key_lens, const uint64_t* hashes,
+                              size_t n) {
         size_t new_groups = 0;
         for (size_t i = 0; i < n; ++i) {
             auto& bucket = find_or_insert(keys[i], key_lens[i], hashes[i]);
