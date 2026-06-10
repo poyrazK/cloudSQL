@@ -564,10 +564,11 @@ class OpenAddressHashAgg {
 
         for (size_t i = 0; i < old_buckets.size(); ++i) {
             if (old_buckets[i].occupied) {
-                auto& dst = (old_buckets[i].key_type == 0x02)
-                    ? find_or_insert_int64(old_buckets[i].key_int64, old_buckets[i].key_hash)
-                    : find_or_insert(old_buckets[i].key_data, old_buckets[i].key_len,
-                                   old_buckets[i].key_hash);
+                auto& dst =
+                    (old_buckets[i].key_type == 0x02)
+                        ? find_or_insert_int64(old_buckets[i].key_int64, old_buckets[i].key_hash)
+                        : find_or_insert(old_buckets[i].key_data, old_buckets[i].key_len,
+                                         old_buckets[i].key_hash);
                 // Copy accumulators from old bucket to new bucket
                 for (size_t j = 0; j < max_aggregates_; ++j) {
                     dst.counts[j] = old_buckets[i].counts[j];
@@ -1206,12 +1207,13 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         int64_t val;
                         std::memcpy(&val, &bucket.key_data[key_offset], 8);
                         out_batch.get_column(c).append(common::Value::make_int64(val));
-                        key_offset += 9;  // 1 byte tag + 8 bytes
+                        key_offset += 9;            // 1 byte tag + 8 bytes
                     } else if (type_tag == 0x04) {  // STRING
                         uint32_t str_len;
                         std::memcpy(&str_len, &bucket.key_data[key_offset], 4);
                         key_offset += 4;
-                        std::string val(reinterpret_cast<const char*>(&bucket.key_data[key_offset]), str_len);
+                        std::string val(reinterpret_cast<const char*>(&bucket.key_data[key_offset]),
+                                        str_len);
                         out_batch.get_column(c).append(common::Value::make_text(val));
                         key_offset += str_len;
                     } else {
