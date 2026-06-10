@@ -539,41 +539,62 @@ class OpenAddressHashAgg {
     const HashBucket& slot(size_t idx) const { return buckets_[idx]; }
 
     /**
-     * @brief Insert a batch of int64 keys with precomputed hashes.
-     * @param keys Array of int64 keys (n keys)
-     * @param hashes Array of precomputed FNV-1a hashes (must be precomputed!)
-     * @param n Number of keys
-     * @return Number of new groups inserted (keys not found before)
+     * @brief Merge all entries from another hash table into this one.
+     * @param other Source hash table to merge from
+     *
+     * For existing keys: merges accumulators (sums, counts, mins, maxes)
+     * For new keys: copies entire bucket state
      */
-    size_t insert_batch_int64(const int64_t* keys, const uint64_t* hashes, size_t n) {
-        size_t new_groups = 0;
-        for (size_t i = 0; i < n; ++i) {
-            auto& bucket = find_or_insert_int64(keys[i], hashes[i]);
-            if (bucket.is_new) {
-                new_groups++;
-            }
-        }
-        return new_groups;
-    }
+    void merge_from(const OpenAddressHashAgg& other) {
+        for (size_t src_idx : other.valid_slots()) {
+            const auto& src = other.slot(src_idx);
 
-    /**
-     * @brief Insert a batch of string keys with precomputed hashes.
-     * @param keys Array of key byte arrays
-     * @param key_lens Array of key lengths
-     * @param hashes Array of precomputed hashes
-     * @param n Number of keys
-     * @return Number of new groups inserted
-     */
-    size_t insert_batch_bytes(const uint8_t** keys, const size_t* key_lens,
-                               const uint64_t* hashes, size_t n) {
-        size_t new_groups = 0;
-        for (size_t i = 0; i < n; ++i) {
-            auto& bucket = find_or_insert(keys[i], key_lens[i], hashes[i]);
-            if (bucket.is_new) {
-                new_groups++;
+            // Find or create the destination bucket
+            auto& dst = (src.key_type == 0x02)
+                ? find_or_insert_int64(src.key_int64, src.key_hash)
+                : find_or_insert(src.key_data, src.key_len, src.key_hash);
+
+            if (!dst.is_new) {
+                // Key exists - merge accumulators
+                for (size_t i = 0; i < max_aggregates_; ++i) {
+                    dst.counts[i] += src.counts[i];
+                    dst.sums_int64[i] += src.sums_int64[i];
+                    dst.sums_float64[i] += src.sums_float64[i];
+                    dst.has_float_value[i] = dst.has_float_value[i] || src.has_float_value[i];
+                    if (src.has_mins[i]) {
+                        if (!dst.has_mins[i]) {
+                            dst.mins[i] = src.mins[i];
+                            dst.maxes[i] = src.maxes[i];
+                            dst.has_mins[i] = true;
+                        } else {
+                            dst.mins[i] = std::min(dst.mins[i], src.mins[i]);
+                            dst.maxes[i] = std::max(dst.maxes[i], src.maxes[i]);
+                        }
+                    }
+                }
+            } else {
+                // New key - copy entire bucket state
+                // Note: find_or_insert set is_new=true and added to valid_indices_
+                // We need to copy key data since find_or_insert left it empty
+                dst.key_hash = src.key_hash;
+                dst.key_int64 = src.key_int64;
+                dst.key_type = src.key_type;
+                dst.key_len = src.key_len;
+                std::memcpy(dst.key_data, src.key_data, src.key_len);
+
+                // Copy accumulators
+                for (size_t i = 0; i < max_aggregates_; ++i) {
+                    dst.counts[i] = src.counts[i];
+                    dst.sums_int64[i] = src.sums_int64[i];
+                    dst.sums_float64[i] = src.sums_float64[i];
+                    dst.has_float_value[i] = src.has_float_value[i];
+                    dst.mins[i] = src.mins[i];
+                    dst.maxes[i] = src.maxes[i];
+                    dst.has_mins[i] = src.has_mins[i];
+                }
+                // is_new remains true so output phase outputs this group
             }
         }
-        return new_groups;
     }
 };
 
@@ -775,7 +796,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             thread_hash_aggs_.resize(num_threads_);
             thread_group_keys_.resize(num_threads_);
             for (size_t t = 0; t < num_threads_; ++t) {
-                thread_hash_aggs_[t].init(65536 / num_threads_, aggregates_.size());
+                thread_hash_aggs_[t].init(std::max(size_t(8192), 65536 / num_threads_), aggregates_.size());
             }
         }
 
@@ -963,6 +984,15 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 }));
             }
             thread_pool_->wait();
+
+            // Merge thread results into main hash_agg_
+            for (size_t t = 0; t < num_threads_; ++t) {
+                hash_agg_.merge_from(thread_hash_aggs_[t]);
+                // Also merge group keys
+                hash_group_keys_.insert(hash_group_keys_.end(),
+                                        thread_group_keys_[t].begin(),
+                                        thread_group_keys_[t].end());
+            }
         } else {
             // Sequential path (original code)
             for (size_t r = 0; r < n; ++r) {
