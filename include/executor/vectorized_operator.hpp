@@ -550,6 +550,8 @@ class OpenAddressHashAgg {
             const auto& src = other.slot(src_idx);
 
             // Find or create the destination bucket
+            // key_type: 0x01=NULL, 0x02=INT64, 0x03=FLOAT64, 0x04=STRING
+            // Only 0x02 has direct int64 storage (key_int64); others use key_data
             auto& dst = (src.key_type == 0x02)
                 ? find_or_insert_int64(src.key_int64, src.key_hash)
                 : find_or_insert(src.key_data, src.key_len, src.key_hash);
@@ -573,16 +575,8 @@ class OpenAddressHashAgg {
                     }
                 }
             } else {
-                // New key - copy entire bucket state
-                // Note: find_or_insert set is_new=true and added to valid_indices_
-                // We need to copy key data since find_or_insert left it empty
-                dst.key_hash = src.key_hash;
-                dst.key_int64 = src.key_int64;
-                dst.key_type = src.key_type;
-                dst.key_len = src.key_len;
-                std::memcpy(dst.key_data, src.key_data, src.key_len);
-
-                // Copy accumulators
+                // New key - find_or_insert already populated key fields (key_hash, key_type, key_len, key_data)
+                // Just copy accumulators since find_or_insert initialized them to zero
                 for (size_t i = 0; i < max_aggregates_; ++i) {
                     dst.counts[i] = src.counts[i];
                     dst.sums_int64[i] = src.sums_int64[i];
@@ -974,14 +968,13 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             }
 
             // Submit parallel tasks for each thread
-            std::vector<std::future<void>> futures;
             for (size_t t = 0; t < num_threads_; ++t) {
                 auto& indices = thread_row_indices[t];
                 if (indices.empty()) continue;
 
-                futures.push_back(thread_pool_->submit([this, &batch, &indices, t]() {
+                thread_pool_->submit([this, &batch, &indices, t]() {
                     this->process_thread_batch(batch, indices, t);
-                }));
+                });
             }
             thread_pool_->wait();
 
@@ -1012,40 +1005,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 }
 
                 // Update accumulators directly in bucket
-                for (size_t i = 0; i < aggregates_.size(); ++i) {
-                    const auto& agg = aggregates_[i];
-                    if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
-                        bucket.counts[i]++;
-                    } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
-                               agg.input_col_idx >= 0) {
-                        const auto& col = batch.get_column(agg.input_col_idx);
-                        if (!col.is_null(r)) {
-                            bucket.counts[i]++;
-                            if (col.type() == common::ValueType::TYPE_INT64) {
-                                auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
-                                bucket.sums_int64[i] += num_col.raw_data()[r];
-                            } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
-                                auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
-                                bucket.sums_float64[i] += num_col.raw_data()[r];
-                                bucket.has_float_value[i] = true;
-                            }
-                        }
-                    } else if ((agg.type == AggregateType::Min || agg.type == AggregateType::Max) &&
-                               agg.input_col_idx >= 0) {
-                        const auto& col = batch.get_column(agg.input_col_idx);
-                        if (!col.is_null(r)) {
-                            auto val = col.get(r).to_int64();
-                            if (!bucket.has_mins[i]) {
-                                bucket.mins[i] = val;
-                                bucket.maxes[i] = val;
-                                bucket.has_mins[i] = true;
-                            } else {
-                                bucket.mins[i] = std::min(bucket.mins[i], val);
-                                bucket.maxes[i] = std::max(bucket.maxes[i], val);
-                            }
-                        }
-                    }
-                }
+                update_bucket_accumulators(bucket, batch, r);
             }
         }
         input_batch_->clear();
@@ -1074,37 +1034,43 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             }
 
             // Update accumulators directly in bucket
-            for (size_t i = 0; i < aggregates_.size(); ++i) {
-                const auto& agg = aggregates_[i];
-                if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+            update_bucket_accumulators(bucket, batch, r);
+        }
+    }
+
+    // Shared helper to update accumulators in a hash bucket from a batch row
+    template<typename Bucket>
+    void update_bucket_accumulators(Bucket& bucket, VectorBatch& batch, size_t row_idx) {
+        for (size_t i = 0; i < aggregates_.size(); ++i) {
+            const auto& agg = aggregates_[i];
+            if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+                bucket.counts[i]++;
+            } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
+                       agg.input_col_idx >= 0) {
+                const auto& col = batch.get_column(agg.input_col_idx);
+                if (!col.is_null(row_idx)) {
                     bucket.counts[i]++;
-                } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
-                           agg.input_col_idx >= 0) {
-                    const auto& col = batch.get_column(agg.input_col_idx);
-                    if (!col.is_null(r)) {
-                        bucket.counts[i]++;
-                        if (col.type() == common::ValueType::TYPE_INT64) {
-                            auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
-                            bucket.sums_int64[i] += num_col.raw_data()[r];
-                        } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
-                            auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
-                            bucket.sums_float64[i] += num_col.raw_data()[r];
-                            bucket.has_float_value[i] = true;
-                        }
+                    if (col.type() == common::ValueType::TYPE_INT64) {
+                        auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
+                        bucket.sums_int64[i] += num_col.raw_data()[row_idx];
+                    } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                        auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
+                        bucket.sums_float64[i] += num_col.raw_data()[row_idx];
+                        bucket.has_float_value[i] = true;
                     }
-                } else if ((agg.type == AggregateType::Min || agg.type == AggregateType::Max) &&
-                           agg.input_col_idx >= 0) {
-                    const auto& col = batch.get_column(agg.input_col_idx);
-                    if (!col.is_null(r)) {
-                        auto val = col.get(r).to_int64();
-                        if (!bucket.has_mins[i]) {
-                            bucket.mins[i] = val;
-                            bucket.maxes[i] = val;
-                            bucket.has_mins[i] = true;
-                        } else {
-                            bucket.mins[i] = std::min(bucket.mins[i], val);
-                            bucket.maxes[i] = std::max(bucket.maxes[i], val);
-                        }
+                }
+            } else if ((agg.type == AggregateType::Min || agg.type == AggregateType::Max) &&
+                       agg.input_col_idx >= 0) {
+                const auto& col = batch.get_column(agg.input_col_idx);
+                if (!col.is_null(row_idx)) {
+                    auto val = col.get(row_idx).to_int64();
+                    if (!bucket.has_mins[i]) {
+                        bucket.mins[i] = val;
+                        bucket.maxes[i] = val;
+                        bucket.has_mins[i] = true;
+                    } else {
+                        bucket.mins[i] = std::min(bucket.mins[i], val);
+                        bucket.maxes[i] = std::max(bucket.maxes[i], val);
                     }
                 }
             }
