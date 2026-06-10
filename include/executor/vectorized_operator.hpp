@@ -736,7 +736,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     // Batch encoding scratch space (Phase 1 optimization)
     static constexpr size_t MAX_BATCH_SIZE = 4096;
     static constexpr size_t MAX_KEY_LEN = 256;
-    std::vector<uint8_t> batch_key_buffer_;   // batch_size * MAX_KEY_LEN
+    std::vector<uint8_t> batch_key_buffer_;   // Heap-allocated scratch: MAX_BATCH_SIZE * MAX_KEY_LEN bytes
     std::vector<uint64_t> batch_hashes_;      // batch_size
     std::vector<int64_t> batch_int64_keys_;   // batch_size (for int64-only path)
     std::vector<size_t> batch_key_lens_;      // batch_size
@@ -941,7 +941,12 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         std::string val_str = val.as_text();
                         uint32_t len = static_cast<uint32_t>(val_str.size());
                         if (key_offset + key_len + 4 + val_str.size() > MAX_BATCH_SIZE * MAX_KEY_LEN) {
-                            // Key too large, skip
+                            // Key too large, skip - warn once per operator instance
+                            static bool warned = false;
+                            if (!warned) {
+                                fprintf(stderr, "Warning: String key exceeded MAX_KEY_LEN, treating as NULL\n");
+                                warned = true;
+                            }
                             key_ptr[key_len++] = 0x01;  // Fallback to NULL
                         } else {
                             std::memcpy(&key_ptr[key_len], &len, 4);
@@ -1039,6 +1044,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 
     // Shared helper to update accumulators in a hash bucket from a batch row
+    // Note: batch.get_column() is not const-correct in current VectorBatch API.
+    // This helper only reads from batch; write access is not needed.
     template<typename Bucket>
     void update_bucket_accumulators(Bucket& bucket, VectorBatch& batch, size_t row_idx) {
         for (size_t i = 0; i < aggregates_.size(); ++i) {
