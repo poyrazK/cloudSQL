@@ -1735,7 +1735,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         }
 
         auto agg_op = std::make_unique<VectorizedGroupByOperator>(
-            std::move(current_root), std::move(group_by), std::move(agg_infos), output_schema, thread_pool);
+            std::move(current_root), std::move(group_by), std::move(agg_infos), output_schema,
+            thread_pool);
         current_root = std::move(agg_op);
 
         if (stmt.having()) {

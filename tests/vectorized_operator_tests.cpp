@@ -1560,7 +1560,8 @@ TEST_F(VectorizedGroupByTests, ParallelAggregationCorrectness) {
     auto batch = VectorBatch::create(schema);
     for (int64_t i = 0; i < 100; ++i) {
         std::string cat = "cat" + std::to_string(i % 10);  // 10 distinct categories
-        batch->append_tuple(Tuple({common::Value::make_text(cat), common::Value::make_int64(i + 1)}));
+        batch->append_tuple(
+            Tuple({common::Value::make_text(cat), common::Value::make_int64(i + 1)}));
     }
     ASSERT_TRUE(table_ptr->append_batch(*batch));
 
@@ -1582,15 +1583,15 @@ TEST_F(VectorizedGroupByTests, ParallelAggregationCorrectness) {
     aggs.push_back({AggregateType::Sum, 1});  // sum of "val" column
 
     VectorizedGroupByOperator groupby(std::move(scan), std::move(group_by), std::move(aggs),
-                                       std::move(out_schema), thread_pool);
+                                      std::move(out_schema), thread_pool);
 
     auto result = VectorBatch::create(groupby.output_schema());
     ASSERT_TRUE(groupby.next_batch(*result));
     ASSERT_EQ(result->row_count(), 10);  // 10 distinct groups
 
-    // Verify results: each category should have count=10 and sum = 10*(catIdx+1) + 45 = 10*catIdx + 55
-    // Actually for cat0 (i=0,10,20,...90): sum = 1+11+21+...+91 = 460
-    // For cat1 (i=1,11,21,...91): sum = 2+12+22+...+92 = 470, etc.
+    // Verify results: each category should have count=10 and sum = 10*(catIdx+1) + 45 = 10*catIdx +
+    // 55 Actually for cat0 (i=0,10,20,...90): sum = 1+11+21+...+91 = 460 For cat1
+    // (i=1,11,21,...91): sum = 2+12+22+...+92 = 470, etc.
     for (size_t i = 0; i < 10; ++i) {
         int64_t cnt = result->get_column(1).get(i).as_int64();
         int64_t sum = result->get_column(2).get(i).as_int64();

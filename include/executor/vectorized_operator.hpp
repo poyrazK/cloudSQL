@@ -297,8 +297,8 @@ class OpenAddressHashAgg {
         num_occupied_ = 0;
         valid_indices_.clear();
 
-        // Pre-allocate to avoid grow(): capacity = next power of 2 above (capacity_hint / kLoadFactor)
-        // This ensures we never grow for capacity_hint rows at 0.5 load factor
+        // Pre-allocate to avoid grow(): capacity = next power of 2 above (capacity_hint /
+        // kLoadFactor) This ensures we never grow for capacity_hint rows at 0.5 load factor
         size_t min_cap = static_cast<size_t>(capacity_hint / kLoadFactor);
         size_t cap = kInitialCapacity;
         while (cap < min_cap) cap *= 2;
@@ -407,8 +407,8 @@ class OpenAddressHashAgg {
             // key_type: 0x01=NULL, 0x02=INT64, 0x03=FLOAT64, 0x04=STRING
             // Only 0x02 has direct int64 storage (key_int64); others use key_data
             auto& dst = (src.key_type == 0x02)
-                ? find_or_insert_int64(src.key_int64, src.key_hash)
-                : find_or_insert(src.key_data, src.key_len, src.key_hash);
+                            ? find_or_insert_int64(src.key_int64, src.key_hash)
+                            : find_or_insert(src.key_data, src.key_len, src.key_hash);
 
             if (!dst.is_new) {
                 // Key exists - merge accumulators
@@ -429,8 +429,9 @@ class OpenAddressHashAgg {
                     }
                 }
             } else {
-                // New key - find_or_insert already populated key fields (key_hash, key_type, key_len, key_data)
-                // Just copy accumulators since find_or_insert initialized them to zero
+                // New key - find_or_insert already populated key fields (key_hash, key_type,
+                // key_len, key_data) Just copy accumulators since find_or_insert initialized them
+                // to zero
                 for (size_t i = 0; i < max_aggregates_; ++i) {
                     dst.counts[i] = src.counts[i];
                     dst.sums_int64[i] = src.sums_int64[i];
@@ -534,17 +535,19 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     // Batch encoding scratch space (Phase 1 optimization)
     static constexpr size_t MAX_BATCH_SIZE = 4096;
     static constexpr size_t MAX_KEY_LEN = 256;
-    std::vector<uint8_t> batch_key_buffer_;   // Heap-allocated scratch: MAX_BATCH_SIZE * MAX_KEY_LEN bytes
-    std::vector<uint64_t> batch_hashes_;      // batch_size
-    std::vector<int64_t> batch_int64_keys_;   // batch_size (for int64-only path)
-    std::vector<size_t> batch_key_lens_;      // batch_size
-    bool all_int64_keys_ = false;             // True when all GROUP BY cols are INT64
+    std::vector<uint8_t>
+        batch_key_buffer_;  // Heap-allocated scratch: MAX_BATCH_SIZE * MAX_KEY_LEN bytes
+    std::vector<uint64_t> batch_hashes_;     // batch_size
+    std::vector<int64_t> batch_int64_keys_;  // batch_size (for int64-only path)
+    std::vector<size_t> batch_key_lens_;     // batch_size
+    bool all_int64_keys_ = false;            // True when all GROUP BY cols are INT64
 
     // Parallel aggregation support (Phase 4)
     std::shared_ptr<ThreadPool> thread_pool_;
     size_t num_threads_ = 1;
     std::vector<OpenAddressHashAgg> thread_hash_aggs_;  // One per thread
-    std::vector<std::vector<std::vector<common::Value>>> thread_group_keys_;  // Group keys per thread
+    std::vector<std::vector<std::vector<common::Value>>>
+        thread_group_keys_;  // Group keys per thread
 
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
@@ -593,7 +596,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             thread_hash_aggs_.resize(num_threads_);
             thread_group_keys_.resize(num_threads_);
             for (size_t t = 0; t < num_threads_; ++t) {
-                thread_hash_aggs_[t].init(std::max(size_t(8192), 65536 / num_threads_), aggregates_.size());
+                thread_hash_aggs_[t].init(std::max(size_t(8192), 65536 / num_threads_),
+                                          aggregates_.size());
             }
         }
 
@@ -606,9 +610,9 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         // Create schema for group key evaluation
         Schema key_schema;
         for (size_t i = 0; i < group_by_.size(); ++i) {
-            key_schema.add_column("key_" + std::to_string(i),
-                                  child_->output_schema().get_column(group_by_col_indices_[i]).type(),
-                                  false);
+            key_schema.add_column(
+                "key_" + std::to_string(i),
+                child_->output_schema().get_column(group_by_col_indices_[i]).type(), false);
         }
     }
 
@@ -744,11 +748,14 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         key_ptr[key_len++] = 0x04;  // STRING tag
                         std::string val_str = val.as_text();
                         uint32_t len = static_cast<uint32_t>(val_str.size());
-                        if (key_offset + key_len + 4 + val_str.size() > MAX_BATCH_SIZE * MAX_KEY_LEN) {
+                        if (key_offset + key_len + 4 + val_str.size() >
+                            MAX_BATCH_SIZE * MAX_KEY_LEN) {
                             // Key too large, skip - warn once per operator instance
                             static bool warned = false;
                             if (!warned) {
-                                fprintf(stderr, "Warning: String key exceeded MAX_KEY_LEN, treating as NULL\n");
+                                fprintf(
+                                    stderr,
+                                    "Warning: String key exceeded MAX_KEY_LEN, treating as NULL\n");
                                 warned = true;
                             }
                             key_ptr[key_len++] = 0x01;  // Fallback to NULL
@@ -791,8 +798,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             for (size_t t = 0; t < num_threads_; ++t) {
                 hash_agg_.merge_from(thread_hash_aggs_[t]);
                 // Also merge group keys
-                hash_group_keys_.insert(hash_group_keys_.end(),
-                                        thread_group_keys_[t].begin(),
+                hash_group_keys_.insert(hash_group_keys_.end(), thread_group_keys_[t].begin(),
                                         thread_group_keys_[t].end());
             }
         } else {
@@ -820,7 +826,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         input_batch_->clear();
     }
 
-    void process_thread_batch(VectorBatch& batch, const std::vector<size_t>& row_indices, size_t thread_idx) {
+    void process_thread_batch(VectorBatch& batch, const std::vector<size_t>& row_indices,
+                              size_t thread_idx) {
         auto& hash_agg = thread_hash_aggs_[thread_idx];
         auto& group_keys = thread_group_keys_[thread_idx];
 
@@ -831,7 +838,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 all_int64_keys_
                     ? hash_agg.find_or_insert_int64(batch_int64_keys_[r], batch_hashes_[r])
                     : hash_agg.find_or_insert(&batch_key_buffer_[r * MAX_KEY_LEN],
-                                               batch_key_lens_[r], batch_hashes_[r]);
+                                              batch_key_lens_[r], batch_hashes_[r]);
 
             // Track new groups in this thread's hash table
             if (bucket.is_new) {
@@ -850,7 +857,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     // Shared helper to update accumulators in a hash bucket from a batch row
     // Note: batch.get_column() is not const-correct in current VectorBatch API.
     // This helper only reads from batch; write access is not needed.
-    template<typename Bucket>
+    template <typename Bucket>
     void update_bucket_accumulators(Bucket& bucket, VectorBatch& batch, size_t row_idx) {
         for (size_t i = 0; i < aggregates_.size(); ++i) {
             const auto& agg = aggregates_[i];
@@ -938,7 +945,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         for (size_t idx : agg_.valid_slots()) {
             auto& slot = agg_.slot(idx);
             if (slot.counts[0] > 0 || (slot.valid && aggregates_[0].type == AggregateType::Count &&
-                                         aggregates_[0].input_col_idx < 0)) {
+                                       aggregates_[0].input_col_idx < 0)) {
                 // Found a group with data
                 // int8 range: -128 to 127
                 int64_t key = static_cast<int64_t>(static_cast<int8_t>(idx));
@@ -946,18 +953,22 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
                 for (size_t i = 0; i < aggregates_.size(); ++i) {
                     if (aggregates_[i].type == AggregateType::Count) {
-                        out_batch.get_column(1 + i).append(common::Value::make_int64(slot.counts[i]));
+                        out_batch.get_column(1 + i).append(
+                            common::Value::make_int64(slot.counts[i]));
                     } else if (aggregates_[i].type == AggregateType::Sum ||
                                aggregates_[i].type == AggregateType::Avg) {
                         if (slot.has_float_value[i]) {
-                            out_batch.get_column(1 + i).append(common::Value::make_float64(slot.sums_float64[i]));
+                            out_batch.get_column(1 + i).append(
+                                common::Value::make_float64(slot.sums_float64[i]));
                         } else {
-                            out_batch.get_column(1 + i).append(common::Value::make_int64(slot.sums_int64[i]));
+                            out_batch.get_column(1 + i).append(
+                                common::Value::make_int64(slot.sums_int64[i]));
                         }
                     } else if (aggregates_[i].type == AggregateType::Min) {
                         out_batch.get_column(1 + i).append(common::Value::make_int64(slot.mins[i]));
                     } else if (aggregates_[i].type == AggregateType::Max) {
-                        out_batch.get_column(1 + i).append(common::Value::make_int64(slot.maxes[i]));
+                        out_batch.get_column(1 + i).append(
+                            common::Value::make_int64(slot.maxes[i]));
                     }
                 }
                 slot.counts[0] = 0;  // Mark as output
