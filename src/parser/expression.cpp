@@ -118,6 +118,20 @@ void BinaryExpr::evaluate_vectorized(const executor::VectorBatch& batch,
                     }
                     return;
                 }
+                if (op_ == TokenType::Ge) {
+                    auto& bool_res = dynamic_cast<executor::NumericVector<bool>&>(result);
+                    bool_res.resize(row_count);
+                    uint8_t* res_data = bool_res.raw_data_mut();
+                    for (size_t i = 0; i < row_count; ++i) {
+                        if (num_src.is_null(i)) {
+                            bool_res.set_null(i, true);
+                        } else {
+                            res_data[i] = static_cast<uint8_t>(src_data[i] >= const_val);
+                            bool_res.set_null(i, false);
+                        }
+                    }
+                    return;
+                }
             }
         }
     }

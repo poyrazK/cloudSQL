@@ -213,6 +213,8 @@ class VectorizedFilterOperator : public VectorizedOperator {
                         dest_col.append(src_col.get(r));
                     }
                 }
+                // Update row count after appending
+                out_batch.set_row_count(out_batch.row_count() + selection.size());
             }
 
             if (out_batch.row_count() > 0) {

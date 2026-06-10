@@ -1543,11 +1543,11 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinFull) {
 }
 
 TEST_F(VectorizedGroupByTests, ParallelAggregationCorrectness) {
-    // Test that parallel aggregation (num_threads > 1) produces correct results
-    // This test creates a ThreadPool with 4 threads and verifies GROUP BY
-    // produces the same results as expected (computed manually)
+    // Test that parallel aggregation (num_threads > 1) produces correct results.
+    // We verify correctness by checking that the total counts and sums across all
+    // groups match expected values, without relying on specific output ordering.
 
-    // Use TEXT column to ensure hash aggregation path (not DirectIndexAgg)
+    // Use TEXT column to ensure OpenAddressHashAgg path (tests parallel hash aggregation)
     Schema schema;
     schema.add_column("cat", common::ValueType::TYPE_TEXT);
     schema.add_column("val", common::ValueType::TYPE_INT64);
@@ -1586,19 +1586,32 @@ TEST_F(VectorizedGroupByTests, ParallelAggregationCorrectness) {
                                       std::move(out_schema), thread_pool);
 
     auto result = VectorBatch::create(groupby.output_schema());
-    ASSERT_TRUE(groupby.next_batch(*result));
-    ASSERT_EQ(result->row_count(), 10);  // 10 distinct groups
 
-    // Verify results: each category should have count=10 and sum = 10*(catIdx+1) + 45 = 10*catIdx +
-    // 55 Actually for cat0 (i=0,10,20,...90): sum = 1+11+21+...+91 = 460 For cat1
-    // (i=1,11,21,...91): sum = 2+12+22+...+92 = 470, etc.
-    for (size_t i = 0; i < 10; ++i) {
-        int64_t cnt = result->get_column(1).get(i).as_int64();
-        int64_t sum = result->get_column(2).get(i).as_int64();
+    // Collect all results into maps keyed by category string
+    std::map<std::string, std::pair<int64_t, int64_t>> results;  // cat -> (count, sum)
 
-        EXPECT_EQ(cnt, 10) << "Count mismatch for category " << i;
-        // Sum formula: (i+1) + (i+11) + ... + (i+91) = 10*i + (1+11+21+...+91) = 10*i + 460
-        EXPECT_EQ(sum, 10 * static_cast<int64_t>(i) + 460) << "Sum mismatch for category " << i;
+    while (groupby.next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            std::string cat = result->get_column(0).get(i).as_text();
+            int64_t cnt = result->get_column(1).get(i).as_int64();
+            int64_t sum = result->get_column(2).get(i).as_int64();
+            results[cat] = {cnt, sum};
+        }
+        result->clear();
+    }
+
+    // Verify we got 10 groups
+    ASSERT_EQ(results.size(), 10) << "Should have 10 distinct groups";
+
+    // Verify each group has count=10 and correct sum
+    // cat0: values 1,11,21,...,91 sum to 460
+    // cat1: values 2,12,22,...,92 sum to 470, etc.
+    for (int i = 0; i < 10; ++i) {
+        std::string cat = "cat" + std::to_string(i);
+        ASSERT_TRUE(results.count(cat) > 0) << "Category " << cat << " missing";
+        EXPECT_EQ(results[cat].first, 10) << "Count mismatch for " << cat;
+        EXPECT_EQ(results[cat].second, static_cast<int64_t>(10 * i + 460))
+            << "Sum mismatch for " << cat;
     }
 }
 
