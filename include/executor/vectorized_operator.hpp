@@ -225,6 +225,172 @@ class VectorizedFilterOperator : public VectorizedOperator {
 };
 
 /**
+ * @brief Vectorized projection operator
+ */
+class VectorizedProjectOperator : public VectorizedOperator {
+   private:
+    std::unique_ptr<VectorizedOperator> child_;
+    std::vector<std::unique_ptr<parser::Expression>> expressions_;
+    std::unique_ptr<VectorBatch> input_batch_;
+
+   public:
+    VectorizedProjectOperator(std::unique_ptr<VectorizedOperator> child, Schema out_schema,
+                              std::vector<std::unique_ptr<parser::Expression>> exprs)
+        : VectorizedOperator(std::move(out_schema)),
+          child_(std::move(child)),
+          expressions_(std::move(exprs)) {
+        input_batch_ = VectorBatch::create(child_->output_schema());
+    }
+
+    bool next_batch(VectorBatch& out_batch) override {
+        out_batch.clear();
+        if (child_->next_batch(*input_batch_)) {
+            // Pre-allocate result columns if out_batch is empty
+            if (out_batch.column_count() == 0) {
+                out_batch.init_from_schema(output_schema_);
+            }
+
+            for (size_t i = 0; i < expressions_.size(); ++i) {
+                expressions_[i]->evaluate_vectorized(*input_batch_, child_->output_schema(),
+                                                     out_batch.get_column(i));
+            }
+            out_batch.set_row_count(input_batch_->row_count());
+            input_batch_->clear();
+            return true;
+        }
+        return false;
+    }
+};
+
+/**
+ * @brief Aggregate information for vectorized aggregation
+ */
+struct VectorizedAggregateInfo {
+    AggregateType type;
+    int32_t input_col_idx;  // -1 for COUNT(*)
+};
+
+/**
+ * @brief Vectorized aggregate operator (no GROUP BY)
+ */
+class VectorizedAggregateOperator : public VectorizedOperator {
+   private:
+    std::unique_ptr<VectorizedOperator> child_;
+    std::vector<VectorizedAggregateInfo> aggregates_;
+    std::vector<int64_t> results_int_;
+    std::vector<double> results_double_;
+    std::vector<bool> has_value_;
+    std::unique_ptr<VectorBatch> input_batch_;
+    bool done_ = false;
+
+   public:
+    VectorizedAggregateOperator(std::unique_ptr<VectorizedOperator> child, Schema out_schema,
+                                std::vector<VectorizedAggregateInfo> aggregates)
+        : VectorizedOperator(std::move(out_schema)),
+          child_(std::move(child)),
+          aggregates_(std::move(aggregates)) {
+        results_int_.assign(aggregates_.size(), 0);
+        results_double_.assign(aggregates_.size(), 0.0);
+        has_value_.assign(aggregates_.size(), false);
+        // COUNT aggregates always have a value (0 for empty input) per SQL spec
+        for (size_t i = 0; i < aggregates_.size(); ++i) {
+            if (aggregates_[i].type == AggregateType::Count) {
+                has_value_[i] = true;
+            }
+        }
+        input_batch_ = VectorBatch::create(child_->output_schema());
+    }
+
+    bool next_batch(VectorBatch& out_batch) override {
+        if (done_) return false;
+
+        // Process all input batches
+        while (child_->next_batch(*input_batch_)) {
+            for (size_t i = 0; i < aggregates_.size(); ++i) {
+                const auto& agg = aggregates_[i];
+                if (agg.type == AggregateType::Count) {
+                    results_int_[i] += input_batch_->row_count();
+                    has_value_[i] = true;
+                } else if (agg.type == AggregateType::Sum && agg.input_col_idx >= 0) {
+                    auto& col = input_batch_->get_column(agg.input_col_idx);
+                    if (col.type() == common::ValueType::TYPE_INT64) {
+                        auto& num_col = dynamic_cast<NumericVector<int64_t>&>(col);
+                        const int64_t* raw = num_col.raw_data();
+                        for (size_t r = 0; r < input_batch_->row_count(); ++r) {
+                            if (!num_col.is_null(r)) {
+                                results_int_[i] += raw[r];
+                                has_value_[i] = true;
+                            }
+                        }
+                    } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                        auto& num_col = dynamic_cast<NumericVector<double>&>(col);
+                        const double* raw = num_col.raw_data();
+                        for (size_t r = 0; r < input_batch_->row_count(); ++r) {
+                            if (!num_col.is_null(r)) {
+                                results_double_[i] += raw[r];
+                                has_value_[i] = true;
+                            }
+                        }
+                    } else {
+                        set_error("SUM: Unsupported column type " +
+                                  std::to_string(static_cast<int>(col.type())));
+                        return false;
+                    }
+                } else {
+                    set_error("Aggregate: Unsupported aggregate type or missing handler");
+                    return false;
+                }
+            }
+            input_batch_->clear();
+        }
+
+        // Produce final result batch
+        out_batch.clear();
+        if (out_batch.column_count() == 0) {
+            out_batch.init_from_schema(output_schema_);
+        }
+
+        for (size_t i = 0; i < aggregates_.size(); ++i) {
+            if (!has_value_[i]) {
+                out_batch.get_column(i).append(common::Value::make_null());
+                continue;
+            }
+
+            if (output_schema_.get_column(i).type() == common::ValueType::TYPE_INT64) {
+                out_batch.get_column(i).append(common::Value::make_int64(results_int_[i]));
+            } else if (output_schema_.get_column(i).type() == common::ValueType::TYPE_FLOAT64) {
+                out_batch.get_column(i).append(common::Value::make_float64(results_double_[i]));
+            }
+        }
+        out_batch.set_row_count(1);
+        done_ = true;
+        return true;
+    }
+};
+
+/**
+ * @brief Group state for hash-based aggregation
+ */
+struct VectorizedGroupState {
+    std::vector<int64_t> counts;
+    std::vector<int64_t> sums_int64;  // Separate accumulators to avoid precision loss
+    std::vector<double> sums_float64;
+    std::vector<bool> has_float_value_;  // Tracks whether any float64 values were accumulated
+    std::vector<common::Value> mins;
+    std::vector<common::Value> maxes;
+
+    VectorizedGroupState() = default;
+    explicit VectorizedGroupState(size_t agg_count) {
+        counts.assign(agg_count, 0);
+        sums_int64.assign(agg_count, 0);
+        sums_float64.assign(agg_count, 0.0);
+        has_float_value_.assign(agg_count, false);
+        mins.assign(agg_count, common::Value::make_null());
+        maxes.assign(agg_count, common::Value::make_null());
+    }
+};
+
+/**
  * @brief Open-addressing hash aggregation for arbitrary GROUP BY keys.
  *
  * Uses linear probing with power-of-2 capacity. Binary key encoding avoids
@@ -321,6 +487,16 @@ class OpenAddressHashAgg {
                 bucket.key_len = static_cast<uint32_t>(key_len);
                 bucket.key_type = key[0];
                 std::memcpy(bucket.key_data, key, key_len);
+                // Initialize accumulators to zero
+                for (size_t a = 0; a < max_aggregates_; ++a) {
+                    bucket.counts[a] = 0;
+                    bucket.sums_int64[a] = 0;
+                    bucket.sums_float64[a] = 0.0;
+                    bucket.has_float_value[a] = false;
+                    bucket.mins[a] = 0;
+                    bucket.maxes[a] = 0;
+                    bucket.has_mins[a] = false;
+                }
                 num_occupied_++;
                 valid_indices_.push_back(idx);
                 return bucket;
@@ -355,6 +531,16 @@ class OpenAddressHashAgg {
                 bucket.key_type = 0x02;
                 bucket.key_len = sizeof(int64_t) + 1;
                 std::memcpy(bucket.key_data, key_buf, bucket.key_len);
+                // Initialize accumulators to zero
+                for (size_t a = 0; a < max_aggregates_; ++a) {
+                    bucket.counts[a] = 0;
+                    bucket.sums_int64[a] = 0;
+                    bucket.sums_float64[a] = 0.0;
+                    bucket.has_float_value[a] = false;
+                    bucket.mins[a] = 0;
+                    bucket.maxes[a] = 0;
+                    bucket.has_mins[a] = false;
+                }
                 num_occupied_++;
                 valid_indices_.push_back(idx);
                 return bucket;
@@ -378,12 +564,26 @@ class OpenAddressHashAgg {
 
         for (size_t i = 0; i < old_buckets.size(); ++i) {
             if (old_buckets[i].occupied) {
-                if (old_buckets[i].key_type == 0x02) {
-                    find_or_insert_int64(old_buckets[i].key_int64, old_buckets[i].key_hash);
-                } else {
-                    find_or_insert(old_buckets[i].key_data, old_buckets[i].key_len,
+                auto& dst = (old_buckets[i].key_type == 0x02)
+                    ? find_or_insert_int64(old_buckets[i].key_int64, old_buckets[i].key_hash)
+                    : find_or_insert(old_buckets[i].key_data, old_buckets[i].key_len,
                                    old_buckets[i].key_hash);
+                // Copy accumulators from old bucket to new bucket
+                for (size_t j = 0; j < max_aggregates_; ++j) {
+                    dst.counts[j] = old_buckets[i].counts[j];
+                    dst.sums_int64[j] = old_buckets[i].sums_int64[j];
+                    dst.sums_float64[j] = old_buckets[i].sums_float64[j];
+                    dst.has_float_value[j] = old_buckets[i].has_float_value[j];
+                    dst.mins[j] = old_buckets[i].mins[j];
+                    dst.maxes[j] = old_buckets[i].maxes[j];
+                    dst.has_mins[j] = old_buckets[i].has_mins[j];
                 }
+            }
+        }
+        // Rebuild valid_indices_ to include ALL occupied buckets (not just new ones)
+        for (size_t i = 0; i < buckets_.size(); ++i) {
+            if (buckets_[i].occupied) {
+                valid_indices_.push_back(i);
             }
         }
     }
@@ -442,6 +642,13 @@ class OpenAddressHashAgg {
                     dst.has_mins[i] = src.has_mins[i];
                 }
                 // is_new remains true so output phase outputs this group
+            }
+        }
+        // Rebuild valid_indices_ to include ALL occupied buckets (not just new ones from merge)
+        valid_indices_.clear();
+        for (size_t i = 0; i < buckets_.size(); ++i) {
+            if (buckets_[i].occupied) {
+                valid_indices_.push_back(i);
             }
         }
     }
@@ -562,14 +769,10 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         input_batch_ = VectorBatch::create(child_->output_schema());
 
         // Pre-resolve column indices once in constructor
-        for (auto& expr : group_by_) {
-            auto* col_expr = dynamic_cast<ColumnExpr*>(expr.get());
-            if (col_expr) {
-                size_t col_idx = child_->output_schema().get_column_index(col_expr->column_name());
-                group_by_col_indices_.push_back(col_idx);
-            } else {
-                group_by_col_indices_.push_back(static_cast<size_t>(-1));
-            }
+        const auto& schema = child_->output_schema();
+        for (size_t i = 0; i < group_by_.size(); ++i) {
+            size_t col_idx = schema.find_column(group_by_[i]->to_string());
+            group_by_col_indices_.push_back(col_idx);
         }
 
         // Check if we can use direct indexing (single INT64 column)
@@ -622,7 +825,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         }
 
         if (state_ == ExecState::Init) {
-            state_ = ExecState::Running;
+            state_ = ExecState::Executing;
         }
 
         out_batch.clear();
@@ -911,29 +1114,21 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         state.sums_int64[i] += col.get(row_idx).to_int64();
                     } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
                         state.sums_float64[i] += col.get(row_idx).to_float64();
-                        state.has_float_value[i] = true;
+                        state.has_float_value_[i] = true;
                     }
                 }
             } else if (agg.type == AggregateType::Min && agg.input_col_idx >= 0) {
                 auto& col = batch.get_column(agg.input_col_idx);
                 if (!col.is_null(row_idx)) {
-                    auto val = col.get(row_idx).to_int64();
-                    if (!state.has_min[i]) {
-                        state.mins[i] = val;
-                        state.has_min[i] = true;
-                    } else {
-                        state.mins[i] = std::min(state.mins[i], val);
+                    if (state.mins[i].is_null() || col.get(row_idx) < state.mins[i]) {
+                        state.mins[i] = col.get(row_idx);
                     }
                 }
             } else if (agg.type == AggregateType::Max && agg.input_col_idx >= 0) {
                 auto& col = batch.get_column(agg.input_col_idx);
                 if (!col.is_null(row_idx)) {
-                    auto val = col.get(row_idx).to_int64();
-                    if (!state.has_max[i]) {
-                        state.maxes[i] = val;
-                        state.has_max[i] = true;
-                    } else {
-                        state.maxes[i] = std::max(state.maxes[i], val);
+                    if (state.maxes[i].is_null() || state.maxes[i] < col.get(row_idx)) {
+                        state.maxes[i] = col.get(row_idx);
                     }
                 }
             }
@@ -979,51 +1174,491 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     }
 
     bool produce_output_batch_open_addressing(VectorBatch& out_batch) {
-        // Find first valid hash bucket with output pending
-        for (size_t idx : hash_agg_.valid_slots()) {
+        // Find all valid hash buckets with output pending
+        const auto& valid = hash_agg_.valid_slots();
+        size_t rows_output = 0;
+        std::vector<size_t> output_bucket_indices_;  // Track which bucket indices we've output
+        for (size_t i = 0; i < valid.size(); ++i) {
+            size_t idx = valid[i];
             auto& bucket = hash_agg_.slot(idx);
 
-            // Check if this bucket has been output (is_new == false means it existed before)
-            // We track output by setting counts to a negative marker
-            if (bucket.counts[0] >= 0) {  // Not yet output
-                // Output the group key
-                const auto& key_vals = hash_group_keys_[idx];
-                for (size_t c = 0; c < key_vals.size(); ++c) {
-                    out_batch.get_column(c).append(key_vals[c]);
+            // Check if this bucket has been output (counts[0] < 0 means already output)
+            if (bucket.counts[0] > 0) {  // Has data and not yet output
+                // Skip if already output (handles duplicates in valid_indices_ from collision)
+                bool already_output = false;
+                for (size_t k = 0; k < rows_output; ++k) {
+                    if (output_bucket_indices_[k] == idx) {
+                        already_output = true;
+                        break;
+                    }
+                }
+                if (already_output) continue;
+                output_bucket_indices_.push_back(idx);
+                // Decode key from bucket's key_data directly
+                // key_type: 0x01=NULL, 0x02=INT64, 0x03=FLOAT64, 0x04=STRING
+                size_t key_offset = 1;  // Skip type tag
+                for (size_t c = 0; c < group_by_.size(); ++c) {
+                    uint8_t type_tag = bucket.key_data[0];
+                    if (type_tag == 0x01) {  // NULL
+                        out_batch.get_column(c).append(common::Value::make_null());
+                        key_offset = 1;
+                    } else if (type_tag == 0x02 && bucket.key_len >= key_offset + 8) {  // INT64
+                        int64_t val;
+                        std::memcpy(&val, &bucket.key_data[key_offset], 8);
+                        out_batch.get_column(c).append(common::Value::make_int64(val));
+                        key_offset += 9;  // 1 byte tag + 8 bytes
+                    } else if (type_tag == 0x04) {  // STRING
+                        uint32_t str_len;
+                        std::memcpy(&str_len, &bucket.key_data[key_offset], 4);
+                        key_offset += 4;
+                        std::string val(reinterpret_cast<const char*>(&bucket.key_data[key_offset]), str_len);
+                        out_batch.get_column(c).append(common::Value::make_text(val));
+                        key_offset += str_len;
+                    } else {
+                        out_batch.get_column(c).append(common::Value::make_null());
+                    }
                 }
 
                 // Output aggregate values
-                for (size_t i = 0; i < aggregates_.size(); ++i) {
-                    if (aggregates_[i].type == AggregateType::Count) {
-                        out_batch.get_column(group_by_.size() + i)
-                            .append(common::Value::make_int64(bucket.counts[i]));
-                    } else if (aggregates_[i].type == AggregateType::Sum ||
-                               aggregates_[i].type == AggregateType::Avg) {
-                        if (bucket.has_float_value[i]) {
-                            out_batch.get_column(group_by_.size() + i)
-                                .append(common::Value::make_float64(bucket.sums_float64[i]));
+                for (size_t j = 0; j < aggregates_.size(); ++j) {
+                    if (aggregates_[j].type == AggregateType::Count) {
+                        out_batch.get_column(group_by_.size() + j)
+                            .append(common::Value::make_int64(bucket.counts[j]));
+                    } else if (aggregates_[j].type == AggregateType::Sum ||
+                               aggregates_[j].type == AggregateType::Avg) {
+                        if (bucket.has_float_value[j]) {
+                            out_batch.get_column(group_by_.size() + j)
+                                .append(common::Value::make_float64(bucket.sums_float64[j]));
                         } else {
-                            out_batch.get_column(group_by_.size() + i)
-                                .append(common::Value::make_int64(bucket.sums_int64[i]));
+                            out_batch.get_column(group_by_.size() + j)
+                                .append(common::Value::make_int64(bucket.sums_int64[j]));
                         }
-                    } else if (aggregates_[i].type == AggregateType::Min) {
-                        out_batch.get_column(group_by_.size() + i)
-                            .append(common::Value::make_int64(bucket.mins[i]));
-                    } else if (aggregates_[i].type == AggregateType::Max) {
-                        out_batch.get_column(group_by_.size() + i)
-                            .append(common::Value::make_int64(bucket.maxes[i]));
+                    } else if (aggregates_[j].type == AggregateType::Min) {
+                        out_batch.get_column(group_by_.size() + j)
+                            .append(common::Value::make_int64(bucket.mins[j]));
+                    } else if (aggregates_[j].type == AggregateType::Max) {
+                        out_batch.get_column(group_by_.size() + j)
+                            .append(common::Value::make_int64(bucket.maxes[j]));
                     }
                 }
 
                 // Mark as output by negating counts
-                for (size_t i = 0; i < aggregates_.size(); ++i) {
-                    bucket.counts[i] = -bucket.counts[i];
+                for (size_t j = 0; j < aggregates_.size(); ++j) {
+                    bucket.counts[j] = -bucket.counts[j];
                 }
+                rows_output++;
+            }
+        }
+        if (rows_output > 0) {
+            out_batch.set_row_count(rows_output);
+            return true;
+        }
+        return false;
+    }
+};
+
+/**
+ * @brief Hash bucket for vectorized hash join
+ */
+struct VectorizedHashBucket {
+    std::vector<std::vector<common::Value>> key_values;    // Key column values per row
+    std::vector<std::vector<common::Value>> payload_rows;  // Full right row values
+    std::vector<size_t>
+        right_row_indices;  // Global indices into right_bucket_rows_ for unmatched tracking
+};
+
+/**
+ * @brief Vectorized hash join operator with graceful partitioning
+ */
+class VectorizedHashJoinOperator : public VectorizedOperator {
+   private:
+    std::unique_ptr<VectorizedOperator> left_;
+    std::unique_ptr<VectorizedOperator> right_;
+    std::unique_ptr<parser::Expression> left_key_;
+    std::unique_ptr<parser::Expression> right_key_;
+
+    // Graceful hash partition buckets (for right relation)
+    static constexpr size_t NUM_BUCKETS = 64;
+    std::vector<VectorizedHashBucket> buckets_;
+
+    // Processing state
+    enum class ProcessPhase { BuildRight, ProbeLeft, Done };
+    ProcessPhase phase_ = ProcessPhase::BuildRight;
+
+    // Reusable batch objects
+    std::unique_ptr<VectorBatch> left_batch_;
+    std::unique_ptr<VectorBatch> right_batch_;
+
+    // Probe state
+    size_t left_row_idx_ = 0;       // Current row within left_batch_
+    bool right_exhausted_ = false;  // All right consumed
+    bool left_exhausted_ = false;   // All left consumed
+
+    // For LEFT join: track matched/unmatched rows
+    static constexpr size_t BATCH_SIZE = 1024;
+    std::vector<bool> left_matched_in_batch_;
+    std::vector<size_t> unmatched_left_indices_;
+
+    // For RIGHT join: track matched right rows during probe
+    std::vector<bool> right_matched_;
+    std::vector<size_t> unmatched_right_rows_;
+    bool emitted_unmatched_right_ = false;
+
+    // Probe state for resumable bucket scanning (prevents batch overflow)
+    bool resuming_bucket_scan_ = false;  // True if we're resuming a mid-bucket scan
+    size_t resumed_bucket_idx_ = 0;      // Bucket index when resuming
+    size_t resumed_entry_idx_ = 0;       // Entry index within bucket when resuming
+    common::Value resumed_key_val_;      // Key value being probed when resuming
+
+    // Join type
+    JoinType join_type_;
+
+    // Track if we emitted unmatched rows on the last probe call (for LEFT join)
+    bool emitted_unmatched_last_probe_ = false;
+
+    // Key column indices (pre-resolved)
+    size_t left_key_col_idx_ = 0;
+    size_t right_key_col_idx_ = 0;
+
+    // Output column layout: left columns first, then right columns
+    size_t left_col_count_ = 0;
+    size_t right_col_count_ = 0;
+
+   public:
+    VectorizedHashJoinOperator(std::unique_ptr<VectorizedOperator> left,
+                               std::unique_ptr<VectorizedOperator> right,
+                               std::unique_ptr<parser::Expression> left_key,
+                               std::unique_ptr<parser::Expression> right_key, JoinType join_type,
+                               Schema output_schema)
+        : VectorizedOperator(std::move(output_schema)),
+          left_(std::move(left)),
+          right_(std::move(right)),
+          left_key_(std::move(left_key)),
+          right_key_(std::move(right_key)),
+          join_type_(join_type) {
+        buckets_.resize(NUM_BUCKETS);
+        left_batch_ = VectorBatch::create(left_->output_schema());
+        right_batch_ = VectorBatch::create(right_->output_schema());
+
+        // Pre-resolve key column indices
+        left_key_col_idx_ = left_->output_schema().find_column(left_key_->to_string());
+        right_key_col_idx_ = right_->output_schema().find_column(right_key_->to_string());
+        left_col_count_ = left_->output_schema().columns().size();
+        right_col_count_ = right_->output_schema().columns().size();
+
+        // Pre-size matched tracking vectors
+        left_matched_in_batch_.resize(BATCH_SIZE, false);
+        unmatched_left_indices_.reserve(BATCH_SIZE);
+    }
+
+    bool next_batch(VectorBatch& out_batch) override {
+        out_batch.clear();
+        if (out_batch.column_count() == 0) {
+            out_batch.init_from_schema(output_schema_);
+        }
+
+        switch (phase_) {
+            case ProcessPhase::BuildRight:
+                build_hash_table();
+                if (state_ == ExecState::Error) return false;
+                // Resize matched tracking for right rows (needed for RIGHT/FULL joins)
+                right_matched_.resize(right_bucket_rows_.size(), false);
+                phase_ = ProcessPhase::ProbeLeft;
+                [[fallthrough]];
+            case ProcessPhase::ProbeLeft:
+                if (probe_and_emit(out_batch)) return true;
+                // probe_and_emit returned false - all data consumed
+                // If we emitted unmatched rows in probe_and_emit (when left exhausted),
+                // out_batch already has them, so return true
+                phase_ = ProcessPhase::Done;
+                [[fallthrough]];
+            case ProcessPhase::Done:
+                // Emit unmatched right rows for RIGHT/FULL joins
+                if (!emitted_unmatched_right_ &&
+                    (join_type_ == JoinType::Right || join_type_ == JoinType::Full)) {
+                    // Build unmatched_right_rows_ from right_matched_ (unmatched = false)
+                    for (size_t i = 0; i < right_matched_.size(); ++i) {
+                        if (!right_matched_[i]) {
+                            unmatched_right_rows_.push_back(i);
+                        }
+                    }
+                    if (emit_unmatched_right_rows(out_batch)) {
+                        return true;  // Batch is full, more to emit later
+                    }
+                    // We emitted rows but batch wasn't full - return true so caller can process
+                    // them
+                    if (out_batch.row_count() > 0) {
+                        emitted_unmatched_right_ = true;
+                        return true;
+                    }
+                    emitted_unmatched_right_ = true;
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
+   private:
+    void build_hash_table() {
+        // Phase 1: Consume all right batches and partition into hash buckets
+        while (right_->next_batch(*right_batch_)) {
+            for (size_t r = 0; r < right_batch_->row_count(); ++r) {
+                // Get key value
+                const auto& key_val = right_batch_->get_column(right_key_col_idx_).get(r);
+
+                // NULL keys go to special bucket (cannot match)
+                if (key_val.is_null()) {
+                    store_in_bucket(NUM_BUCKETS - 1, r);
+                } else {
+                    size_t bucket_idx = compute_bucket_idx(key_val);
+                    store_in_bucket(bucket_idx, r);
+                }
+            }
+            right_batch_->clear();
+        }
+    }
+
+    size_t compute_bucket_idx(const common::Value& key_val) {
+        // Use string representation for hashing (consistent with GROUP BY)
+        std::string key_str = key_val.to_string();
+        size_t hash = std::hash<std::string>{}(key_str);
+        return hash % (NUM_BUCKETS - 1);  // -1 to leave room for NULL bucket
+    }
+
+    void store_in_bucket(size_t bucket_idx, size_t row_idx) {
+        auto& bucket = buckets_[bucket_idx];
+
+        // Store key values
+        std::vector<common::Value> key_vals;
+        for (size_t c = 0; c < right_batch_->column_count(); ++c) {
+            key_vals.push_back(right_batch_->get_column(c).get(row_idx));
+        }
+        bucket.key_values.push_back(std::move(key_vals));
+
+        // Store full row (same data for now, could optimize)
+        bucket.payload_rows.push_back(bucket.key_values.back());
+
+        // Track global right row index for RIGHT/FULL join unmatched tracking
+        size_t global_idx = right_bucket_rows_.size();
+        right_bucket_rows_.push_back(bucket.payload_rows.back());
+
+        // Track this bucket/entry for unmatched right row emission (RIGHT/FULL join)
+        if (join_type_ == JoinType::Right || join_type_ == JoinType::Full) {
+            bucket.right_row_indices.push_back(global_idx);
+        }
+    }
+
+    bool probe_and_emit(VectorBatch& out_batch) {
+        while (true) {
+            // Get next left batch if needed
+            if (left_row_idx_ >= left_batch_->row_count()) {
+                // For LEFT/FULL join: if there are unmatched rows, emit them FIRST
+                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                    !unmatched_left_indices_.empty()) {
+                    // First, emit all unmatched rows before any matched rows
+                    if (emit_unmatched_left_rows(out_batch)) {
+                        return true;  // Batch is full
+                    }
+                    unmatched_left_indices_.clear();
+                }
+
+                left_batch_->clear();
+                if (!left_->next_batch(*left_batch_)) {
+                    left_exhausted_ = true;
+                    right_exhausted_ = true;
+                    // If we have data in out_batch (from unmatched emit), return true to give
+                    // caller the data
+                    if (out_batch.row_count() > 0) {
+                        return true;
+                    }
+                    return false;
+                }
+                left_row_idx_ = 0;
+                // Reset matched tracking for new batch
+                std::fill(left_matched_in_batch_.begin(), left_matched_in_batch_.end(), false);
+                // Clear resume state when advancing to new batch
+                resuming_bucket_scan_ = false;
+            }
+
+            // Process rows in current batch
+            while (left_row_idx_ < left_batch_->row_count() && out_batch.row_count() < BATCH_SIZE) {
+                // Check if we need to resume an interrupted bucket scan
+                if (resuming_bucket_scan_) {
+                    // We were in the middle of scanning a bucket - resume from saved position
+                    const auto& key_val = resumed_key_val_;
+                    auto& bucket = buckets_[resumed_bucket_idx_];
+                    bool found_match = left_matched_in_batch_[left_row_idx_];
+
+                    // Resume scanning bucket from resumed_entry_idx_
+                    for (size_t i = resumed_entry_idx_; i < bucket.key_values.size(); ++i) {
+                        if (out_batch.row_count() >= BATCH_SIZE) {
+                            // Batch full - save state and return
+                            resuming_bucket_scan_ = true;
+                            resumed_entry_idx_ = i;
+                            resumed_key_val_ = key_val;
+                            return true;  // Caller must consume batch before continuing
+                        }
+
+                        const auto& bucket_key = bucket.key_values[i][right_key_col_idx_];
+                        if (bucket_key == key_val) {
+                            emit_joined_row(out_batch, left_row_idx_, bucket.payload_rows[i]);
+                            found_match = true;
+                            if (join_type_ == JoinType::Left) {
+                                left_matched_in_batch_[left_row_idx_] = true;
+                            }
+                        }
+                    }
+
+                    // Finished scanning this bucket
+                    resuming_bucket_scan_ = false;
+
+                    // Track unmatched for LEFT/FULL join
+                    if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                        !found_match) {
+                        unmatched_left_indices_.push_back(left_row_idx_);
+                    }
+
+                    left_row_idx_++;
+                    continue;
+                }
+
+                const auto& key_val = left_batch_->get_column(left_key_col_idx_).get(left_row_idx_);
+
+                if (key_val.is_null()) {
+                    // NULL keys never match - mark as unmatched for LEFT/FULL join
+                    if (join_type_ == JoinType::Left || join_type_ == JoinType::Full) {
+                        unmatched_left_indices_.push_back(left_row_idx_);
+                    }
+                    left_row_idx_++;
+                    continue;
+                }
+
+                size_t bucket_idx = compute_bucket_idx(key_val);
+                auto& bucket = buckets_[bucket_idx];
+
+                // Search for match in this bucket
+                bool found_match = false;
+                for (size_t i = 0; i < bucket.key_values.size(); ++i) {
+                    if (out_batch.row_count() >= BATCH_SIZE) {
+                        // Batch full - save state and return
+                        resuming_bucket_scan_ = true;
+                        resumed_bucket_idx_ = bucket_idx;
+                        resumed_entry_idx_ = i;
+                        resumed_key_val_ = key_val;
+                        return true;  // Caller must consume batch before continuing
+                    }
+
+                    const auto& bucket_key = bucket.key_values[i][right_key_col_idx_];
+                    if (bucket_key == key_val) {
+                        // Match found - emit row
+                        emit_joined_row(out_batch, left_row_idx_, bucket.payload_rows[i]);
+                        found_match = true;
+                        // Mark right row as matched for RIGHT/FULL join
+                        if (join_type_ == JoinType::Right || join_type_ == JoinType::Full) {
+                            if (i < bucket.right_row_indices.size()) {
+                                right_matched_[bucket.right_row_indices[i]] = true;
+                            }
+                        }
+                        if (join_type_ == JoinType::Left) {
+                            left_matched_in_batch_[left_row_idx_] = true;
+                        }
+                        // Continue scanning bucket for all matching right rows
+                    }
+                }
+
+                // Track unmatched for LEFT/FULL join
+                if ((join_type_ == JoinType::Left || join_type_ == JoinType::Full) &&
+                    !found_match) {
+                    unmatched_left_indices_.push_back(left_row_idx_);
+                }
+
+                left_row_idx_++;
+            }
+
+            if (out_batch.row_count() > 0) {
+                return true;  // Batch is full, return what we have
+            }
+
+            if (right_exhausted_ && left_row_idx_ >= left_batch_->row_count()) {
+                return false;  // No more data
+            }
+        }
+    }
+
+    void emit_joined_row(VectorBatch& out_batch, size_t left_row_idx,
+                         const std::vector<common::Value>& right_row) {
+        // Append left columns
+        for (size_t c = 0; c < left_col_count_; ++c) {
+            out_batch.get_column(c).append(left_batch_->get_column(c).get(left_row_idx));
+        }
+        // Append right columns
+        for (size_t c = 0; c < right_row.size(); ++c) {
+            out_batch.get_column(left_col_count_ + c).append(right_row[c]);
+        }
+        out_batch.set_row_count(out_batch.row_count() + 1);
+    }
+
+    bool row_has_match(size_t left_row_idx) {
+        const auto& key_val = left_batch_->get_column(left_key_col_idx_).get(left_row_idx);
+        if (key_val.is_null()) return false;
+
+        size_t bucket_idx = compute_bucket_idx(key_val);
+        auto& bucket = buckets_[bucket_idx];
+
+        for (size_t i = 0; i < bucket.key_values.size(); ++i) {
+            const auto& bucket_key = bucket.key_values[i][right_key_col_idx_];
+            if (bucket_key == key_val) {
                 return true;
             }
         }
         return false;
     }
+
+    bool emit_unmatched_left_rows(VectorBatch& out_batch) {
+        constexpr size_t BATCH_SIZE = 1024;
+
+        for (size_t idx : unmatched_left_indices_) {
+            if (out_batch.row_count() >= BATCH_SIZE) {
+                return true;  // Batch is full
+            }
+            // Append left columns
+            for (size_t c = 0; c < left_col_count_; ++c) {
+                out_batch.get_column(c).append(left_batch_->get_column(c).get(idx));
+            }
+            // Append NULLs for right columns
+            for (size_t c = 0; c < right_col_count_; ++c) {
+                out_batch.get_column(left_col_count_ + c).append(common::Value::make_null());
+            }
+            out_batch.set_row_count(out_batch.row_count() + 1);
+        }
+        unmatched_left_indices_.clear();
+        return false;
+    }
+
+    bool emit_unmatched_right_rows(VectorBatch& out_batch) {
+        constexpr size_t BATCH_SIZE = 1024;
+
+        for (size_t row_idx : unmatched_right_rows_) {
+            if (out_batch.row_count() >= BATCH_SIZE) {
+                return true;  // Batch is full
+            }
+            // Append NULLs for left columns
+            for (size_t c = 0; c < left_col_count_; ++c) {
+                out_batch.get_column(c).append(common::Value::make_null());
+            }
+            // Append right columns from bucket payload
+            const auto& right_row = right_bucket_rows_[row_idx];
+            for (size_t c = 0; c < right_col_count_; ++c) {
+                out_batch.get_column(left_col_count_ + c).append(right_row[c]);
+            }
+            out_batch.set_row_count(out_batch.row_count() + 1);
+        }
+        return false;
+    }
+
+    // Storage for unmatched right rows (index into bucket payload)
+    std::vector<std::vector<common::Value>> right_bucket_rows_;
 };
 
 }  // namespace cloudsql::executor
