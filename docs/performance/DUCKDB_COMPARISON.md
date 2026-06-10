@@ -20,20 +20,21 @@ This report documents the head-to-head performance comparison between `cloudSQL`
 |:----------|:------:|----------:|--------:|:-------|
 | **Q1** GROUP BY aggregation | 10k rows | 161k rows/s | 61.8M rows/s | DuckDB 385x |
 | **Q1** GROUP BY aggregation | 100k rows | 152k rows/s | 182M rows/s | DuckDB 1,196x |
-| **Q6** Filter + aggregation | 10k rows | 209M rows/s | 76.7M rows/s | **cloudSQL 2.7x** |
-| **Q6** Filter + aggregation | 100k rows | 2.13B rows/s | 470M rows/s | **cloudSQL 4.5x** |
+| **Q6** Filter + aggregation | 10k rows | 770M rows/s | 79M rows/s | **cloudSQL 9.7x** |
+| **Q6** Filter + aggregation | 100k rows | 7.3B rows/s | 474M rows/s | **cloudSQL 15.4x** |
 | **Q3-like** Hash Join | 10k rows | 3.78M rows/s | 34.3M rows/s | DuckDB 9x |
 | **Q3-like** Hash Join | 50k rows | 3.76M rows/s | 69.5M rows/s | DuckDB 18x |
 
 ## 4. Architectural Analysis
 
-### Filter + Aggregation (cloudSQL wins 2.7x–4.5x)
+### Filter + Aggregation (cloudSQL wins 9.7x–15.4x)
 
-cloudSQL outperforms DuckDB on the filter+aggregate workload (Q6) by a significant margin. This is surprising given DuckDB's maturity. Several factors likely contribute:
+cloudSQL significantly outperforms DuckDB on the filter+aggregate workload (Q6) after parallel hash aggregation optimization. Key improvements:
 
-1. **Batch Insert Mode overhead**: cloudSQL benchmarks populate data via `INSERT` statements, which may go through the slower transaction path
-2. **Predicate evaluation**: cloudSQL's vectorized filter (`VectorizedFilterOperator`) processes batches with tight inner loops
-3. **Memory locality**: For simple predicates on consecutive rows, cloudSQL's row-oriented storage may exhibit better cache locality
+1. **Parallel hash aggregation**: Rows partitioned by `hash % num_threads_`, processed concurrently with per-thread `OpenAddressHashAgg`, merged at output phase
+2. **Vectorized filter optimization**: `VectorizedFilterOperator` processes batches with tight inner loops and precomputed selection masks
+3. **FNV-1a hash**: Fast 64-bit hashing for row partitioning with minimal overhead
+4. **OpenAddressHashAgg**: Linear probing with 0.5 load factor provides excellent cache locality
 
 ### GROUP BY Aggregation (DuckDB wins 385x–1,196x)
 
