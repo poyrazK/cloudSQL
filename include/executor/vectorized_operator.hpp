@@ -668,6 +668,9 @@ class OpenAddressHashAgg {
  *
  * For each row: slot_idx = (key - min_key) where min_key is the
  * minimum key value observed. This gives O(1) direct indexing.
+ *
+ * Limitations: Only supports INT8 range (-128 to 127). For wider ranges
+ * or non-integer keys, OpenAddressHashAgg is used instead.
  */
 class DirectIndexAgg {
    public:
@@ -711,6 +714,8 @@ class DirectIndexAgg {
     void track_key(int64_t key) {
         if (!initialized_) return;
         // int8 range: -128 to 127
+        // Note: keys outside this range will be truncated. For wider ranges,
+        // use OpenAddressHashAgg instead (is_direct_indexable_ will be false).
         size_t idx = static_cast<size_t>(static_cast<int8_t>(key));
         if (!slots_[idx].valid) {
             slots_[idx].valid = true;
@@ -796,7 +801,9 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             hash_agg_.init(65536, aggregates_.size());
         }
 
-        // Initialize parallel aggregation (Phase 4)
+        // Initialize parallel aggregation support (Phase 4)
+        // Note: Parallel aggregation via thread_hash_aggs_ only applies to OpenAddressHashAgg path.
+        // For DirectIndexAgg (single INT64 column GROUP BY), parallel processing is not used.
         if (thread_pool_ && thread_pool_->num_threads() > 1) {
             num_threads_ = thread_pool_->num_threads();
             thread_hash_aggs_.resize(num_threads_);
