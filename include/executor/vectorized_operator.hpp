@@ -727,14 +727,22 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     std::vector<size_t> batch_key_lens_;      // batch_size
     bool all_int64_keys_ = false;             // True when all GROUP BY cols are INT64
 
+    // Parallel aggregation support (Phase 4)
+    std::shared_ptr<ThreadPool> thread_pool_;
+    size_t num_threads_ = 1;
+    std::vector<OpenAddressHashAgg> thread_hash_aggs_;  // One per thread
+    std::vector<std::vector<std::vector<common::Value>>> thread_group_keys_;  // Group keys per thread
+
    public:
     VectorizedGroupByOperator(std::unique_ptr<VectorizedOperator> child,
                               std::vector<std::unique_ptr<parser::Expression>> group_by,
-                              std::vector<VectorizedAggregateInfo> aggregates, Schema output_schema)
+                              std::vector<VectorizedAggregateInfo> aggregates, Schema output_schema,
+                              std::shared_ptr<ThreadPool> thread_pool = nullptr)
         : VectorizedOperator(std::move(output_schema)),
           child_(std::move(child)),
           group_by_(std::move(group_by)),
-          aggregates_(std::move(aggregates)) {
+          aggregates_(std::move(aggregates)),
+          thread_pool_(thread_pool) {
         input_batch_ = VectorBatch::create(child_->output_schema());
 
         // Pre-resolve column indices once in constructor
@@ -759,6 +767,16 @@ class VectorizedGroupByOperator : public VectorizedOperator {
             agg_.init(65536, aggregates_.size(), group_by_.size());
         } else {
             hash_agg_.init(65536, aggregates_.size());
+        }
+
+        // Initialize parallel aggregation (Phase 4)
+        if (thread_pool_ && thread_pool_->num_threads() > 1) {
+            num_threads_ = thread_pool_->num_threads();
+            thread_hash_aggs_.resize(num_threads_);
+            thread_group_keys_.resize(num_threads_);
+            for (size_t t = 0; t < num_threads_; ++t) {
+                thread_hash_aggs_[t].init(65536 / num_threads_, aggregates_.size());
+            }
         }
 
         // Initialize batch encoding scratch space
@@ -926,20 +944,103 @@ class VectorizedGroupByOperator : public VectorizedOperator {
 
         // Phase 2: Row-by-row hash table lookup and accumulator updates
         // (Hash computation done in batch above; lookup is fast)
-        for (size_t r = 0; r < n; ++r) {
+        if (num_threads_ > 1) {
+            // Parallel path: partition rows by thread and process in parallel
+            std::vector<std::vector<size_t>> thread_row_indices(num_threads_);
+            for (size_t r = 0; r < n; ++r) {
+                size_t thread_idx = batch_hashes_[r] % num_threads_;
+                thread_row_indices[thread_idx].push_back(r);
+            }
+
+            // Submit parallel tasks for each thread
+            std::vector<std::future<void>> futures;
+            for (size_t t = 0; t < num_threads_; ++t) {
+                auto& indices = thread_row_indices[t];
+                if (indices.empty()) continue;
+
+                futures.push_back(thread_pool_->submit([this, &batch, &indices, t]() {
+                    this->process_thread_batch(batch, indices, t);
+                }));
+            }
+            thread_pool_->wait();
+        } else {
+            // Sequential path (original code)
+            for (size_t r = 0; r < n; ++r) {
+                auto& bucket =
+                    all_int64_keys_
+                        ? hash_agg_.find_or_insert_int64(batch_int64_keys_[r], batch_hashes_[r])
+                        : hash_agg_.find_or_insert(&batch_key_buffer_[r * MAX_KEY_LEN],
+                                                   batch_key_lens_[r], batch_hashes_[r]);
+
+                // Store key for output if first time
+                if (bucket.is_new) {
+                    std::vector<common::Value> key_vals;
+                    for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
+                        key_vals.push_back(batch.get_column(group_by_col_indices_[i]).get(r));
+                    }
+                    hash_group_keys_.push_back(std::move(key_vals));
+                }
+
+                // Update accumulators directly in bucket
+                for (size_t i = 0; i < aggregates_.size(); ++i) {
+                    const auto& agg = aggregates_[i];
+                    if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+                        bucket.counts[i]++;
+                    } else if ((agg.type == AggregateType::Sum || agg.type == AggregateType::Avg) &&
+                               agg.input_col_idx >= 0) {
+                        const auto& col = batch.get_column(agg.input_col_idx);
+                        if (!col.is_null(r)) {
+                            bucket.counts[i]++;
+                            if (col.type() == common::ValueType::TYPE_INT64) {
+                                auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
+                                bucket.sums_int64[i] += num_col.raw_data()[r];
+                            } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                                auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
+                                bucket.sums_float64[i] += num_col.raw_data()[r];
+                                bucket.has_float_value[i] = true;
+                            }
+                        }
+                    } else if ((agg.type == AggregateType::Min || agg.type == AggregateType::Max) &&
+                               agg.input_col_idx >= 0) {
+                        const auto& col = batch.get_column(agg.input_col_idx);
+                        if (!col.is_null(r)) {
+                            auto val = col.get(r).to_int64();
+                            if (!bucket.has_mins[i]) {
+                                bucket.mins[i] = val;
+                                bucket.maxes[i] = val;
+                                bucket.has_mins[i] = true;
+                            } else {
+                                bucket.mins[i] = std::min(bucket.mins[i], val);
+                                bucket.maxes[i] = std::max(bucket.maxes[i], val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        input_batch_->clear();
+    }
+
+    void process_thread_batch(VectorBatch& batch, const std::vector<size_t>& row_indices, size_t thread_idx) {
+        auto& hash_agg = thread_hash_aggs_[thread_idx];
+        auto& group_keys = thread_group_keys_[thread_idx];
+
+        for (size_t local_idx = 0; local_idx < row_indices.size(); ++local_idx) {
+            size_t r = row_indices[local_idx];
+
             auto& bucket =
                 all_int64_keys_
-                    ? hash_agg_.find_or_insert_int64(batch_int64_keys_[r], batch_hashes_[r])
-                    : hash_agg_.find_or_insert(&batch_key_buffer_[r * MAX_KEY_LEN],
+                    ? hash_agg.find_or_insert_int64(batch_int64_keys_[r], batch_hashes_[r])
+                    : hash_agg.find_or_insert(&batch_key_buffer_[r * MAX_KEY_LEN],
                                                batch_key_lens_[r], batch_hashes_[r]);
 
-            // Store key for output if first time
+            // Track new groups in this thread's hash table
             if (bucket.is_new) {
                 std::vector<common::Value> key_vals;
                 for (size_t i = 0; i < group_by_col_indices_.size(); ++i) {
                     key_vals.push_back(batch.get_column(group_by_col_indices_[i]).get(r));
                 }
-                hash_group_keys_.push_back(std::move(key_vals));
+                group_keys.push_back(std::move(key_vals));
             }
 
             // Update accumulators directly in bucket
@@ -978,7 +1079,6 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 }
             }
         }
-        input_batch_->clear();
     }
 
     void update_accumulators(VectorizedGroupState& state, VectorBatch& batch, size_t row_idx) {
