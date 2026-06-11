@@ -1749,9 +1749,10 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         // Build scan's reduced schema (table columns only, not aggregate output columns)
         executor::Schema scan_reduced_schema;
         for (size_t idx : required_col_indices) {
-            scan_reduced_schema.add_column(current_root->output_schema().get_column(idx).name(),
- current_root->output_schema().get_column(idx).type(),
-                                           current_root->output_schema().get_column(idx).nullable());
+            scan_reduced_schema.add_column(
+                current_root->output_schema().get_column(idx).name(),
+                current_root->output_schema().get_column(idx).type(),
+                current_root->output_schema().get_column(idx).nullable());
         }
 
         base_scan->set_required_columns(required_col_indices, scan_reduced_schema);
