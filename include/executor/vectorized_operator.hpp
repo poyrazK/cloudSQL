@@ -422,6 +422,9 @@ class OpenAddressHashAgg {
         int64_t mins[MAX_AGGREGATES] = {0};
         int64_t maxes[MAX_AGGREGATES] = {0};
         bool has_mins[MAX_AGGREGATES] = {false};  // Track if initialized
+        double mins_float64[MAX_AGGREGATES] = {0.0};  // Float MIN accumulator
+        double maxes_float64[MAX_AGGREGATES] = {0.0};  // Float MAX accumulator
+        bool has_float_minmax[MAX_AGGREGATES] = {false};  // Track if float MIN/MAX initialized
         uint8_t key_type = 0;                     // 0x02=INT64, 0x04=STRING
         uint32_t key_len = 0;                     // For non-int64 keys
         uint8_t key_data[64];                     // Stored key bytes for iteration
@@ -680,6 +683,7 @@ class DirectIndexAgg {
    private:
     struct GroupSlot {
         bool valid = false;
+        bool emitted = false;  // Track if this slot's group has been output
         int64_t counts[MAX_AGGREGATES] = {0};
         int64_t sums_int64[MAX_AGGREGATES] = {0};
         double sums_float64[MAX_AGGREGATES] = {0.0};
@@ -687,6 +691,9 @@ class DirectIndexAgg {
         int64_t mins[MAX_AGGREGATES] = {0};
         int64_t maxes[MAX_AGGREGATES] = {0};
         bool has_mins[MAX_AGGREGATES] = {false};
+        double mins_float64[MAX_AGGREGATES] = {0.0};  // Float MIN accumulator
+        double maxes_float64[MAX_AGGREGATES] = {0.0};  // Float MAX accumulator
+        bool has_float_minmax[MAX_AGGREGATES] = {false};  // Track if float MIN/MAX initialized
     };
 
     size_t num_aggs_ = 0;
@@ -707,7 +714,8 @@ class DirectIndexAgg {
     }
 
     GroupSlot& get_slot(int64_t key) {
-        size_t idx = static_cast<size_t>(key - min_key_);
+        // Normalize key through int8/uint8 to avoid negative wraparound
+        size_t idx = static_cast<size_t>(static_cast<uint8_t>(static_cast<int8_t>(key)));
         return slots_[idx];
     }
 
@@ -1013,6 +1021,10 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 // Also merge group keys
                 hash_group_keys_.insert(hash_group_keys_.end(), thread_group_keys_[t].begin(),
                                         thread_group_keys_[t].end());
+                // Reset thread-local state to avoid double-counting on subsequent merges
+                thread_hash_aggs_[t].init(std::max(size_t(8192), 65536 / num_threads_),
+                                          aggregates_.size());
+                thread_group_keys_[t].clear();
             }
         } else {
             // Sequential path (original code)
@@ -1094,14 +1106,26 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                        agg.input_col_idx >= 0) {
                 const auto& col = batch.get_column(agg.input_col_idx);
                 if (!col.is_null(row_idx)) {
-                    auto val = col.get(row_idx).to_int64();
-                    if (!bucket.has_mins[i]) {
-                        bucket.mins[i] = val;
-                        bucket.maxes[i] = val;
-                        bucket.has_mins[i] = true;
+                    if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                        auto val = col.get(row_idx).to_float64();
+                        if (!bucket.has_float_minmax[i]) {
+                            bucket.mins_float64[i] = val;
+                            bucket.maxes_float64[i] = val;
+                            bucket.has_float_minmax[i] = true;
+                        } else {
+                            bucket.mins_float64[i] = std::min(bucket.mins_float64[i], val);
+                            bucket.maxes_float64[i] = std::max(bucket.maxes_float64[i], val);
+                        }
                     } else {
-                        bucket.mins[i] = std::min(bucket.mins[i], val);
-                        bucket.maxes[i] = std::max(bucket.maxes[i], val);
+                        auto val = col.get(row_idx).to_int64();
+                        if (!bucket.has_mins[i]) {
+                            bucket.mins[i] = val;
+                            bucket.maxes[i] = val;
+                            bucket.has_mins[i] = true;
+                        } else {
+                            bucket.mins[i] = std::min(bucket.mins[i], val);
+                            bucket.maxes[i] = std::max(bucket.maxes[i], val);
+                        }
                     }
                 }
             }
@@ -1149,8 +1173,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         // Find first valid group slot with output pending
         for (size_t idx : agg_.valid_slots()) {
             auto& slot = agg_.slot(idx);
-            if (slot.counts[0] > 0 || (slot.valid && aggregates_[0].type == AggregateType::Count &&
-                                       aggregates_[0].input_col_idx < 0)) {
+            if (!slot.emitted && (slot.counts[0] > 0 || (slot.valid && aggregates_[0].type == AggregateType::Count &&
+                                       aggregates_[0].input_col_idx < 0))) {
                 // Found a group with data
                 // int8 range: -128 to 127
                 int64_t key = static_cast<int64_t>(static_cast<int8_t>(idx));
@@ -1176,7 +1200,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                             common::Value::make_int64(slot.maxes[i]));
                     }
                 }
-                slot.counts[0] = 0;  // Mark as output
+                slot.emitted = true;  // Mark as output to prevent re-emission
                 return true;
             }
         }
