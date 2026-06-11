@@ -144,8 +144,8 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
                 size_t end = std::min(start + range_size, total_rows);
                 current_row_ = end;
 
-                auto batch = VectorBatch::create(
-                    required_col_indices_.empty() ? output_schema_ : reduced_schema_);
+                auto batch = VectorBatch::create(required_col_indices_.empty() ? output_schema_
+                                                                               : reduced_schema_);
                 parallel_results_.push_back(std::move(batch));
             }
 
