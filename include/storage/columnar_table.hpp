@@ -38,6 +38,16 @@ class ColumnarTable {
     bool read_batch(uint64_t start_row, uint32_t batch_size, executor::VectorBatch& out_batch);
 
     /**
+     * @brief Load a batch of data for only the specified columns
+     * @param start_row Starting row index
+     * @param batch_size Maximum rows to read
+     * @param out_batch Output batch (pre-initialized with required schema)
+     * @param col_indices Columns to read (indices into table's schema)
+     */
+    bool read_batch(uint64_t start_row, uint32_t batch_size, executor::VectorBatch& out_batch,
+                    const std::vector<size_t>& col_indices);
+
+    /**
      * @brief Append a batch of data to the table
      */
     bool append_batch(const executor::VectorBatch& batch);
