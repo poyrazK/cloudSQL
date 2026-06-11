@@ -1512,6 +1512,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
     auto thread_pool = std::make_shared<executor::ThreadPool>(std::thread::hardware_concurrency());
     std::unique_ptr<VectorizedOperator> current_root =
         std::make_unique<VectorizedSeqScanOperator>(base_table_name, col_table, thread_pool);
+    VectorizedSeqScanOperator* base_scan =
+        static_cast<VectorizedSeqScanOperator*>(current_root.get());
 
     // Track estimated output rows for join reordering decisions
     uint64_t current_est_rows = optimizer::RowEstimator::estimate_scan_rows(*base_table_meta);
@@ -1720,6 +1722,7 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
         }
 
         executor::Schema output_schema;
+        std::vector<size_t> required_col_indices;
         for (const auto& gb : stmt.group_by()) {
             const auto& gb_name = gb->to_string();
             size_t idx = current_root->output_schema().find_column(gb_name);
@@ -1727,12 +1730,32 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
                 output_schema.add_column(current_root->output_schema().get_column(idx).name(),
                                          current_root->output_schema().get_column(idx).type(),
                                          current_root->output_schema().get_column(idx).nullable());
+                required_col_indices.push_back(idx);
             }
         }
         for (size_t i = 0; i < agg_infos.size(); ++i) {
             output_schema.add_column("agg_" + std::to_string(i), common::ValueType::TYPE_FLOAT64,
                                      false);
+            if (agg_infos[i].input_col_idx >= 0) {
+                required_col_indices.push_back(static_cast<size_t>(agg_infos[i].input_col_idx));
+            }
         }
+
+        // Deduplicate required_col_indices (same column may appear in GROUP BY and aggregate)
+        sort(required_col_indices.begin(), required_col_indices.end());
+        required_col_indices.erase(unique(required_col_indices.begin(), required_col_indices.end()),
+                                   required_col_indices.end());
+
+        // Build scan's reduced schema (table columns only, not aggregate output columns)
+        executor::Schema scan_reduced_schema;
+        for (size_t idx : required_col_indices) {
+            scan_reduced_schema.add_column(
+                current_root->output_schema().get_column(idx).name(),
+                current_root->output_schema().get_column(idx).type(),
+                current_root->output_schema().get_column(idx).nullable());
+        }
+
+        base_scan->set_required_columns(required_col_indices, scan_reduced_schema);
 
         auto agg_op = std::make_unique<VectorizedGroupByOperator>(
             std::move(current_root), std::move(group_by), std::move(agg_infos), output_schema,
