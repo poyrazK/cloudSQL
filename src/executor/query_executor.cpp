@@ -1741,7 +1741,20 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
             }
         }
 
-        base_scan->set_required_columns(required_col_indices, output_schema);
+        // Deduplicate required_col_indices (same column may appear in GROUP BY and aggregate)
+        sort(required_col_indices.begin(), required_col_indices.end());
+        required_col_indices.erase(unique(required_col_indices.begin(), required_col_indices.end()),
+                                   required_col_indices.end());
+
+        // Build scan's reduced schema (table columns only, not aggregate output columns)
+        executor::Schema scan_reduced_schema;
+        for (size_t idx : required_col_indices) {
+            scan_reduced_schema.add_column(current_root->output_schema().get_column(idx).name(),
+ current_root->output_schema().get_column(idx).type(),
+                                           current_root->output_schema().get_column(idx).nullable());
+        }
+
+        base_scan->set_required_columns(required_col_indices, scan_reduced_schema);
 
         auto agg_op = std::make_unique<VectorizedGroupByOperator>(
             std::move(current_root), std::move(group_by), std::move(agg_infos), output_schema,
