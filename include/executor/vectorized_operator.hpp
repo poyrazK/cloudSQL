@@ -421,13 +421,13 @@ class OpenAddressHashAgg {
         bool has_float_value[MAX_AGGREGATES] = {false};
         int64_t mins[MAX_AGGREGATES] = {0};
         int64_t maxes[MAX_AGGREGATES] = {0};
-        bool has_mins[MAX_AGGREGATES] = {false};  // Track if initialized
-        double mins_float64[MAX_AGGREGATES] = {0.0};  // Float MIN accumulator
-        double maxes_float64[MAX_AGGREGATES] = {0.0};  // Float MAX accumulator
+        bool has_mins[MAX_AGGREGATES] = {false};          // Track if initialized
+        double mins_float64[MAX_AGGREGATES] = {0.0};      // Float MIN accumulator
+        double maxes_float64[MAX_AGGREGATES] = {0.0};     // Float MAX accumulator
         bool has_float_minmax[MAX_AGGREGATES] = {false};  // Track if float MIN/MAX initialized
-        uint8_t key_type = 0;                     // 0x02=INT64, 0x04=STRING
-        uint32_t key_len = 0;                     // For non-int64 keys
-        uint8_t key_data[64];                     // Stored key bytes for iteration
+        uint8_t key_type = 0;                             // 0x02=INT64, 0x04=STRING
+        uint32_t key_len = 0;                             // For non-int64 keys
+        uint8_t key_data[64];                             // Stored key bytes for iteration
     };
 
     std::vector<HashBucket> buckets_;
@@ -691,8 +691,8 @@ class DirectIndexAgg {
         int64_t mins[MAX_AGGREGATES] = {0};
         int64_t maxes[MAX_AGGREGATES] = {0};
         bool has_mins[MAX_AGGREGATES] = {false};
-        double mins_float64[MAX_AGGREGATES] = {0.0};  // Float MIN accumulator
-        double maxes_float64[MAX_AGGREGATES] = {0.0};  // Float MAX accumulator
+        double mins_float64[MAX_AGGREGATES] = {0.0};      // Float MIN accumulator
+        double maxes_float64[MAX_AGGREGATES] = {0.0};     // Float MAX accumulator
         bool has_float_minmax[MAX_AGGREGATES] = {false};  // Track if float MIN/MAX initialized
     };
 
@@ -1173,8 +1173,9 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         // Find first valid group slot with output pending
         for (size_t idx : agg_.valid_slots()) {
             auto& slot = agg_.slot(idx);
-            if (!slot.emitted && (slot.counts[0] > 0 || (slot.valid && aggregates_[0].type == AggregateType::Count &&
-                                       aggregates_[0].input_col_idx < 0))) {
+            if (!slot.emitted &&
+                (slot.counts[0] > 0 || (slot.valid && aggregates_[0].type == AggregateType::Count &&
+                                        aggregates_[0].input_col_idx < 0))) {
                 // Found a group with data
                 // int8 range: -128 to 127
                 int64_t key = static_cast<int64_t>(static_cast<int8_t>(idx));
