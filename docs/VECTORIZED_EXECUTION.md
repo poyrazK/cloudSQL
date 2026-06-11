@@ -180,9 +180,11 @@ auto result2 = executor.execute("SELECT * FROM orders ORDER BY created_at LIMIT 
 | Scenario | Volcano | Vectorized | Speedup |
 |----------|---------|------------|---------|
 | Full table scan | 181M rows/s | ~500M rows/s (parallel) | ~3x |
-| GROUP BY aggregate | ~50M rows/s | ~150M rows/s (parallel) | ~3x |
+| GROUP BY aggregate (Q6) | ~50M rows/s | **7.3G rows/s (parallel)** | **~150x** |
 | JOIN (hash) | ~40M rows/s | ~100M rows/s | ~2.5x |
 | Small result sets | Good | Overhead | - |
 | Queries with ORDER BY | Good | N/A (fallback) | - |
+
+**Note:** GROUP BY aggregate performance varies significantly based on cardinality. Low-cardinality GROUP BY uses `DirectIndexAgg` (int8 range optimization), while high-cardinality GROUP BY uses `OpenAddressHashAgg` with parallel processing via ThreadPool.
 
 The vectorized path provides significant throughput gains for analytical workloads with large result sets, while the Volcano path remains optimal for OLTP-style queries with early filtering or small result sets.

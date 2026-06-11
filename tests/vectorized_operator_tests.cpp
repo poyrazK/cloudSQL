@@ -1542,6 +1542,79 @@ TEST_F(VectorizedGroupByTests, VectorizedHashJoinFull) {
     EXPECT_EQ(null_left_count, 1);   // id=4 has no left match
 }
 
+TEST_F(VectorizedGroupByTests, ParallelAggregationCorrectness) {
+    // Test that parallel aggregation (num_threads > 1) produces correct results.
+    // We verify correctness by checking that the total counts and sums across all
+    // groups match expected values, without relying on specific output ordering.
+
+    // Use TEXT column to ensure OpenAddressHashAgg path (tests parallel hash aggregation)
+    Schema schema;
+    schema.add_column("cat", common::ValueType::TYPE_TEXT);
+    schema.add_column("val", common::ValueType::TYPE_INT64);
+
+    auto table_ptr = std::make_shared<ColumnarTable>("parallel_group", *storage_, schema);
+    ASSERT_TRUE(table_ptr->create());
+    ASSERT_TRUE(table_ptr->open());
+
+    // Insert 100 rows with 10 distinct group keys (10 rows each)
+    auto batch = VectorBatch::create(schema);
+    for (int64_t i = 0; i < 100; ++i) {
+        std::string cat = "cat" + std::to_string(i % 10);  // 10 distinct categories
+        batch->append_tuple(
+            Tuple({common::Value::make_text(cat), common::Value::make_int64(i + 1)}));
+    }
+    ASSERT_TRUE(table_ptr->append_batch(*batch));
+
+    // Create a 4-thread pool for parallel execution
+    auto thread_pool = std::make_shared<ThreadPool>(4);
+
+    auto scan = std::make_unique<VectorizedSeqScanOperator>("parallel_group", table_ptr);
+
+    Schema out_schema;
+    out_schema.add_column("cat", common::ValueType::TYPE_TEXT);
+    out_schema.add_column("cnt", common::ValueType::TYPE_INT64);
+    out_schema.add_column("sum", common::ValueType::TYPE_INT64);
+
+    std::vector<std::unique_ptr<parser::Expression>> group_by;
+    group_by.push_back(std::make_unique<ColumnExpr>("cat"));
+
+    std::vector<VectorizedAggregateInfo> aggs;
+    aggs.push_back({AggregateType::Count, -1});
+    aggs.push_back({AggregateType::Sum, 1});  // sum of "val" column
+
+    VectorizedGroupByOperator groupby(std::move(scan), std::move(group_by), std::move(aggs),
+                                      std::move(out_schema), thread_pool);
+
+    auto result = VectorBatch::create(groupby.output_schema());
+
+    // Collect all results into maps keyed by category string
+    std::map<std::string, std::pair<int64_t, int64_t>> results;  // cat -> (count, sum)
+
+    while (groupby.next_batch(*result)) {
+        for (size_t i = 0; i < result->row_count(); ++i) {
+            std::string cat = result->get_column(0).get(i).as_text();
+            int64_t cnt = result->get_column(1).get(i).as_int64();
+            int64_t sum = result->get_column(2).get(i).as_int64();
+            results[cat] = {cnt, sum};
+        }
+        result->clear();
+    }
+
+    // Verify we got 10 groups
+    ASSERT_EQ(results.size(), 10) << "Should have 10 distinct groups";
+
+    // Verify each group has count=10 and correct sum
+    // cat0: values 1,11,21,...,91 sum to 460
+    // cat1: values 2,12,22,...,92 sum to 470, etc.
+    for (int i = 0; i < 10; ++i) {
+        std::string cat = "cat" + std::to_string(i);
+        ASSERT_TRUE(results.count(cat) > 0) << "Category " << cat << " missing";
+        EXPECT_EQ(results[cat].first, 10) << "Count mismatch for " << cat;
+        EXPECT_EQ(results[cat].second, static_cast<int64_t>(10 * i + 460))
+            << "Sum mismatch for " << cat;
+    }
+}
+
 }  // namespace
 
 // ============= ThreadPool Tests =============
