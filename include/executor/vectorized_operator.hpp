@@ -73,6 +73,8 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
     size_t num_threads_ = 1;
     std::vector<std::unique_ptr<VectorBatch>> parallel_results_;
     size_t parallel_idx_ = 0;
+    std::vector<size_t> required_col_indices_;
+    executor::Schema reduced_schema_;
 
    public:
     VectorizedSeqScanOperator(std::string table_name, std::shared_ptr<storage::ColumnarTable> table,
@@ -94,9 +96,23 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
         return next_batch_parallel(out_batch);
     }
 
+    void set_required_columns(std::vector<size_t> col_indices, executor::Schema reduced_schema) {
+        required_col_indices_ = std::move(col_indices);
+        reduced_schema_ = std::move(reduced_schema);
+    }
+
    private:
     bool next_batch_sequential(VectorBatch& out_batch) {
         if (current_row_ >= table_->row_count()) {
+            return false;
+        }
+
+        if (!required_col_indices_.empty()) {
+            out_batch.init_from_schema(reduced_schema_);
+            if (table_->read_batch(current_row_, batch_size_, out_batch, required_col_indices_)) {
+                current_row_ += out_batch.row_count();
+                return true;
+            }
             return false;
         }
 
@@ -128,7 +144,8 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
                 size_t end = std::min(start + range_size, total_rows);
                 current_row_ = end;
 
-                auto batch = VectorBatch::create(output_schema_);
+                auto batch = VectorBatch::create(
+                    required_col_indices_.empty() ? output_schema_ : reduced_schema_);
                 parallel_results_.push_back(std::move(batch));
             }
 
@@ -139,10 +156,17 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
                     parallel_results_[t]->set_row_count(0);
                     continue;
                 }
-                thread_pool_->submit([this, t, start, rows_to_read]() {
-                    table_->read_batch(start, static_cast<uint32_t>(rows_to_read),
-                                       *parallel_results_[t]);
-                });
+                if (!required_col_indices_.empty()) {
+                    thread_pool_->submit([this, t, start, rows_to_read]() {
+                        table_->read_batch(start, static_cast<uint32_t>(rows_to_read),
+                                           *parallel_results_[t], required_col_indices_);
+                    });
+                } else {
+                    thread_pool_->submit([this, t, start, rows_to_read]() {
+                        table_->read_batch(start, static_cast<uint32_t>(rows_to_read),
+                                           *parallel_results_[t]);
+                    });
+                }
             }
 
             thread_pool_->wait();
