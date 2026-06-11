@@ -1512,7 +1512,8 @@ std::unique_ptr<VectorizedOperator> QueryExecutor::build_vectorized_plan(
     auto thread_pool = std::make_shared<executor::ThreadPool>(std::thread::hardware_concurrency());
     std::unique_ptr<VectorizedOperator> current_root =
         std::make_unique<VectorizedSeqScanOperator>(base_table_name, col_table, thread_pool);
-    VectorizedSeqScanOperator* base_scan = static_cast<VectorizedSeqScanOperator*>(current_root.get());
+    VectorizedSeqScanOperator* base_scan =
+        static_cast<VectorizedSeqScanOperator*>(current_root.get());
 
     // Track estimated output rows for join reordering decisions
     uint64_t current_est_rows = optimizer::RowEstimator::estimate_scan_rows(*base_table_meta);

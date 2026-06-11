@@ -461,9 +461,8 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
                 }
             }
         } else {
-            throw std::runtime_error(
-                "ColumnarTable::read_batch(col_indices): Unsupported type " +
-                std::to_string(static_cast<int>(type)));
+            throw std::runtime_error("ColumnarTable::read_batch(col_indices): Unsupported type " +
+                                     std::to_string(static_cast<int>(type)));
         }
     }
     out_batch.set_row_count(actual_rows);
