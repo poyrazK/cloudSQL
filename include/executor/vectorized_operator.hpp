@@ -463,6 +463,14 @@ class OpenAddressHashAgg {
     static constexpr size_t kInitialCapacity = 1024;
 
    public:
+    // Accessors for external iteration and batch processing
+    [[nodiscard]] size_t mask() const { return mask_; }
+    [[nodiscard]] const std::vector<size_t>& valid_indices() const { return valid_indices_; }
+    [[nodiscard]] HashBucket& bucket_at(size_t idx) { return buckets_[idx]; }
+    [[nodiscard]] size_t bucket_index(const HashBucket& bucket) const {
+        return static_cast<size_t>(&bucket - buckets_.data());
+    }
+
     static uint64_t hash_bytes(const uint8_t* data, size_t len) {
         // FNV-1a 64-bit hash
         uint64_t hash = 14695981039346656037ull;
@@ -522,9 +530,13 @@ class OpenAddressHashAgg {
                     bucket.sums_int64[a] = 0;
                     bucket.sums_float64[a] = 0.0;
                     bucket.has_float_value[a] = false;
-                    bucket.mins[a] = 0;
-                    bucket.maxes[a] = 0;
+                    // Sentinel-based MIN/MAX initialization (eliminates has_mins branching)
+                    bucket.mins[a] = std::numeric_limits<int64_t>::max();
+                    bucket.maxes[a] = std::numeric_limits<int64_t>::min();
                     bucket.has_mins[a] = false;
+                    bucket.mins_float64[a] = std::numeric_limits<double>::max();
+                    bucket.maxes_float64[a] = std::numeric_limits<double>::lowest();
+                    bucket.has_float_minmax[a] = false;
                 }
                 num_occupied_++;
                 valid_indices_.push_back(idx);
@@ -566,9 +578,13 @@ class OpenAddressHashAgg {
                     bucket.sums_int64[a] = 0;
                     bucket.sums_float64[a] = 0.0;
                     bucket.has_float_value[a] = false;
-                    bucket.mins[a] = 0;
-                    bucket.maxes[a] = 0;
+                    // Sentinel-based MIN/MAX initialization (eliminates has_mins branching)
+                    bucket.mins[a] = std::numeric_limits<int64_t>::max();
+                    bucket.maxes[a] = std::numeric_limits<int64_t>::min();
                     bucket.has_mins[a] = false;
+                    bucket.mins_float64[a] = std::numeric_limits<double>::max();
+                    bucket.maxes_float64[a] = std::numeric_limits<double>::lowest();
+                    bucket.has_float_minmax[a] = false;
                 }
                 num_occupied_++;
                 valid_indices_.push_back(idx);
@@ -784,9 +800,11 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     static constexpr size_t MAX_KEY_LEN = 256;
     std::vector<uint8_t>
         batch_key_buffer_;  // Heap-allocated scratch: MAX_BATCH_SIZE * MAX_KEY_LEN bytes
-    std::vector<uint64_t> batch_hashes_;     // batch_size
+    std::vector<uint64_t> batch_hashes_;      // batch_size
     std::vector<int64_t> batch_int64_keys_;  // batch_size (for int64-only path)
     std::vector<size_t> batch_key_lens_;     // batch_size
+    std::vector<size_t> batch_bucket_idx_;   // batch_size - bucket index for each row
+    std::vector<size_t> batch_active_buckets_;  // batch_size - unique buckets touched this batch
     bool all_int64_keys_ = false;            // True when all GROUP BY cols are INT64
 
     // Parallel aggregation support (Phase 4)
@@ -851,6 +869,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         batch_hashes_.resize(MAX_BATCH_SIZE);
         batch_int64_keys_.resize(MAX_BATCH_SIZE);
         batch_key_lens_.resize(MAX_BATCH_SIZE);
+        batch_bucket_idx_.resize(MAX_BATCH_SIZE);
+        batch_active_buckets_.resize(MAX_BATCH_SIZE);
 
         // Create schema for group key evaluation
         Schema key_schema;
@@ -1051,7 +1071,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 thread_group_keys_[t].clear();
             }
         } else {
-            // Sequential path (original code)
+            // Sequential path (original code with static_cast and sentinel optimizations)
             for (size_t r = 0; r < n; ++r) {
                 auto& bucket =
                     all_int64_keys_
@@ -1118,10 +1138,11 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 if (!col.is_null(row_idx)) {
                     bucket.counts[i]++;
                     if (col.type() == common::ValueType::TYPE_INT64) {
-                        auto& num_col = dynamic_cast<const NumericVector<int64_t>&>(col);
+                        // static_cast is faster than dynamic_cast - type already verified
+                        const auto& num_col = static_cast<const NumericVector<int64_t>&>(col);
                         bucket.sums_int64[i] += num_col.raw_data()[row_idx];
                     } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
-                        auto& num_col = dynamic_cast<const NumericVector<double>&>(col);
+                        const auto& num_col = static_cast<const NumericVector<double>&>(col);
                         bucket.sums_float64[i] += num_col.raw_data()[row_idx];
                         bucket.has_float_value[i] = true;
                     }
@@ -1132,24 +1153,79 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                 if (!col.is_null(row_idx)) {
                     if (col.type() == common::ValueType::TYPE_FLOAT64) {
                         auto val = col.get(row_idx).to_float64();
-                        if (!bucket.has_float_minmax[i]) {
-                            bucket.mins_float64[i] = val;
-                            bucket.maxes_float64[i] = val;
-                            bucket.has_float_minmax[i] = true;
-                        } else {
-                            bucket.mins_float64[i] = std::min(bucket.mins_float64[i], val);
-                            bucket.maxes_float64[i] = std::max(bucket.maxes_float64[i], val);
-                        }
+                        // Sentinel-based: mins/maxes initialized to max/min values
+                        bucket.mins_float64[i] = std::min(bucket.mins_float64[i], val);
+                        bucket.maxes_float64[i] = std::max(bucket.maxes_float64[i], val);
                     } else {
                         auto val = col.get(row_idx).to_int64();
-                        if (!bucket.has_mins[i]) {
-                            bucket.mins[i] = val;
-                            bucket.maxes[i] = val;
-                            bucket.has_mins[i] = true;
-                        } else {
-                            bucket.mins[i] = std::min(bucket.mins[i], val);
-                            bucket.maxes[i] = std::max(bucket.maxes[i], val);
-                        }
+                        // Sentinel-based: mins/maxes initialized to max/min values
+                        bucket.mins[i] = std::min(bucket.mins[i], val);
+                        bucket.maxes[i] = std::max(bucket.maxes[i], val);
+                    }
+                }
+            }
+        }
+    }
+
+    // Batch-oriented accumulator update - processes multiple rows per call
+    // Type resolution happens once per aggregate, not per-row
+    template <typename Bucket>
+    void update_aggregate_batch(Bucket& bucket, const ColumnVector& col, size_t agg_idx,
+                               const size_t* row_indices, size_t num_rows) {
+        const auto& agg = aggregates_[agg_idx];
+
+        if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
+            // COUNT(*) - all rows contribute
+            bucket.counts[agg_idx] += num_rows;
+            return;
+        }
+
+        if (agg.input_col_idx < 0) return;
+
+        // Type resolved ONCE, then batch process all rows
+        if (col.type() == common::ValueType::TYPE_INT64) {
+            const auto& num_col = static_cast<const NumericVector<int64_t>&>(col);
+            const int64_t* raw = num_col.raw_data();
+            for (size_t j = 0; j < num_rows; ++j) {
+                size_t r = row_indices[j];
+                if (!num_col.is_null(r)) {
+                    bucket.counts[agg_idx]++;
+                    bucket.sums_int64[agg_idx] += raw[r];
+                }
+            }
+        } else if (col.type() == common::ValueType::TYPE_FLOAT64) {
+            const auto& num_col = static_cast<const NumericVector<double>&>(col);
+            const double* raw = num_col.raw_data();
+            for (size_t j = 0; j < num_rows; ++j) {
+                size_t r = row_indices[j];
+                if (!num_col.is_null(r)) {
+                    bucket.counts[agg_idx]++;
+                    bucket.sums_float64[agg_idx] += raw[r];
+                    bucket.has_float_value[agg_idx] = true;
+                }
+            }
+        } else if (agg.type == AggregateType::Min || agg.type == AggregateType::Max) {
+            // MIN/MAX with sentinel-based approach (no branch on has_mins)
+            if (col.type() == common::ValueType::TYPE_FLOAT64) {
+                const auto& num_col = static_cast<const NumericVector<double>&>(col);
+                const double* raw = num_col.raw_data();
+                for (size_t j = 0; j < num_rows; ++j) {
+                    size_t r = row_indices[j];
+                    if (!num_col.is_null(r)) {
+                        double val = raw[r];
+                        bucket.mins_float64[agg_idx] = std::min(bucket.mins_float64[agg_idx], val);
+                        bucket.maxes_float64[agg_idx] = std::max(bucket.maxes_float64[agg_idx], val);
+                    }
+                }
+            } else {
+                const auto& num_col = static_cast<const NumericVector<int64_t>&>(col);
+                const int64_t* raw = num_col.raw_data();
+                for (size_t j = 0; j < num_rows; ++j) {
+                    size_t r = row_indices[j];
+                    if (!num_col.is_null(r)) {
+                        int64_t val = raw[r];
+                        bucket.mins[agg_idx] = std::min(bucket.mins[agg_idx], val);
+                        bucket.maxes[agg_idx] = std::max(bucket.maxes[agg_idx], val);
                     }
                 }
             }
