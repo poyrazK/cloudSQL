@@ -800,12 +800,12 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     static constexpr size_t MAX_KEY_LEN = 256;
     std::vector<uint8_t>
         batch_key_buffer_;  // Heap-allocated scratch: MAX_BATCH_SIZE * MAX_KEY_LEN bytes
-    std::vector<uint64_t> batch_hashes_;      // batch_size
-    std::vector<int64_t> batch_int64_keys_;  // batch_size (for int64-only path)
-    std::vector<size_t> batch_key_lens_;     // batch_size
-    std::vector<size_t> batch_bucket_idx_;   // batch_size - bucket index for each row
+    std::vector<uint64_t> batch_hashes_;        // batch_size
+    std::vector<int64_t> batch_int64_keys_;     // batch_size (for int64-only path)
+    std::vector<size_t> batch_key_lens_;        // batch_size
+    std::vector<size_t> batch_bucket_idx_;      // batch_size - bucket index for each row
     std::vector<size_t> batch_active_buckets_;  // batch_size - unique buckets touched this batch
-    bool all_int64_keys_ = false;            // True when all GROUP BY cols are INT64
+    bool all_int64_keys_ = false;               // True when all GROUP BY cols are INT64
 
     // Parallel aggregation support (Phase 4)
     std::shared_ptr<ThreadPool> thread_pool_;
@@ -1171,7 +1171,7 @@ class VectorizedGroupByOperator : public VectorizedOperator {
     // Type resolution happens once per aggregate, not per-row
     template <typename Bucket>
     void update_aggregate_batch(Bucket& bucket, const ColumnVector& col, size_t agg_idx,
-                               const size_t* row_indices, size_t num_rows) {
+                                const size_t* row_indices, size_t num_rows) {
         const auto& agg = aggregates_[agg_idx];
 
         if (agg.type == AggregateType::Count && agg.input_col_idx < 0) {
@@ -1214,7 +1214,8 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                     if (!num_col.is_null(r)) {
                         double val = raw[r];
                         bucket.mins_float64[agg_idx] = std::min(bucket.mins_float64[agg_idx], val);
-                        bucket.maxes_float64[agg_idx] = std::max(bucket.maxes_float64[agg_idx], val);
+                        bucket.maxes_float64[agg_idx] =
+                            std::max(bucket.maxes_float64[agg_idx], val);
                     }
                 }
             } else {
