@@ -196,8 +196,8 @@ if(BUILD_BENCHMARKS)
     endif()
 
     # PostgreSQL comparison benchmark
-    find_library(PQLIB_LIBRARY pq PATHS /usr/lib /usr/local/lib)
-    find_path(PQLIB_INCLUDE_DIR libpq-fe.h PATHS /usr/include /usr/local/include)
+    find_library(PQLIB_LIBRARY pq PATHS /usr/lib /usr/local/lib /opt/homebrew/lib)
+    find_path(PQLIB_INCLUDE_DIR libpq-fe.h PATHS /usr/include /usr/local/include /opt/homebrew/include)
     if(PQLIB_LIBRARY AND PQLIB_INCLUDE_DIR)
         add_executable(postgresql_comparison_bench benchmarks/postgresql_comparison_bench.cpp)
         target_include_directories(postgresql_comparison_bench PRIVATE ${PQLIB_INCLUDE_DIR})

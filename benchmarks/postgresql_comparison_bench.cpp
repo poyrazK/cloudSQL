@@ -63,18 +63,46 @@ struct PostgreSQLContext {
 
     void create_tables() {
         if (!conn) return;
-        PQexec(conn, "SET max_parallel_workers_per_gather = 0");
-        PQexec(conn, "SET max_parallel_workers = 0");
-        PQexec(conn, "SET max_parallel_maintenance_workers = 0");
-        PQexec(conn, "DROP TABLE IF EXISTS lineitem");
-        PQexec(conn, "DROP TABLE IF EXISTS orders");
-        PQexec(conn,
+        PGresult* r = PQexec(conn, "SET max_parallel_workers_per_gather = 0");
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "SET max_parallel_workers_per_gather failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
+        r = PQexec(conn, "SET max_parallel_workers = 0");
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "SET max_parallel_workers failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
+        r = PQexec(conn, "SET max_parallel_maintenance_workers = 0");
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "SET max_parallel_maintenance_workers failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
+        r = PQexec(conn, "DROP TABLE IF EXISTS lineitem");
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "DROP TABLE lineitem failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
+        r = PQexec(conn, "DROP TABLE IF EXISTS orders");
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "DROP TABLE orders failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
+        r = PQexec(conn,
                "CREATE TABLE lineitem (l_orderkey BIGINT, l_partkey BIGINT, "
                "l_quantity INT, l_extendedprice DOUBLE PRECISION, l_discount DOUBLE PRECISION, "
                "l_tax DOUBLE PRECISION)");
-        PQexec(conn,
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "CREATE TABLE lineitem failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
+        r = PQexec(conn,
                "CREATE TABLE orders (o_orderkey BIGINT, o_custkey BIGINT, "
                "o_orderdate TEXT)");
+        if (PQresultStatus(r) != PGRES_COMMAND_OK) {
+            fprintf(stderr, "CREATE TABLE orders failed: %s\n", PQerrorMessage(conn));
+        }
+        PQclear(r);
     }
 
     void execute_sql(const std::string& sql) {
@@ -157,6 +185,9 @@ static void BM_PostgreSQL_Insert(benchmark::State& state) {
     ctx.create_tables();
 
     for (auto _ : state) {
+        // Clear table at start of each iteration to measure insert throughput
+        // without accumulation effects
+        ctx.execute_sql("TRUNCATE TABLE lineitem");
         ctx.execute_sql("BEGIN");
         for (int i = 0; i < num_rows; ++i) {
             std::string sql = "INSERT INTO lineitem VALUES (" + std::to_string(i) + ", " +
@@ -176,6 +207,9 @@ static void BM_CloudSQL_Insert(benchmark::State& state) {
     CloudSQLContext ctx("./bench_pg_insert_" + std::to_string(state.thread_index()));
 
     for (auto _ : state) {
+        // Clear table at start of each iteration to measure insert throughput
+        // without accumulation effects
+        ctx.executor->execute(*ParseSQL("TRUNCATE TABLE lineitem"));
         ctx.executor->execute("BEGIN");
         for (int i = 0; i < num_rows; ++i) {
             ctx.executor->execute(*ParseSQL("INSERT INTO lineitem VALUES (" + std::to_string(i) +

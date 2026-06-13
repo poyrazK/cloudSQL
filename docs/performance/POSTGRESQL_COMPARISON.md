@@ -160,6 +160,6 @@ PostgreSQL shows advantages on:
 
 ## References
 
-- cloudSQL: [GitHub Repository](../README.md)
+- cloudSQL: [GitHub Repository](../../README.md)
 - PostgreSQL: https://www.postgresql.org/
 - TPC-H: http://www.tpc.org/tpch/

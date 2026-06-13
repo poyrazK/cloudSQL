@@ -1152,11 +1152,13 @@ class VectorizedGroupByOperator : public VectorizedOperator {
                         // Sentinel-based: mins/maxes initialized to max/min values
                         bucket.mins_float64[i] = std::min(bucket.mins_float64[i], val);
                         bucket.maxes_float64[i] = std::max(bucket.maxes_float64[i], val);
+                        bucket.has_float_minmax[i] = true;
                     } else {
                         auto val = col.get(row_idx).to_int64();
                         // Sentinel-based: mins/maxes initialized to max/min values
                         bucket.mins[i] = std::min(bucket.mins[i], val);
                         bucket.maxes[i] = std::max(bucket.maxes[i], val);
+                        bucket.has_mins[i] = true;
                     }
                 }
             }
