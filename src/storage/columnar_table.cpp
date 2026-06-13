@@ -100,8 +100,16 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
                    type == common::ValueType::TYPE_CHAR) {
             auto& str_vec = dynamic_cast<executor::StringVector&>(col_vec);
             const auto& data = str_vec.raw_data();
+            // Also open offset index file for variable-length columns
+            std::ofstream o_out(storage_manager_.get_full_path(base + ".offs.bin"),
+                                std::ios::binary | std::ios::app);
             for (size_t r = 0; r < batch.row_count(); ++r) {
                 uint32_t len = static_cast<uint32_t>(data[r].size());
+                // Write offset of this record (current end of data file)
+                std::streampos offset = d_out.tellp();
+                uint64_t offset_val = static_cast<uint64_t>(offset);
+                o_out.write(reinterpret_cast<const char*>(&offset_val), 8);
+                // Write record
                 d_out.write(reinterpret_cast<const char*>(&len), 4);
                 d_out.write(data[r].data(), len);
             }
@@ -280,16 +288,16 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
             std::vector<uint8_t> nulls(actual_rows);
             n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
 
-            // For variable-length strings, skip start_row records first
-            // by reading and discarding their length-prefixed data
-            if (start_row > 0) {
-                for (uint32_t r = 0; r < start_row; ++r) {
-                    uint32_t len = 0;
-                    if (!d_in.read(reinterpret_cast<char*>(&len), 4)) break;
-                    if (len > 0) {
-                        d_in.seekg(static_cast<std::streamoff>(len), std::ios::cur);
-                    }
-                }
+            // Use offset index for O(1) seek to start_row position
+            std::ifstream o_in(storage_manager_.get_full_path(base + ".offs.bin"),
+                               std::ios::binary);
+            if (o_in.is_open()) {
+                // Seek to start_row offset and read it
+                o_in.seekg(static_cast<std::streamoff>(start_row * 8), std::ios::beg);
+                uint64_t data_offset = 0;
+                o_in.read(reinterpret_cast<char*>(&data_offset), 8);
+                // Seek data file to that offset
+                d_in.seekg(static_cast<std::streamoff>(data_offset), std::ios::beg);
             }
 
             // Now read the actual_rows we want
@@ -461,14 +469,14 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
             std::vector<uint8_t> nulls(actual_rows);
             n_in.read(reinterpret_cast<char*>(nulls.data()), actual_rows);
 
-            if (start_row > 0) {
-                for (uint32_t r = 0; r < start_row; ++r) {
-                    uint32_t len = 0;
-                    if (!d_in.read(reinterpret_cast<char*>(&len), 4)) break;
-                    if (len > 0) {
-                        d_in.seekg(static_cast<std::streamoff>(len), std::ios::cur);
-                    }
-                }
+            // Use offset index for O(1) seek to start_row position
+            std::ifstream o_in(storage_manager_.get_full_path(base + ".offs.bin"),
+                               std::ios::binary);
+            if (o_in.is_open()) {
+                o_in.seekg(static_cast<std::streamoff>(start_row * 8), std::ios::beg);
+                uint64_t data_offset = 0;
+                o_in.read(reinterpret_cast<char*>(&data_offset), 8);
+                d_in.seekg(static_cast<std::streamoff>(data_offset), std::ios::beg);
             }
 
             for (uint32_t r = 0; r < actual_rows; ++r) {
