@@ -25,11 +25,11 @@ This benchmark suite compares cloudSQL's vectorized SQL engine against PostgreSQ
 
 ## Schema
 
-Both systems use identical TPC-H inspired schemas:
+Both systems use identical TPC-H inspired schemas (no indexes for fair comparison):
 
 ```sql
 CREATE TABLE lineitem (
-    l_orderkey BIGINT PRIMARY KEY,
+    l_orderkey BIGINT,
     l_partkey BIGINT,
     l_quantity INT,
     l_extendedprice DOUBLE,
@@ -38,7 +38,7 @@ CREATE TABLE lineitem (
 );
 
 CREATE TABLE orders (
-    o_orderkey BIGINT PRIMARY KEY,
+    o_orderkey BIGINT,
     o_custkey BIGINT,
     o_orderdate TEXT
 );
