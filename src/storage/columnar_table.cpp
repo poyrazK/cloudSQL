@@ -119,6 +119,22 @@ bool ColumnarTable::append_batch(const executor::VectorBatch& batch) {
     return true;
 }
 
+std::ifstream& ColumnarTable::get_cached_stream(const std::string& path) {
+    auto it = file_streams_.find(path);
+    if (it != file_streams_.end()) {
+        if (it->second.is_open()) {
+            return it->second;
+        }
+        // Stream was closed, reopen it
+        it->second.open(path, std::ios::binary);
+        return it->second;
+    }
+    // New stream - open and cache it
+    auto& stream = file_streams_[path];
+    stream.open(path, std::ios::binary);
+    return stream;
+}
+
 bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
                                executor::VectorBatch& out_batch) {
     if (start_row >= row_count_) return false;
@@ -131,8 +147,11 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
 
     for (size_t i = 0; i < schema_.column_count(); ++i) {
         const std::string base = name_ + ".col" + std::to_string(i);
-        std::ifstream n_in(storage_manager_.get_full_path(base + ".nulls.bin"), std::ios::binary);
-        std::ifstream d_in(storage_manager_.get_full_path(base + ".data.bin"), std::ios::binary);
+        const std::string null_path = storage_manager_.get_full_path(base + ".nulls.bin");
+        const std::string data_path = storage_manager_.get_full_path(base + ".data.bin");
+
+        std::ifstream& n_in = get_cached_stream(null_path);
+        std::ifstream& d_in = get_cached_stream(data_path);
         if (!n_in.is_open() || !d_in.is_open()) return false;
 
         auto& target_col = out_batch.get_column(i);
@@ -310,8 +329,11 @@ bool ColumnarTable::read_batch(uint64_t start_row, uint32_t batch_size,
     for (size_t idx = 0; idx < col_indices.size(); ++idx) {
         size_t col_idx = col_indices[idx];
         const std::string base = name_ + ".col" + std::to_string(col_idx);
-        std::ifstream n_in(storage_manager_.get_full_path(base + ".nulls.bin"), std::ios::binary);
-        std::ifstream d_in(storage_manager_.get_full_path(base + ".data.bin"), std::ios::binary);
+        const std::string null_path = storage_manager_.get_full_path(base + ".nulls.bin");
+        const std::string data_path = storage_manager_.get_full_path(base + ".data.bin");
+
+        std::ifstream& n_in = get_cached_stream(null_path);
+        std::ifstream& d_in = get_cached_stream(data_path);
         if (!n_in.is_open() || !d_in.is_open()) return false;
 
         auto& target_col = out_batch.get_column(idx);

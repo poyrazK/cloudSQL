@@ -6,6 +6,8 @@
 #ifndef CLOUDSQL_STORAGE_COLUMNAR_TABLE_HPP
 #define CLOUDSQL_STORAGE_COLUMNAR_TABLE_HPP
 
+#include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +26,13 @@ class ColumnarTable {
     StorageManager& storage_manager_;
     executor::Schema schema_;
     uint64_t row_count_ = 0;
+
+    // Cached file streams for read_batch performance
+    // Key: column file path, Value: open ifstream
+    std::map<std::string, std::ifstream> file_streams_;
+
+    // Helper to get or open a cached file stream
+    std::ifstream& get_cached_stream(const std::string& path);
 
    public:
     ColumnarTable(std::string name, StorageManager& storage, executor::Schema schema)
