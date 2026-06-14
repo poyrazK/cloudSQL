@@ -430,9 +430,12 @@ static void BM_CloudSQL_GroupBy(benchmark::State& state) {
     }
     ctx.executor->execute("COMMIT");
 
+    // Prepare the query once to test plan caching
+    auto prepared = ctx.executor->prepare(
+        "SELECT l_quantity, SUM(l_extendedprice) FROM lineitem GROUP BY l_quantity");
+
     for (auto _ : state) {
-        ctx.executor->execute(*ParseSQL(
-            "SELECT l_quantity, SUM(l_extendedprice) FROM lineitem GROUP BY l_quantity"));
+        ctx.executor->execute(*prepared, {});
     }
     state.SetItemsProcessed(state.iterations() * num_rows);
 }

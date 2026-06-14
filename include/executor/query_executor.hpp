@@ -37,6 +37,9 @@ struct PreparedStatement {
     std::unique_ptr<Schema> schema;
     std::unique_ptr<storage::HeapTable> table;
     std::vector<std::unique_ptr<storage::BTreeIndex>> indexes;
+
+    // Cached vectorized operator tree for SELECT queries
+    std::unique_ptr<VectorizedOperator> cached_plan_root;
 };
 
 /**

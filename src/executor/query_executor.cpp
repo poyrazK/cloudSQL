@@ -176,6 +176,37 @@ std::shared_ptr<PreparedStatement> QueryExecutor::prepare(const std::string& sql
         }
     }
 
+    // Build and cache vectorized plan for SELECT statements
+    if (prepared->stmt->type() == parser::StmtType::Select) {
+        const auto& select_stmt = dynamic_cast<const parser::SelectStatement&>(*prepared->stmt);
+
+        // Check if query has ORDER BY or LIMIT (forces non-vectorized path)
+        bool has_sort_or_limit = (select_stmt.order_by().size() > 0);
+        if (select_stmt.has_limit()) {
+            has_sort_or_limit = true;
+        }
+
+        // Check if we should use vectorized path (same logic as execute_select)
+        auto table_name = select_stmt.from()->to_string();
+        auto table_meta_opt = catalog_.get_table_by_name(table_name);
+        if (table_meta_opt.has_value()) {
+            auto& table_meta = table_meta_opt.value();
+            // Build schema from table metadata
+            prepared->schema = std::make_unique<Schema>();
+            for (const auto& col : table_meta->columns) {
+                prepared->schema->add_column(col.name, col.type);
+            }
+            // Estimate row count (simplified - use columnar table if available)
+            auto col_table = std::make_shared<storage::ColumnarTable>(table_name, *storage_manager_,
+                                                                     *prepared->schema);
+            if (col_table->open() && col_table->row_count() > 0) {
+                // Use vectorized path
+                prepared->cached_plan_root =
+                    build_vectorized_plan(select_stmt, nullptr, has_sort_or_limit);
+            }
+        }
+    }
+
     return prepared;
 }
 
@@ -243,6 +274,40 @@ QueryResult QueryExecutor::execute(const PreparedStatement& prepared,
         result.set_execution_time(
             std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
         arena_.reset();
+        return result;
+    }
+
+
+    // Use cached vectorized plan for SELECT if available
+    if (prepared.cached_plan_root) {
+        const auto start = std::chrono::high_resolution_clock::now();
+        QueryResult result;
+        current_params_ = &params;
+
+        auto root = prepared.cached_plan_root.get();
+        root->reset();
+        root->init();
+        root->open();
+
+        result.set_schema(root->output_schema());
+        auto batch = VectorBatch::create(root->output_schema());
+
+        while (root->next_batch(*batch)) {
+            for (size_t r = 0; r < batch->row_count(); ++r) {
+                Tuple tuple;
+                for (size_t c = 0; c < batch->column_count(); ++c) {
+                    tuple.set(c, batch->get_column(c).get(r));
+                }
+                result.add_row(Tuple(tuple.values(), nullptr));
+            }
+        }
+
+        root->close();
+
+        current_params_ = nullptr;
+        const auto end = std::chrono::high_resolution_clock::now();
+        result.set_execution_time(
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
         return result;
     }
 

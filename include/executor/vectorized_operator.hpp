@@ -46,6 +46,11 @@ class VectorizedOperator : public Operator {
      */
     virtual bool next_batch(VectorBatch& out_batch) = 0;
 
+    /**
+     * @brief Reset operator state for re-execution (used with cached plans)
+     */
+    virtual void reset() {}
+
     void close() override {}
 
     [[nodiscard]] Schema& output_schema() override { return output_schema_; }
@@ -94,6 +99,12 @@ class VectorizedSeqScanOperator : public VectorizedOperator {
             return next_batch_sequential(out_batch);
         }
         return next_batch_parallel(out_batch);
+    }
+
+    void reset() override {
+        current_row_ = 0;
+        parallel_idx_ = 0;
+        parallel_results_.clear();
     }
 
     void set_required_columns(std::vector<size_t> col_indices, executor::Schema reduced_schema) {
@@ -919,6 +930,17 @@ class VectorizedGroupByOperator : public VectorizedOperator {
         } else {
             return produce_output_batch_open_addressing(out_batch);
         }
+    }
+
+    void reset() override {
+        state_ = ExecState::Init;
+        if (is_direct_indexable_) {
+            agg_.init(65536, aggregates_.size(), group_by_.size());
+        } else {
+            hash_agg_.init(65536, aggregates_.size());
+        }
+        sorted_indices_.clear();
+        input_batch_->clear();
     }
 
     void process_input_batch_direct_index(VectorBatch& batch) {
